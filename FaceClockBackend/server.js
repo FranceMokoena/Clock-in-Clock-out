@@ -24,12 +24,30 @@ app.use((req, res, next) => {
 });
 
 // MongoDB connection
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/faceclock';
-mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-.then(() => console.log('MongoDB connected'))
+const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/Employees';
+
+// Improved MongoDB connection with better error handling
+mongoose.connect(MONGO_URI)
+.then(() => {
+  console.log('✅ MongoDB connected successfully');
+  console.log(`📊 Database: ${mongoose.connection.name}`);
+})
 .catch(err => {
-  console.log('MongoDB connection error:', err);
-  console.log('Note: Make sure MongoDB is running or set MONGO_URI in .env file');
+  console.error('❌ MongoDB connection error:', err.message);
+  if (err.message.includes('IP') || err.message.includes('whitelist')) {
+    console.error('\n🔒 IP WHITELIST ISSUE DETECTED!');
+    console.error('📝 To fix this:');
+    console.error('   1. Go to MongoDB Atlas: https://cloud.mongodb.com/');
+    console.error('   2. Navigate to: Network Access → IP Access List');
+    console.error('   3. Click "Add IP Address"');
+    console.error('   4. For Render.com, add: 0.0.0.0/0 (allows all IPs)');
+    console.error('      OR add specific Render IP ranges if available');
+    console.error('   5. Wait 1-2 minutes for changes to propagate');
+  }
+  console.error('\n💡 Make sure:');
+  console.error('   - MONGO_URI is set correctly in .env file');
+  console.error('   - Your IP address is whitelisted in MongoDB Atlas');
+  console.error('   - Database user has correct permissions');
 });
 
 // Routes
