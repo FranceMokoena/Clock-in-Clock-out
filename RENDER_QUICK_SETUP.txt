@@ -1,0 +1,46 @@
+═══════════════════════════════════════════════════════════════
+RENDER DEPLOYMENT - QUICK COPY/PASTE SETTINGS
+═══════════════════════════════════════════════════════════════
+
+📍 BASIC SETTINGS:
+───────────────────────────────────────────────────────────────
+Name:              faceclock-backend
+Language:          Node
+Branch:            main
+Root Directory:    FaceClockBackend  ⚠️ MUST SET THIS!
+Build Command:     npm install
+Start Command:     npm start
+Instance:          Free (or upgrade)
+
+───────────────────────────────────────────────────────────────
+
+🔐 ENVIRONMENT VARIABLES (Copy these exactly):
+───────────────────────────────────────────────────────────────
+
+1. MONGO_URI
+   mongodb+srv://alphadev28_db_user:2CNEy6v686tVOxzH@my1st-cluster.y7nyqx5.mongodb.net/faceclock?retryWrites=true&w=majority
+
+2. PORT
+   10000
+
+3. ENCRYPTION_KEY
+   ac1fd3f1bb4b6f68d14234a9a146859c8e6ac489fae0f2c56b832b405cd899d6
+
+4. NODE_ENV
+   production
+
+───────────────────────────────────────────────────────────────
+
+⚠️ CRITICAL: Root Directory must be "FaceClockBackend"
+   (Without quotes, just: FaceClockBackend)
+
+───────────────────────────────────────────────────────────────
+
+✅ After deployment, update:
+   FaceClockApp/config/api.js
+   
+   Replace production URL with:
+   https://your-service-name.onrender.com/api
+
+───────────────────────────────────────────────────────────────
+
