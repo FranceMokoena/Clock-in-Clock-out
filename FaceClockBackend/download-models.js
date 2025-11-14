@@ -10,22 +10,23 @@ const fs = require('fs');
 const path = require('path');
 
 const modelsDir = path.join(__dirname, 'models', 'face-api');
-// Try multiple sources for reliability
+// Try multiple sources for reliability - using correct repository structure
 const modelSources = [
-  'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights',
-  'https://github.com/justadudewhohacks/face-api.js-models/raw/master/weights',
+  'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master',
+  'https://github.com/justadudewhohacks/face-api.js-models/raw/master',
+  'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js-models@master',
 ];
 const modelsBaseUrl = modelSources[0];
 
-// Model files needed
+// Model files needed - with correct paths in repository
 const models = {
-  'ssd_mobilenetv1_model-weights_manifest.json': 'ssd_mobilenetv1_model-weights_manifest.json',
-  'ssd_mobilenetv1_model-shard1': 'ssd_mobilenetv1_model-shard1',
-  'face_landmark_68_model-weights_manifest.json': 'face_landmark_68_model-weights_manifest.json',
-  'face_landmark_68_model-shard1': 'face_landmark_68_model-shard1',
-  'face_recognition_model-weights_manifest.json': 'face_recognition_model-weights_manifest.json',
-  'face_recognition_model-shard1': 'face_recognition_model-shard1',
-  'face_recognition_model-shard2': 'face_recognition_model-shard2',
+  'ssd_mobilenetv1_model-weights_manifest.json': 'weights/ssd_mobilenetv1_model-weights_manifest.json',
+  'ssd_mobilenetv1_model-shard1': 'weights/ssd_mobilenetv1_model-shard1',
+  'face_landmark_68_model-weights_manifest.json': 'weights/face_landmark_68_model-weights_manifest.json',
+  'face_landmark_68_model-shard1': 'weights/face_landmark_68_model-shard1',
+  'face_recognition_model-weights_manifest.json': 'weights/face_recognition_model-weights_manifest.json',
+  'face_recognition_model-shard1': 'weights/face_recognition_model-shard1',
+  'face_recognition_model-shard2': 'weights/face_recognition_model-shard2',
 };
 
 function downloadFile(url, filepath, retries = 3) {
@@ -121,7 +122,8 @@ async function downloadModels() {
       
       // Try each source
       let downloaded = false;
-      for (const baseUrl of modelSources) {
+      for (let i = 0; i < modelSources.length; i++) {
+        const baseUrl = modelSources[i];
         const url = `${baseUrl}/${urlPath}`;
         try {
           await downloadFile(url, filepath);
@@ -129,7 +131,7 @@ async function downloadModels() {
           downloaded = true;
           break; // Success, move to next file
         } catch (error) {
-          console.warn(`   Failed from ${baseUrl}: ${error.message}`);
+          console.warn(`   Failed from source ${i + 1} (${baseUrl}): ${error.message}`);
           // Try next source
         }
       }

@@ -55,15 +55,26 @@ async function loadModels() {
   try {
     // Try to load models from local path first
     if (fs.existsSync(modelsPath)) {
-      console.log('📦 Loading face recognition models from disk...');
-      await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
-      await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
-      await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
-      modelsLoaded = true;
-      modelsLoading = false;
-      modelsLoadError = null; // Clear any previous errors
-      console.log('✅ Face recognition models loaded successfully from disk');
-      return;
+      // Check if at least one model file exists
+      const manifestPath = path.join(modelsPath, 'ssd_mobilenetv1_model-weights_manifest.json');
+      if (fs.existsSync(manifestPath)) {
+        console.log('📦 Loading face recognition models from disk...');
+        try {
+          await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
+          await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
+          await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
+          modelsLoaded = true;
+          modelsLoading = false;
+          modelsLoadError = null; // Clear any previous errors
+          console.log('✅ Face recognition models loaded successfully from disk');
+          return;
+        } catch (diskError) {
+          console.warn('⚠️ Failed to load models from disk, will try CDN:', diskError.message);
+          // Continue to CDN fallback
+        }
+      } else {
+        console.log('📦 Models directory exists but is empty, will use CDN');
+      }
     }
     
     // Try to load from CDN/remote (for Render deployment)
