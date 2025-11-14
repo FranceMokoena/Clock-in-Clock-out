@@ -51,22 +51,64 @@ async function loadModels() {
       await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
       modelsLoaded = true;
       modelsLoading = false;
+      modelsLoadError = null; // Clear any previous errors
       console.log('✅ Face recognition models loaded successfully from disk');
       return;
     }
     
     // Try to load from CDN/remote (for Render deployment)
-    console.log('📦 Attempting to load models from remote source...');
+    // Using jsdelivr CDN which is more reliable than raw GitHub
+    console.log('📦 Attempting to load models from CDN...');
     try {
-      await faceapi.nets.ssdMobilenetv1.loadFromUri('https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights');
-      await faceapi.nets.faceLandmark68Net.loadFromUri('https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights');
-      await faceapi.nets.faceRecognitionNet.loadFromUri('https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights');
+      // jsdelivr CDN for face-api.js models
+      const baseUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
+      console.log(`   Loading SSD MobileNet v1...`);
+      await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
+      console.log(`   Loading Face Landmark 68 Net...`);
+      await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
+      console.log(`   Loading Face Recognition Net...`);
+      await faceapi.nets.faceRecognitionNet.loadFromUri(baseUrl);
       modelsLoaded = true;
       modelsLoading = false;
-      console.log('✅ Face recognition models loaded successfully from remote');
+      modelsLoadError = null; // Clear any previous errors
+      console.log('✅ Face recognition models loaded successfully from CDN');
       return;
-    } catch (remoteError) {
-      console.warn('⚠️ Could not load models from remote:', remoteError.message);
+    } catch (cdnError) {
+      console.warn('⚠️ Could not load from jsdelivr CDN:', cdnError.message);
+      
+      // Try alternative: unpkg CDN
+      try {
+        console.log('📦 Trying alternative CDN (unpkg)...');
+        const unpkgUrl = 'https://unpkg.com/@vladmandic/face-api@1.7.14/model';
+        await faceapi.nets.ssdMobilenetv1.loadFromUri(unpkgUrl);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(unpkgUrl);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(unpkgUrl);
+        modelsLoaded = true;
+        modelsLoading = false;
+        modelsLoadError = null;
+        console.log('✅ Face recognition models loaded successfully from unpkg CDN');
+        return;
+      } catch (unpkgError) {
+        console.warn('⚠️ Could not load from unpkg CDN:', unpkgError.message);
+        
+        // Try GitHub with correct path structure (weights folder)
+        try {
+          console.log('📦 Trying GitHub with correct path structure...');
+          // The models are in the weights folder - face-api.js will append model-specific paths
+          const githubBase = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights';
+          await faceapi.nets.ssdMobilenetv1.loadFromUri(githubBase);
+          await faceapi.nets.faceLandmark68Net.loadFromUri(githubBase);
+          await faceapi.nets.faceRecognitionNet.loadFromUri(githubBase);
+          modelsLoaded = true;
+          modelsLoading = false;
+          modelsLoadError = null;
+          console.log('✅ Face recognition models loaded successfully from GitHub');
+          return;
+        } catch (githubError) {
+          console.warn('⚠️ Could not load from GitHub:', githubError.message);
+          modelsLoadError = `All CDN attempts failed. Last error: ${githubError.message}`;
+        }
+      }
     }
     
     // If both fail, warn but don't crash
