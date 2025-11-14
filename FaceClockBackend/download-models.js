@@ -81,90 +81,117 @@ function downloadFile(url, filepath, retries = 3) {
 }
 
 async function downloadModels() {
-  // Create models directory
-  if (!fs.existsSync(modelsDir)) {
-    fs.mkdirSync(modelsDir, { recursive: true });
-    console.log(`📁 Created directory: ${modelsDir}`);
-  }
-  
-  console.log('📦 Starting model download...');
-  console.log(`📁 Target directory: ${modelsDir}\n`);
-  
-  let successCount = 0;
-  let failCount = 0;
-  const failedFiles = [];
-  
-  for (const [filename, urlPath] of Object.entries(models)) {
-    const filepath = path.join(modelsDir, filename);
-    
-    // Check if file exists and has content
-    if (fs.existsSync(filepath)) {
-      const stats = fs.statSync(filepath);
-      if (stats.size > 0) {
-        console.log(`⏭️  Skipping (already exists): ${filename} (${(stats.size / 1024).toFixed(1)} KB)`);
-        successCount++;
-        continue;
-      } else {
-        console.log(`⚠️  File exists but is empty, re-downloading: ${filename}`);
-        fs.unlinkSync(filepath);
-      }
+  try {
+    // Create models directory (with parent directories if needed)
+    if (!fs.existsSync(modelsDir)) {
+      fs.mkdirSync(modelsDir, { recursive: true });
+      console.log(`📁 Created directory: ${modelsDir}`);
+    } else {
+      console.log(`📁 Using existing directory: ${modelsDir}`);
     }
     
-    // Try each source
-    let downloaded = false;
-    for (const baseUrl of modelSources) {
-      const url = `${baseUrl}/${urlPath}`;
-      try {
-        await downloadFile(url, filepath);
-        successCount++;
-        downloaded = true;
-        break; // Success, move to next file
-      } catch (error) {
-        console.warn(`   Failed from ${baseUrl}: ${error.message}`);
-        // Try next source
-      }
+    // Verify directory was created
+    if (!fs.existsSync(modelsDir)) {
+      throw new Error(`Failed to create models directory: ${modelsDir}`);
     }
     
-    if (!downloaded) {
-      console.error(`❌ Error downloading ${filename} from all sources`);
-      failCount++;
-      failedFiles.push(filename);
-    }
-  }
-  
-  console.log(`\n📊 Download summary: ${successCount} succeeded, ${failCount} failed`);
-  
-  if (successCount === Object.keys(models).length) {
-    console.log('✅ All models downloaded successfully!');
-    console.log(`📁 Models saved to: ${modelsDir}`);
+    console.log('📦 Starting model download...');
+    console.log(`📁 Target directory: ${modelsDir}`);
+    console.log(`📁 Absolute path: ${path.resolve(modelsDir)}\n`);
     
-    // Verify all files exist
-    let allExist = true;
-    for (const filename of Object.keys(models)) {
+    let successCount = 0;
+    let failCount = 0;
+    const failedFiles = [];
+    
+    for (const [filename, urlPath] of Object.entries(models)) {
       const filepath = path.join(modelsDir, filename);
-      if (!fs.existsSync(filepath) || fs.statSync(filepath).size === 0) {
-        console.error(`❌ Verification failed: ${filename} is missing or empty`);
-        allExist = false;
+      
+      // Check if file exists and has content
+      if (fs.existsSync(filepath)) {
+        const stats = fs.statSync(filepath);
+        if (stats.size > 0) {
+          console.log(`⏭️  Skipping (already exists): ${filename} (${(stats.size / 1024).toFixed(1)} KB)`);
+          successCount++;
+          continue;
+        } else {
+          console.log(`⚠️  File exists but is empty, re-downloading: ${filename}`);
+          fs.unlinkSync(filepath);
+        }
+      }
+      
+      // Try each source
+      let downloaded = false;
+      for (const baseUrl of modelSources) {
+        const url = `${baseUrl}/${urlPath}`;
+        try {
+          await downloadFile(url, filepath);
+          successCount++;
+          downloaded = true;
+          break; // Success, move to next file
+        } catch (error) {
+          console.warn(`   Failed from ${baseUrl}: ${error.message}`);
+          // Try next source
+        }
+      }
+      
+      if (!downloaded) {
+        console.error(`❌ Error downloading ${filename} from all sources`);
+        failCount++;
+        failedFiles.push(filename);
       }
     }
     
-    if (allExist) {
-      console.log('✅ All model files verified successfully!');
+    console.log(`\n📊 Download summary: ${successCount} succeeded, ${failCount} failed`);
+    
+    if (successCount === Object.keys(models).length) {
+      console.log('✅ All models downloaded successfully!');
+      console.log(`📁 Models saved to: ${modelsDir}`);
+      
+      // Verify all files exist
+      let allExist = true;
+      for (const filename of Object.keys(models)) {
+        const filepath = path.join(modelsDir, filename);
+        if (!fs.existsSync(filepath) || fs.statSync(filepath).size === 0) {
+          console.error(`❌ Verification failed: ${filename} is missing or empty`);
+          allExist = false;
+        }
+      }
+      
+      if (allExist) {
+        console.log('✅ All model files verified successfully!');
+      }
+    } else if (successCount > 0) {
+      console.log('⚠️  Some models failed to download. System will try CDN fallback.');
+      console.log(`   Failed files: ${failedFiles.join(', ')}`);
+    } else {
+      console.log('❌ All model downloads failed. System will use CDN fallback.');
+      console.log(`   Failed files: ${failedFiles.join(', ')}`);
     }
-  } else if (successCount > 0) {
-    console.log('⚠️  Some models failed to download. System will try CDN fallback.');
-    console.log(`   Failed files: ${failedFiles.join(', ')}`);
-  } else {
-    console.log('❌ All model downloads failed. System will use CDN fallback.');
-    console.log(`   Failed files: ${failedFiles.join(', ')}`);
+    
+    return successCount === Object.keys(models).length;
+  } catch (error) {
+    console.error('❌ Error in downloadModels:', error.message);
+    return false;
   }
-  
-  return successCount === Object.keys(models).length;
 }
 
 // Run if called directly
 if (require.main === module) {
-  downloadModels().catch(console.error);
+  downloadModels()
+    .then((success) => {
+      if (success) {
+        console.log('\n✅ Model download process completed successfully');
+        process.exit(0);
+      } else {
+        console.log('\n⚠️  Model download completed with some failures - CDN fallback will be used');
+        process.exit(0); // Exit with 0 so postinstall doesn't fail
+      }
+    })
+    .catch((error) => {
+      console.error('\n❌ Model download failed:', error.message);
+      console.error('⚠️  System will use CDN fallback during runtime');
+      process.exit(0); // Exit with 0 so postinstall doesn't fail the build
+    });
 }
 
 module.exports = { downloadModels };
