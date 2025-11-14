@@ -83,7 +83,30 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.log(`✅ Processing ${type} request for staff member`);
 
     // Generate embedding from captured image (now returns object with embedding, quality, etc.)
-    const embeddingResult = await generateEmbedding(req.file.buffer);
+    let embeddingResult;
+    try {
+      embeddingResult = await generateEmbedding(req.file.buffer);
+      
+      // Validate embedding result
+      if (!embeddingResult) {
+        throw new Error('Failed to generate face embedding - no result returned');
+      }
+      
+      // Ensure embedding exists
+      const embedding = embeddingResult.embedding || embeddingResult;
+      if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
+        throw new Error('Invalid embedding generated - embedding is not a valid array');
+      }
+      
+      console.log(`✅ Embedding generated - Quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}, Length: ${embedding.length}`);
+    } catch (embeddingError) {
+      const errorMsg = embeddingError?.message || String(embeddingError) || 'Failed to generate face embedding';
+      console.error('❌ Error generating embedding:', errorMsg);
+      return res.status(500).json({ 
+        success: false,
+        error: errorMsg 
+      });
+    }
     
     // Get all active staff members
     const allStaff = await Staff.find({ isActive: true });
@@ -96,24 +119,43 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     }
     
     // Decrypt embeddings for comparison
-    const staffWithEmbeddings = allStaff.map(staff => ({
-      ...staff.toObject(),
-      decryptedEmbedding: Staff.decryptEmbedding(staff.encryptedEmbedding)
-    }));
+    const staffWithEmbeddings = allStaff.map(staff => {
+      try {
+        return {
+          ...staff.toObject(),
+          decryptedEmbedding: Staff.decryptEmbedding(staff.encryptedEmbedding)
+        };
+      } catch (decryptError) {
+        console.error(`⚠️ Error decrypting embedding for ${staff.name}:`, decryptError?.message || decryptError);
+        return null;
+      }
+    }).filter(staff => staff !== null && staff.decryptedEmbedding);
+    
+    if (staffWithEmbeddings.length === 0) {
+      return res.status(500).json({ 
+        success: false,
+        error: 'No valid staff embeddings found. Please re-register staff members.' 
+      });
+    }
     
     // Find matching staff (pass the full embedding result object)
+    console.log(`🔍 Starting face matching process...`);
+    console.log(`   - Clock-in embedding quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
+    console.log(`   - Clock-in embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
+    console.log(`   - Staff members to compare: ${staffWithEmbeddings.length}`);
+    
     const match = await findMatchingStaff(embeddingResult, staffWithEmbeddings);
     
     if (!match) {
       console.error('❌ Face not recognized - no matching staff found');
-      console.error(`📊 Debug info:`);
+      console.error(`📊 Final debug info:`);
       console.error(`   - Staff members in database: ${staffWithEmbeddings.length}`);
       console.error(`   - Embedding quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
       console.error(`   - Embedding type: ${Array.isArray(embeddingResult.embedding) ? 'Array' : typeof embeddingResult.embedding}`);
       console.error(`   - Embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
       
       // Check if using fallback embeddings (models not loaded)
-      if (embeddingResult.quality && embeddingResult.quality < 0.5) {
+      if (embeddingResult.quality && embeddingResult.quality < 0.3) {
         console.error('⚠️ WARNING: Using fallback embeddings - models may not be loaded!');
         return res.status(500).json({ 
           success: false,
@@ -123,7 +165,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       
       return res.status(404).json({ 
         success: false,
-        error: 'Face not recognized. Please ensure you are the same person who registered, with similar lighting and angle.' 
+        error: 'Face not recognized. Please ensure you are the same person who registered, with similar lighting and angle. Try registering again if this persists.' 
       });
     }
     
@@ -173,8 +215,9 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Error clocking in/out:', error);
-    console.error('Error stack:', error.stack);
-    res.status(500).json({ error: error.message || 'Failed to process clock in/out' });
+    console.error('Error stack:', error?.stack);
+    const errorMessage = error?.message || String(error) || 'Failed to process clock in/out';
+    res.status(500).json({ error: errorMessage });
   }
 });
 

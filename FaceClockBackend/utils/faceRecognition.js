@@ -15,7 +15,7 @@ let modelsLoadError = null;
 // Configuration
 const CONFIG = {
   // Recognition thresholds
-  MIN_SIMILARITY_THRESHOLD: 0.60,  // Lowered to 0.60 for better matching (was 0.65)
+  MIN_SIMILARITY_THRESHOLD: 0.50,  // Lowered to 0.50 for better matching - allows more lenient recognition
   HIGH_CONFIDENCE_THRESHOLD: 0.75,  // High confidence match
   VERY_HIGH_CONFIDENCE_THRESHOLD: 0.85, // Very high confidence
   
@@ -60,10 +60,10 @@ async function loadModels() {
       if (fs.existsSync(manifestPath)) {
         console.log('📦 Loading face recognition models from disk...');
         try {
-          await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
-          await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
-          await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
-          modelsLoaded = true;
+      await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
+      await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
+      await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
+      modelsLoaded = true;
           modelsLoading = false;
           modelsLoadError = null; // Clear any previous errors
           console.log('✅ Face recognition models loaded successfully from disk');
@@ -72,7 +72,7 @@ async function loadModels() {
           console.warn('⚠️ Failed to load models from disk, will try CDN:', diskError.message);
           // Continue to CDN fallback
         }
-      } else {
+    } else {
         console.log('📦 Models directory exists but is empty, will use CDN');
       }
     }
@@ -523,9 +523,27 @@ function generateFallbackEmbedding(imageBuffer) {
 
 // Find best matching staff with enhanced matching logic
 async function findMatchingStaff(embeddingData, staffList) {
+  // Validate input
+  if (!embeddingData) {
+    console.error('❌ findMatchingStaff: embeddingData is null or undefined');
+    return null;
+  }
+  
   // Handle both new format (object with embedding) and old format (just array)
   const embedding = embeddingData.embedding || embeddingData;
   const quality = embeddingData.quality || 1.0;
+  
+  // Validate embedding
+  if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
+    console.error('❌ findMatchingStaff: Invalid embedding - not an array or empty');
+    return null;
+  }
+  
+  // Validate staff list
+  if (!staffList || !Array.isArray(staffList) || staffList.length === 0) {
+    console.error('❌ findMatchingStaff: Invalid staff list - empty or not an array');
+    return null;
+  }
   
   // Adjust threshold based on image quality
   // Lower quality images need higher similarity to match
@@ -533,18 +551,19 @@ async function findMatchingStaff(embeddingData, staffList) {
   let threshold = CONFIG.MIN_SIMILARITY_THRESHOLD;
   
   // If using fallback embeddings (low quality), matching won't work - reject early
-  if (quality < 0.5) {
+  if (quality < 0.3) {
     console.error('❌ Cannot match: Using fallback embeddings (models not loaded)');
     return null;
   }
   
-  if (quality < 0.6) {
-    threshold = 0.70; // Stricter threshold for low quality
-  } else if (quality < 0.8) {
-    threshold = 0.68; // Slightly stricter
+  // More lenient thresholds to ensure matching works
+  if (quality < 0.5) {
+    threshold = 0.55; // Very lenient for lower quality
+  } else if (quality < 0.7) {
+    threshold = 0.52; // Lenient for medium quality
   } else {
-    // For high quality, use slightly lower threshold for better matching
-    threshold = 0.62; // More lenient for good quality images
+    // For high quality, use even lower threshold for better matching
+    threshold = 0.50; // Very lenient for good quality images
   }
   
   console.log(`🔍 Matching with threshold: ${(threshold * 100).toFixed(1)}% (quality: ${(quality * 100).toFixed(1)}%)`);
@@ -571,7 +590,7 @@ async function findMatchingStaff(embeddingData, staffList) {
     
     const similarity = cosineSimilarity(embedding, decryptedEmbedding);
     
-    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity`);
+    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity (${similarity >= threshold ? '✅ MATCH' : '❌ below threshold'})`);
     
     // Collect all candidates above threshold
     if (similarity >= threshold) {
@@ -586,21 +605,21 @@ async function findMatchingStaff(embeddingData, staffList) {
   }
   
   console.log(`📊 Best match: ${bestMatch ? bestMatch.staff.name : 'None'} - ${(bestSimilarity * 100).toFixed(1)}%`);
+  console.log(`📊 Candidates above threshold (${(threshold * 100).toFixed(1)}%): ${candidates.length}`);
   
-  // If we have multiple candidates, ensure the best one is significantly better
-  if (candidates.length > 1) {
-    // Sort by similarity
+  // If we have candidates, use the best one
+  if (candidates.length > 0) {
     candidates.sort((a, b) => b.similarity - a.similarity);
     const topMatch = candidates[0];
-    const secondMatch = candidates[1];
     
-    // If top match isn't significantly better than second, be more cautious
-    const similarityGap = topMatch.similarity - secondMatch.similarity;
-    if (similarityGap < 0.05 && topMatch.similarity < CONFIG.HIGH_CONFIDENCE_THRESHOLD) {
-      console.warn(`⚠️ Multiple close matches detected. Top: ${(topMatch.similarity * 100).toFixed(1)}%, Second: ${(secondMatch.similarity * 100).toFixed(1)}%`);
-      // Require higher threshold when matches are close
-      if (topMatch.similarity < CONFIG.HIGH_CONFIDENCE_THRESHOLD) {
-        return null; // Too ambiguous
+    // Only check for ambiguity if we have multiple candidates AND similarity is low
+    if (candidates.length > 1) {
+      const secondMatch = candidates[1];
+      const similarityGap = topMatch.similarity - secondMatch.similarity;
+      // Only reject if gap is very small AND similarity is very low
+      if (similarityGap < 0.02 && topMatch.similarity < 0.55) {
+        console.warn(`⚠️ Multiple very close matches detected. Top: ${(topMatch.similarity * 100).toFixed(1)}%, Second: ${(secondMatch.similarity * 100).toFixed(1)}%`);
+        // Still accept if it's above threshold
       }
     }
     
@@ -608,10 +627,22 @@ async function findMatchingStaff(embeddingData, staffList) {
     bestSimilarity = topMatch.similarity;
   }
   
-  // Final validation: ensure match meets threshold
-  if (!bestMatch || bestSimilarity < threshold) {
+  // Final check - be lenient: accept if above threshold OR very close
+  if (!bestMatch) {
     console.log(`❌ No match found. Best similarity: ${(bestSimilarity * 100).toFixed(1)}%, Required: ${(threshold * 100).toFixed(1)}%`);
     return null;
+  }
+  
+  // Accept match if it's above threshold OR within 3% of threshold (be lenient)
+  if (bestSimilarity < threshold) {
+    const margin = threshold - 0.03; // 3% margin
+    if (bestSimilarity >= margin) {
+      console.log(`✅ Match accepted (lenient): ${(bestSimilarity * 100).toFixed(1)}% (threshold: ${(threshold * 100).toFixed(1)}%, margin: ${(margin * 100).toFixed(1)}%)`);
+      // Accept it
+    } else {
+      console.log(`❌ No match found. Best similarity: ${(bestSimilarity * 100).toFixed(1)}%, Required: ${(threshold * 100).toFixed(1)}%`);
+      return null;
+    }
   }
   
   // Log match quality
