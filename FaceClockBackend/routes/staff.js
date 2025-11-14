@@ -27,8 +27,9 @@ router.post('/register', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'Name and image are required' });
     }
 
-    // Generate face embedding
-    const embedding = await generateEmbedding(req.file.buffer);
+    // Generate face embedding (now returns object with embedding, quality, etc.)
+    const embeddingResult = await generateEmbedding(req.file.buffer);
+    const embedding = embeddingResult.embedding || embeddingResult;
     
     // Encrypt embedding
     const encryptedEmbedding = Staff.encryptEmbedding(embedding);
@@ -39,6 +40,8 @@ router.post('/register', upload.single('image'), async (req, res) => {
       faceEmbedding: embedding, // Keep unencrypted in memory for comparison (consider removing in production)
       encryptedEmbedding
     });
+    
+    console.log(`✅ Staff registered: ${name} - Face quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
     
     await staff.save();
     
@@ -77,11 +80,18 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     console.log(`✅ Processing ${type} request for staff member`);
 
-    // Generate embedding from captured image
-    const embedding = await generateEmbedding(req.file.buffer);
+    // Generate embedding from captured image (now returns object with embedding, quality, etc.)
+    const embeddingResult = await generateEmbedding(req.file.buffer);
     
     // Get all active staff members
     const allStaff = await Staff.find({ isActive: true });
+    
+    if (allStaff.length === 0) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'No staff members registered. Please register staff first.' 
+      });
+    }
     
     // Decrypt embeddings for comparison
     const staffWithEmbeddings = allStaff.map(staff => ({
@@ -89,8 +99,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       decryptedEmbedding: Staff.decryptEmbedding(staff.encryptedEmbedding)
     }));
     
-    // Find matching staff
-    const match = await findMatchingStaff(embedding, staffWithEmbeddings);
+    // Find matching staff (pass the full embedding result object)
+    const match = await findMatchingStaff(embeddingResult, staffWithEmbeddings);
     
     if (!match) {
       console.error('❌ Face not recognized - no matching staff found');
@@ -100,8 +110,10 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       });
     }
     
-    const { staff, similarity } = match;
+    const { staff, similarity, confidenceLevel } = match;
     const confidence = Math.round(similarity * 100);
+    
+    console.log(`✅ Match found: ${staff.name} - Confidence: ${confidence}% (${confidenceLevel || 'Medium'})`);
     
     // Create clock log
     const clockLog = new ClockLog({
