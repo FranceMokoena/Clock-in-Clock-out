@@ -106,6 +106,161 @@ function cosineSimilarity(embedding1, embedding2) {
   return dotProduct / (norm1 * norm2);
 }
 
+// Extract and validate facial features from landmarks
+function extractFacialFeatures(landmarks) {
+  if (!landmarks || !landmarks.positions || landmarks.positions.length < 68) {
+    return null;
+  }
+  
+  const positions = landmarks.positions;
+  
+  // Face landmark indices (68-point model)
+  // Jaw: 0-16, Right eyebrow: 17-21, Left eyebrow: 22-26
+  // Nose: 27-35, Right eye: 36-41, Left eye: 42-47
+  // Mouth: 48-67
+  
+  return {
+    // Jaw/face shape (17 points: 0-16)
+    jaw: positions.slice(0, 17),
+    
+    // Right eyebrow (5 points: 17-21)
+    rightEyebrow: positions.slice(17, 22),
+    
+    // Left eyebrow (5 points: 22-26)
+    leftEyebrow: positions.slice(22, 27),
+    
+    // Nose (9 points: 27-35)
+    nose: positions.slice(27, 36),
+    noseTip: positions[30], // Point 30 is nose tip
+    noseBridge: positions[27], // Point 27 is top of nose bridge
+    
+    // Right eye (6 points: 36-41)
+    rightEye: positions.slice(36, 42),
+    rightEyeCenter: {
+      x: positions.slice(36, 42).reduce((sum, p) => sum + p.x, 0) / 6,
+      y: positions.slice(36, 42).reduce((sum, p) => sum + p.y, 0) / 6
+    },
+    
+    // Left eye (6 points: 42-47)
+    leftEye: positions.slice(42, 48),
+    leftEyeCenter: {
+      x: positions.slice(42, 48).reduce((sum, p) => sum + p.x, 0) / 6,
+      y: positions.slice(42, 48).reduce((sum, p) => sum + p.y, 0) / 6
+    },
+    
+    // Mouth (20 points: 48-67)
+    mouth: positions.slice(48, 68),
+    mouthCenter: {
+      x: positions.slice(48, 68).reduce((sum, p) => sum + p.x, 0) / 20,
+      y: positions.slice(48, 68).reduce((sum, p) => sum + p.y, 0) / 20
+    },
+    
+    // Face center (average of all points)
+    faceCenter: {
+      x: positions.reduce((sum, p) => sum + p.x, 0) / positions.length,
+      y: positions.reduce((sum, p) => sum + p.y, 0) / positions.length
+    }
+  };
+}
+
+// Calculate eye openness (simple heuristic)
+function calculateEyeOpenness(eyePoints) {
+  if (!eyePoints || eyePoints.length !== 6) return 0;
+  
+  // Eye points: [left corner, top, right corner, bottom, ...]
+  const topY = Math.min(eyePoints[1].y, eyePoints[2].y);
+  const bottomY = Math.max(eyePoints[4].y, eyePoints[5].y);
+  const eyeHeight = bottomY - topY;
+  
+  const leftX = eyePoints[0].x;
+  const rightX = eyePoints[3].x;
+  const eyeWidth = Math.abs(rightX - leftX);
+  
+  // Normalized eye openness (height/width ratio)
+  return eyeWidth > 0 ? eyeHeight / eyeWidth : 0;
+}
+
+// Validate that key facial features are visible and properly detected
+function validateFacialFeatures(features) {
+  const issues = [];
+  
+  if (!features) {
+    return { valid: false, issues: ['No facial features detected'], score: 0 };
+  }
+  
+  let featureScore = 1.0;
+  
+  // Check eyes
+  if (!features.leftEye || features.leftEye.length !== 6) {
+    issues.push('Left eye not properly detected');
+    featureScore *= 0.3;
+  } else {
+    const leftEyeOpenness = calculateEyeOpenness(features.leftEye);
+    if (leftEyeOpenness < 0.1) {
+      issues.push('Left eye appears closed');
+      featureScore *= 0.7;
+    }
+  }
+  
+  if (!features.rightEye || features.rightEye.length !== 6) {
+    issues.push('Right eye not properly detected');
+    featureScore *= 0.3;
+  } else {
+    const rightEyeOpenness = calculateEyeOpenness(features.rightEye);
+    if (rightEyeOpenness < 0.1) {
+      issues.push('Right eye appears closed');
+      featureScore *= 0.7;
+    }
+  }
+  
+  // Check nose
+  if (!features.nose || features.nose.length !== 9) {
+    issues.push('Nose not properly detected');
+    featureScore *= 0.4;
+  }
+  
+  // Check mouth
+  if (!features.mouth || features.mouth.length !== 20) {
+    issues.push('Mouth not properly detected');
+    featureScore *= 0.5;
+  }
+  
+  // Check face symmetry (eyes should be roughly at same height)
+  if (features.leftEyeCenter && features.rightEyeCenter) {
+    const eyeHeightDiff = Math.abs(features.leftEyeCenter.y - features.rightEyeCenter.y);
+    const avgEyeWidth = (Math.abs(features.leftEye[3].x - features.leftEye[0].x) + 
+                         Math.abs(features.rightEye[3].x - features.rightEye[0].x)) / 2;
+    
+    if (eyeHeightDiff > avgEyeWidth * 0.3) {
+      issues.push('Face appears tilted (eyes not level)');
+      featureScore *= 0.8;
+    }
+  }
+  
+  // Check if face is facing forward (nose should be roughly centered)
+  if (features.faceCenter && features.noseTip) {
+    const faceWidth = Math.max(...features.jaw.map(p => p.x)) - Math.min(...features.jaw.map(p => p.x));
+    const noseOffset = Math.abs(features.noseTip.x - features.faceCenter.x);
+    
+    if (noseOffset > faceWidth * 0.25) {
+      issues.push('Face not facing camera directly');
+      featureScore *= 0.8;
+    }
+  }
+  
+  return {
+    valid: featureScore >= 0.6,
+    issues,
+    score: featureScore,
+    features: {
+      eyesDetected: !!(features.leftEye && features.rightEye),
+      noseDetected: !!features.nose,
+      mouthDetected: !!features.mouth,
+      faceShapeDetected: !!features.jaw
+    }
+  };
+}
+
 // Calculate face quality score based on detection properties
 function calculateFaceQuality(detection) {
   if (!detection || !detection.detection || !detection.landmarks) {
@@ -130,8 +285,12 @@ function calculateFaceQuality(detection) {
     qualityScore *= 0.8; // Face too large (might be too close)
   }
   
-  // Check if face is roughly centered (optional quality check)
-  // This is a simple heuristic - you could add more sophisticated checks
+  // Validate facial features
+  const features = extractFacialFeatures(detection.landmarks);
+  const featureValidation = validateFacialFeatures(features);
+  
+  // Incorporate feature validation into quality score
+  qualityScore *= featureValidation.score;
   
   return Math.max(0, Math.min(1, qualityScore));
 }
@@ -142,13 +301,31 @@ function validateFaceDetection(detection) {
     return { valid: false, reason: 'No face detected' };
   }
   
+  // Extract and validate facial features
+  const features = extractFacialFeatures(detection.landmarks);
+  const featureValidation = validateFacialFeatures(features);
+  
   const quality = calculateFaceQuality(detection);
+  
+  // Build detailed reason if validation fails
+  let reason = '';
+  if (quality < CONFIG.MIN_FACE_QUALITY) {
+    reason = `Face quality too low (${(quality * 100).toFixed(1)}%). `;
+    
+    if (featureValidation.issues.length > 0) {
+      reason += `Issues: ${featureValidation.issues.join(', ')}. `;
+    }
+    
+    reason += 'Please ensure good lighting, face the camera directly, and keep eyes open.';
+  }
   
   if (quality < CONFIG.MIN_FACE_QUALITY) {
     return { 
       valid: false, 
-      reason: `Face quality too low (${(quality * 100).toFixed(1)}%). Please ensure good lighting and face the camera directly.`,
-      quality 
+      reason,
+      quality,
+      featureIssues: featureValidation.issues,
+      featuresDetected: featureValidation.features
     };
   }
   
@@ -157,11 +334,27 @@ function validateFaceDetection(detection) {
     return { 
       valid: false, 
       reason: `Detection confidence too low (${(detectionScore * 100).toFixed(1)}%)`,
-      quality 
+      quality,
+      featureIssues: featureValidation.issues,
+      featuresDetected: featureValidation.features
     };
   }
   
-  return { valid: true, quality, detectionScore };
+  // Log detected features
+  if (featureValidation.features) {
+    console.log(`👁️ Features detected - Eyes: ${featureValidation.features.eyesDetected ? '✅' : '❌'}, ` +
+                `Nose: ${featureValidation.features.noseDetected ? '✅' : '❌'}, ` +
+                `Mouth: ${featureValidation.features.mouthDetected ? '✅' : '❌'}, ` +
+                `Face Shape: ${featureValidation.features.faceShapeDetected ? '✅' : '❌'}`);
+  }
+  
+  return { 
+    valid: true, 
+    quality, 
+    detectionScore,
+    features: featureValidation.features,
+    featureIssues: featureValidation.issues
+  };
 }
 
 // Generate face embedding from image buffer with enhanced validation
