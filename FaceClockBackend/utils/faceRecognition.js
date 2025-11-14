@@ -30,13 +30,23 @@ const CONFIG = {
 };
 
 async function loadModels() {
-  if (modelsLoaded) return;
+  if (modelsLoaded && !modelsLoadError) {
+    // Models already loaded successfully
+    return;
+  }
+  
   if (modelsLoading) {
     // Wait for ongoing load
     while (modelsLoading) {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
     return;
+  }
+  
+  // Reset error if we're retrying
+  if (modelsLoadError) {
+    console.log('🔄 Retrying to load face recognition models...');
+    modelsLoadError = null;
   }
   
   modelsLoading = true;
@@ -57,59 +67,52 @@ async function loadModels() {
     }
     
     // Try to load from CDN/remote (for Render deployment)
-    // Using jsdelivr CDN which is more reliable than raw GitHub
     console.log('📦 Attempting to load models from CDN...');
-    try {
-      // jsdelivr CDN for face-api.js models
-      const baseUrl = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model';
-      console.log(`   Loading SSD MobileNet v1...`);
-      await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
-      console.log(`   Loading Face Landmark 68 Net...`);
-      await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
-      console.log(`   Loading Face Recognition Net...`);
-      await faceapi.nets.faceRecognitionNet.loadFromUri(baseUrl);
-      modelsLoaded = true;
-      modelsLoading = false;
-      modelsLoadError = null; // Clear any previous errors
-      console.log('✅ Face recognition models loaded successfully from CDN');
-      return;
-    } catch (cdnError) {
-      console.warn('⚠️ Could not load from jsdelivr CDN:', cdnError.message);
-      
-      // Try alternative: unpkg CDN
+    
+    // Try multiple CDN sources in order of reliability
+    const cdnSources = [
+      {
+        name: 'jsdelivr CDN',
+        url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model'
+      },
+      {
+        name: 'unpkg CDN',
+        url: 'https://unpkg.com/@vladmandic/face-api@1.7.14/model'
+      },
+      {
+        name: 'GitHub Raw',
+        url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights'
+      },
+      {
+        name: 'GitHub Raw (alternative)',
+        url: 'https://github.com/justadudewhohacks/face-api.js-models/raw/master/weights'
+      }
+    ];
+    
+    for (const source of cdnSources) {
       try {
-        console.log('📦 Trying alternative CDN (unpkg)...');
-        const unpkgUrl = 'https://unpkg.com/@vladmandic/face-api@1.7.14/model';
-        await faceapi.nets.ssdMobilenetv1.loadFromUri(unpkgUrl);
-        await faceapi.nets.faceLandmark68Net.loadFromUri(unpkgUrl);
-        await faceapi.nets.faceRecognitionNet.loadFromUri(unpkgUrl);
+        console.log(`   Trying ${source.name}...`);
+        const baseUrl = source.url;
+        console.log(`   Loading SSD MobileNet v1 from ${baseUrl}...`);
+        await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
+        console.log(`   Loading Face Landmark 68 Net from ${baseUrl}...`);
+        await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
+        console.log(`   Loading Face Recognition Net from ${baseUrl}...`);
+        await faceapi.nets.faceRecognitionNet.loadFromUri(baseUrl);
         modelsLoaded = true;
         modelsLoading = false;
-        modelsLoadError = null;
-        console.log('✅ Face recognition models loaded successfully from unpkg CDN');
+        modelsLoadError = null; // Clear any previous errors
+        console.log(`✅ Face recognition models loaded successfully from ${source.name}`);
         return;
-      } catch (unpkgError) {
-        console.warn('⚠️ Could not load from unpkg CDN:', unpkgError.message);
-        
-        // Try GitHub with correct path structure (weights folder)
-        try {
-          console.log('📦 Trying GitHub with correct path structure...');
-          // The models are in the weights folder - face-api.js will append model-specific paths
-          const githubBase = 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights';
-          await faceapi.nets.ssdMobilenetv1.loadFromUri(githubBase);
-          await faceapi.nets.faceLandmark68Net.loadFromUri(githubBase);
-          await faceapi.nets.faceRecognitionNet.loadFromUri(githubBase);
-          modelsLoaded = true;
-          modelsLoading = false;
-          modelsLoadError = null;
-          console.log('✅ Face recognition models loaded successfully from GitHub');
-          return;
-        } catch (githubError) {
-          console.warn('⚠️ Could not load from GitHub:', githubError.message);
-          modelsLoadError = `All CDN attempts failed. Last error: ${githubError.message}`;
-        }
+      } catch (error) {
+        console.warn(`⚠️ Could not load from ${source.name}:`, error.message);
+        // Continue to next source
       }
     }
+    
+    // If all CDN sources failed
+    console.error('❌ All CDN sources failed to load models');
+    modelsLoadError = 'All CDN attempts failed';
     
     // If both fail, warn but don't crash
     console.error('❌ Face recognition models not found!');
@@ -406,10 +409,22 @@ async function generateEmbedding(imageBuffer) {
   await loadModels();
   
   // Check if models actually loaded successfully
+  // If models failed to load, try one more time before giving up
   if (modelsLoadError) {
-    console.error('❌ Cannot generate proper embeddings: Models not loaded');
-    console.error(`   Error: ${modelsLoadError}`);
-    throw new Error('Face recognition models not loaded. Please ensure models are available.');
+    console.warn('⚠️ Models previously failed to load, attempting to reload...');
+    modelsLoaded = false; // Reset to allow retry
+    await loadModels();
+    
+    // Check again after retry
+    if (modelsLoadError) {
+      console.error('❌ Cannot generate proper embeddings: Models not loaded after retry');
+      console.error(`   Error: ${modelsLoadError}`);
+      console.error('💡 Suggestions:');
+      console.error('   1. Check Render logs for model download errors');
+      console.error('   2. Verify CDN connectivity');
+      console.error('   3. Manually download models and commit to repository');
+      throw new Error('Face recognition models not loaded. Please ensure models are available.');
+    }
   }
   
   try {

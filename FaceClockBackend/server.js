@@ -7,10 +7,12 @@ const staffRoutes = require('./routes/staff');
 const { loadModels } = require('./utils/faceRecognition');
 
 // Pre-load face recognition models on server start
+// This is async but we don't block server startup - models will load in background
 loadModels().then(() => {
   console.log('✅ Face recognition models ready');
 }).catch(err => {
   console.error('⚠️ Face recognition models may not be available:', err.message);
+  console.error('⚠️ The system will attempt to load models from CDN on first request');
 });
 
 const app = express();
