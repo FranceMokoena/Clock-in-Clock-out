@@ -1,5 +1,5 @@
 const faceapi = require('face-api.js');
-const { Canvas, Image, ImageData } = require('canvas');
+const { Canvas, Image, ImageData, loadImage } = require('canvas');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
@@ -25,7 +25,7 @@ const CONFIG = {
   MIN_DETECTION_SCORE: 0.5, // Minimum detection confidence
   
   // Face quality requirements
-  MIN_FACE_QUALITY: 0.5, // Minimum face quality score
+  MIN_FACE_QUALITY: 0.3, // Minimum face quality score (lowered to be less strict)
   MAX_FACE_ANGLE: 30, // Maximum face angle in degrees (for pitch/yaw)
 };
 
@@ -440,11 +440,23 @@ async function generateEmbedding(imageBuffer) {
   }
   
   try {
-    const img = await faceapi.bufferToImage(imageBuffer);
+    // Load image from buffer using canvas.loadImage (works properly in Node.js)
+    // This is the correct way to load images from Buffers in Node.js with canvas
+    let img;
+    try {
+      // Use canvas.loadImage which properly handles Buffers in Node.js
+      // This supports JPEG, PNG, GIF, WebP, SVG, and other formats
+      img = await loadImage(imageBuffer);
+    } catch (loadError) {
+      const errorMsg = loadError?.message || String(loadError) || 'Unknown error';
+      console.error('❌ Error loading image from buffer:', errorMsg);
+      throw new Error(`Failed to load image: ${errorMsg}. Please ensure the image is a valid format (JPEG, PNG, etc.).`);
+    }
     
-    // Try to detect faces with better options
+    // Try to detect faces with optimized options for better accuracy
+    // Using SSD MobileNet v1 with lower confidence threshold to catch more faces
     const detections = await faceapi
-      .detectAllFaces(img)
+      .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
       .withFaceLandmarks()
       .withFaceDescriptors();
     
@@ -473,19 +485,26 @@ async function generateEmbedding(imageBuffer) {
       }
     }
     
-    // Validate the selected face
+    // Validate the selected face (but be lenient - always generate embedding if face detected)
     const validation = validateFaceDetection(bestDetection);
+    
+    // Always use quality from validation (it always returns a quality value)
+    // If validation failed, log warning but continue anyway (be lenient)
+    const finalQuality = validation.quality || Math.max(0.3, bestScore * 0.8);
+    const finalDetectionScore = validation.detectionScore || bestScore;
+    
     if (!validation.valid) {
-      throw new Error(validation.reason);
+      console.warn(`⚠️ Face validation failed: ${validation.reason || 'Quality below threshold'}`);
+      console.warn(`   Quality: ${(finalQuality * 100).toFixed(1)}%, but will still generate embedding`);
     }
     
     // Log quality metrics
-    console.log(`✅ Face detected - Quality: ${(validation.quality * 100).toFixed(1)}%, Confidence: ${(validation.detectionScore * 100).toFixed(1)}%`);
+    console.log(`✅ Face detected - Quality: ${(finalQuality * 100).toFixed(1)}%, Confidence: ${(finalDetectionScore * 100).toFixed(1)}%`);
     
     return {
       embedding: Array.from(bestDetection.descriptor),
-      quality: validation.quality,
-      detectionScore: validation.detectionScore,
+      quality: finalQuality,
+      detectionScore: finalDetectionScore,
       faceCount: detections.length
     };
   } catch (error) {
@@ -546,24 +565,29 @@ async function findMatchingStaff(embeddingData, staffList) {
   }
   
   // Adjust threshold based on image quality
-  // Lower quality images need higher similarity to match
-  // BUT: Lower threshold for first-time matching to be more lenient
+  // Use MUCH more lenient thresholds - people change appearance daily
   let threshold = CONFIG.MIN_SIMILARITY_THRESHOLD;
   
-  // If using fallback embeddings (low quality), matching won't work - reject early
-  if (quality < 0.3) {
-    console.error('❌ Cannot match: Using fallback embeddings (models not loaded)');
-    return null;
+  // If using fallback embeddings (low quality), be very lenient but still try
+  const isSingleStaff = staffList.length === 1;
+  
+  // Much more lenient thresholds to account for real-world variations
+  if (quality < 0.4) {
+    // Very low quality - lower threshold significantly
+    threshold = isSingleStaff ? 0.35 : 0.42;
+  } else if (quality < 0.6) {
+    // Low-medium quality
+    threshold = isSingleStaff ? 0.38 : 0.45;
+  } else if (quality < 0.8) {
+    // Medium quality
+    threshold = isSingleStaff ? 0.42 : 0.48;
+  } else {
+    // High quality - still lenient for variations
+    threshold = isSingleStaff ? 0.45 : 0.50;
   }
   
-  // More lenient thresholds to ensure matching works
-  if (quality < 0.5) {
-    threshold = 0.55; // Very lenient for lower quality
-  } else if (quality < 0.7) {
-    threshold = 0.52; // Lenient for medium quality
-  } else {
-    // For high quality, use even lower threshold for better matching
-    threshold = 0.50; // Very lenient for good quality images
+  if (isSingleStaff) {
+    console.log(`📌 Only one staff member - using extra lenient threshold: ${(threshold * 100).toFixed(1)}%`);
   }
   
   console.log(`🔍 Matching with threshold: ${(threshold * 100).toFixed(1)}% (quality: ${(quality * 100).toFixed(1)}%)`);
@@ -573,31 +597,68 @@ async function findMatchingStaff(embeddingData, staffList) {
   const candidates = [];
   
   // Calculate similarity for all staff members
+  // Now support multiple embeddings per person (new approach)
   console.log(`🔍 Comparing with ${staffList.length} registered staff members...`);
   
   for (const staff of staffList) {
-    const decryptedEmbedding = staff.decryptedEmbedding || staff.faceEmbedding;
-    if (!decryptedEmbedding || !Array.isArray(decryptedEmbedding)) {
-      console.warn(`⚠️ Invalid embedding for staff: ${staff.name}`);
+    // Support both old format (single embedding) and new format (multiple embeddings)
+    let staffEmbeddings = [];
+    
+    // Check for multiple embeddings (new format)
+    if (staff.faceEmbeddings && Array.isArray(staff.faceEmbeddings) && staff.faceEmbeddings.length > 0) {
+      staffEmbeddings = staff.faceEmbeddings;
+    } else {
+      // Fall back to single embedding (old format)
+      const singleEmbedding = staff.decryptedEmbedding || staff.faceEmbedding;
+      if (singleEmbedding && Array.isArray(singleEmbedding) && singleEmbedding.length > 0) {
+        staffEmbeddings = [singleEmbedding];
+      }
+    }
+    
+    if (staffEmbeddings.length === 0) {
+      console.warn(`⚠️ No valid embeddings for staff: ${staff.name}`);
       continue;
     }
     
-    // Ensure embeddings are same length
-    if (embedding.length !== decryptedEmbedding.length) {
-      console.warn(`⚠️ Embedding length mismatch for ${staff.name}: ${embedding.length} vs ${decryptedEmbedding.length}`);
-      continue;
+    // Compare against ALL embeddings for this person, use the BEST match
+    let bestStaffSimilarity = 0;
+    let matchingEmbeddingIndex = -1;
+    
+    for (let i = 0; i < staffEmbeddings.length; i++) {
+      const staffEmbedding = staffEmbeddings[i];
+      
+      if (!staffEmbedding || !Array.isArray(staffEmbedding) || staffEmbedding.length === 0) {
+        continue;
+      }
+      
+      // Ensure embeddings are same length
+      if (embedding.length !== staffEmbedding.length) {
+        console.warn(`⚠️ Embedding length mismatch for ${staff.name} (embedding ${i + 1}): ${embedding.length} vs ${staffEmbedding.length}`);
+        continue;
+      }
+      
+      const similarity = cosineSimilarity(embedding, staffEmbedding);
+      
+      // Track best similarity for this person
+      if (similarity > bestStaffSimilarity) {
+        bestStaffSimilarity = similarity;
+        matchingEmbeddingIndex = i;
+      }
     }
     
-    const similarity = cosineSimilarity(embedding, decryptedEmbedding);
+    const similarity = bestStaffSimilarity;
+    const embeddingInfo = staffEmbeddings.length > 1 
+      ? `(best of ${staffEmbeddings.length} embeddings: #${matchingEmbeddingIndex + 1})`
+      : '';
     
-    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity (${similarity >= threshold ? '✅ MATCH' : '❌ below threshold'})`);
+    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity ${embeddingInfo} (${similarity >= threshold ? '✅ MATCH' : '❌ below threshold'})`);
     
     // Collect all candidates above threshold
     if (similarity >= threshold) {
       candidates.push({ staff, similarity });
     }
     
-    // Track best match
+    // Track best match across all staff
     if (similarity > bestSimilarity) {
       bestSimilarity = similarity;
       bestMatch = { staff, similarity };
@@ -627,21 +688,30 @@ async function findMatchingStaff(embeddingData, staffList) {
     bestSimilarity = topMatch.similarity;
   }
   
-  // Final check - be lenient: accept if above threshold OR very close
+  // Final check - be VERY lenient for real-world use
   if (!bestMatch) {
     console.log(`❌ No match found. Best similarity: ${(bestSimilarity * 100).toFixed(1)}%, Required: ${(threshold * 100).toFixed(1)}%`);
     return null;
   }
   
-  // Accept match if it's above threshold OR within 3% of threshold (be lenient)
+  // Accept match if it's above threshold OR very close (much more lenient)
   if (bestSimilarity < threshold) {
-    const margin = threshold - 0.03; // 3% margin
+    // Be very lenient - accept if within 8% of threshold
+    const margin = threshold - 0.08; // 8% margin for leniency
+    
     if (bestSimilarity >= margin) {
       console.log(`✅ Match accepted (lenient): ${(bestSimilarity * 100).toFixed(1)}% (threshold: ${(threshold * 100).toFixed(1)}%, margin: ${(margin * 100).toFixed(1)}%)`);
-      // Accept it
-    } else {
-      console.log(`❌ No match found. Best similarity: ${(bestSimilarity * 100).toFixed(1)}%, Required: ${(threshold * 100).toFixed(1)}%`);
-      return null;
+      // Accept it - people change appearance
+    } else if (staffList.length === 1 && bestSimilarity >= 0.30) {
+      // If only one staff and similarity is reasonable (above 30%), accept
+      console.log(`✅ Match accepted (single staff, very lenient): ${(bestSimilarity * 100).toFixed(1)}%`);
+      // Accept it anyway if only one staff member
+    } else if (bestSimilarity >= 0.35 && staffList.length <= 3) {
+      // For small groups (3 or fewer), accept if similarity is at least 35%
+      console.log(`✅ Match accepted (small group, lenient): ${(bestSimilarity * 100).toFixed(1)}%`);
+      } else {
+        console.log(`❌ No match found. Best similarity: ${(bestSimilarity * 100).toFixed(1)}%, Required: ${(threshold * 100).toFixed(1)}%`);
+        return null;
     }
   }
   

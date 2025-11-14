@@ -9,7 +9,12 @@ const staffSchema = new mongoose.Schema({
   },
   faceEmbedding: {
     type: [Number],
-    required: true
+    required: false  // Now optional, use faceEmbeddings array instead
+  },
+  // Multiple embeddings per person for better matching
+  faceEmbeddings: {
+    type: [[Number]],  // Array of embedding arrays
+    default: []
   },
   encryptedEmbedding: {
     type: String,
