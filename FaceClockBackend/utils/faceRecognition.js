@@ -442,11 +442,19 @@ async function generateEmbedding(imageBuffer) {
   try {
     // Load image from buffer using canvas.loadImage (works properly in Node.js)
     // This is the correct way to load images from Buffers in Node.js with canvas
+    console.log(`🖼️ Loading image from buffer (${imageBuffer.length} bytes)...`);
     let img;
     try {
       // Use canvas.loadImage which properly handles Buffers in Node.js
       // This supports JPEG, PNG, GIF, WebP, SVG, and other formats
-      img = await loadImage(imageBuffer);
+      // Add timeout to prevent hanging (10 seconds max for image loading)
+      const loadImagePromise = loadImage(imageBuffer);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Image loading timeout after 10 seconds')), 10000)
+      );
+      
+      img = await Promise.race([loadImagePromise, timeoutPromise]);
+      console.log(`✅ Image loaded successfully - Dimensions: ${img.width}x${img.height}`);
     } catch (loadError) {
       const errorMsg = loadError?.message || String(loadError) || 'Unknown error';
       console.error('❌ Error loading image from buffer:', errorMsg);
@@ -455,10 +463,31 @@ async function generateEmbedding(imageBuffer) {
     
     // Try to detect faces with optimized options for better accuracy
     // Using SSD MobileNet v1 with lower confidence threshold to catch more faces
-    const detections = await faceapi
-      .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
-      .withFaceLandmarks()
-      .withFaceDescriptors();
+    console.log('🔍 Starting face detection...');
+    let detections;
+    try {
+      // Add timeout for face detection (15 seconds max)
+      const detectionPromise = faceapi
+        .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+        .withFaceLandmarks()
+        .withFaceDescriptors();
+      
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Face detection timeout after 15 seconds')), 15000)
+      );
+      
+      detections = await Promise.race([detectionPromise, timeoutPromise]);
+      console.log(`✅ Face detection completed - Found ${detections.length} face(s)`);
+    } catch (detectionError) {
+      const errorMsg = detectionError?.message || String(detectionError) || 'Unknown error';
+      console.error('❌ Error during face detection:', errorMsg);
+      
+      // If timeout or other error, check if it's actually a "no face" case
+      if (errorMsg.includes('timeout')) {
+        throw new Error('Face detection took too long. The image might be too large or complex. Please try with a smaller, clearer image.');
+      }
+      throw new Error(`Face detection failed: ${errorMsg}`);
+    }
     
     if (!detections || detections.length === 0) {
       throw new Error('No face detected in image. Please ensure your face is visible and well-lit.');

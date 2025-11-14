@@ -238,17 +238,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     console.log(`✅ Match found: ${staff.name} - Confidence: ${confidence}% (${confidenceLevel || 'Medium'})`);
     
-    // Create clock log
-    const clockLog = new ClockLog({
-      staffId: staff._id,
-      staffName: staff.name,
-      clockType: type,
-      confidence
-    });
-    
-    await clockLog.save();
-    
-    // Format timestamp
+    // Format timestamp before saving (in case save fails, we still have the time)
     const timestamp = new Date();
     const timeString = timestamp.toLocaleTimeString('en-US', { 
       hour: '2-digit', 
@@ -269,13 +259,53 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     console.log(`✅ Success: ${staff.name} ${clockTypeText} at ${timeString}`);
     
-    res.json({
+    // Prepare response data
+    const responseData = {
       success: true,
       message: `${staff.name} — ${clockTypeText} at ${timeString}`,
       staffName: staff.name,
       clockType: type,
       timestamp: timestamp.toISOString(),
       confidence
+    };
+    
+    // Send response immediately - don't wait for database save
+    res.json(responseData);
+    console.log(`📤 Response sent to client for ${staff.name}`);
+    
+    // Save clock log in background (non-blocking, fire-and-forget)
+    // Don't await - let it run in background while response is sent
+    (async () => {
+      try {
+        console.log(`💾 Saving clock log for ${staff.name}...`);
+        const clockLog = new ClockLog({
+          staffId: staff._id,
+          staffName: staff.name,
+          clockType: type,
+          confidence,
+          timestamp: timestamp
+        });
+        
+        // Add timeout to prevent hanging (5 seconds max for database save)
+        const savePromise = clockLog.save();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Database save timeout after 5 seconds')), 5000)
+        );
+        
+        await Promise.race([savePromise, timeoutPromise]);
+        console.log(`✅ Clock log saved successfully for ${staff.name}`);
+      } catch (saveError) {
+        // Log error but don't fail the request - response already sent
+        const errorMsg = saveError?.message || String(saveError) || 'Unknown error';
+        console.error(`⚠️ Failed to save clock log (non-critical): ${errorMsg}`);
+        console.error(`   Staff: ${staff.name}, Type: ${type}, Confidence: ${confidence}%`);
+        if (saveError?.stack) {
+          console.error(`   Stack: ${saveError.stack}`);
+        }
+      }
+    })().catch(err => {
+      // Extra safety catch for any unhandled errors in background save
+      console.error(`⚠️ Unhandled error in background clock log save: ${err.message}`);
     });
   } catch (error) {
     console.error('❌ Error clocking in/out:', error);
