@@ -50,6 +50,15 @@ mongoose.connect(MONGO_URI)
   console.error('   - Database user has correct permissions');
 });
 
+// Debug: Log all incoming requests to /api/staff (must be before routes)
+app.use('/api/staff', (req, res, next) => {
+  console.log(`📥 ${req.method} ${req.path} - Headers:`, {
+    'content-type': req.headers['content-type'],
+    'content-length': req.headers['content-length']
+  });
+  next();
+});
+
 // Routes
 app.use('/api/staff', staffRoutes);
 
@@ -58,9 +67,43 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'OK', message: 'Face Clock API is running' });
 });
 
+// Root endpoint
+app.get('/', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'Internship Success Clock-in/Clock-out API',
+    endpoints: {
+      health: '/api/health',
+      register: 'POST /api/staff/register',
+      clock: 'POST /api/staff/clock',
+      list: 'GET /api/staff/list',
+      logs: 'GET /api/staff/logs',
+      test: 'GET /api/staff/test'
+    }
+  });
+});
+
 const PORT = process.env.PORT || 5000;
 
-// Error handling middleware
+// 404 handler for undefined routes (must be before error handler)
+app.use((req, res) => {
+  console.error(`❌ Route not found: ${req.method} ${req.path}`);
+  res.status(404).json({ 
+    error: 'Route not found',
+    method: req.method,
+    path: req.path,
+    availableEndpoints: [
+      'GET /api/health',
+      'POST /api/staff/register',
+      'POST /api/staff/clock',
+      'GET /api/staff/list',
+      'GET /api/staff/logs',
+      'GET /api/staff/test'
+    ]
+  });
+});
+
+// Error handling middleware (must be last)
 app.use((err, req, res, next) => {
   console.error('Error:', err);
   res.status(err.status || 500).json({

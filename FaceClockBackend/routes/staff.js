@@ -6,7 +6,17 @@ const ClockLog = require('../models/ClockLog');
 const { generateEmbedding, findMatchingStaff } = require('../utils/faceRecognition');
 
 // Configure multer for memory storage
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB limit
+  }
+});
+
+// Test route to verify router is working
+router.get('/test', (req, res) => {
+  res.json({ success: true, message: 'Staff routes are working!' });
+});
 
 // Register new staff member
 router.post('/register', upload.single('image'), async (req, res) => {
@@ -49,15 +59,23 @@ router.post('/register', upload.single('image'), async (req, res) => {
 // Clock in/out
 router.post('/clock', upload.single('image'), async (req, res) => {
   try {
+    console.log('📸 Clock request received');
+    console.log('Request body:', req.body);
+    console.log('Request file:', req.file ? `File received (${req.file.size} bytes)` : 'No file');
+    
     const { type } = req.body; // 'in', 'out', 'break_start', or 'break_end'
     
     if (!type || !['in', 'out', 'break_start', 'break_end'].includes(type)) {
+      console.error('❌ Invalid clock type:', type);
       return res.status(400).json({ error: 'Clock type must be "in", "out", "break_start", or "break_end"' });
     }
     
     if (!req.file) {
+      console.error('❌ No image file received');
       return res.status(400).json({ error: 'Image is required' });
     }
+    
+    console.log(`✅ Processing ${type} request for staff member`);
 
     // Generate embedding from captured image
     const embedding = await generateEmbedding(req.file.buffer);
@@ -75,7 +93,9 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     const match = await findMatchingStaff(embedding, staffWithEmbeddings);
     
     if (!match) {
+      console.error('❌ Face not recognized - no matching staff found');
       return res.status(404).json({ 
+        success: false,
         error: 'Face not recognized. Please register first.' 
       });
     }
@@ -112,6 +132,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       clockTypeText = 'Ended Break';
     }
     
+    console.log(`✅ Success: ${staff.name} ${clockTypeText} at ${timeString}`);
+    
     res.json({
       success: true,
       message: `${staff.name} — ${clockTypeText} at ${timeString}`,
@@ -121,7 +143,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       confidence
     });
   } catch (error) {
-    console.error('Error clocking in/out:', error);
+    console.error('❌ Error clocking in/out:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: error.message || 'Failed to process clock in/out' });
   }
 });
