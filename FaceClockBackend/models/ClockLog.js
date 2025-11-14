@@ -12,7 +12,7 @@ const clockLogSchema = new mongoose.Schema({
   },
   clockType: {
     type: String,
-    enum: ['in', 'out'],
+    enum: ['in', 'out', 'break_start', 'break_end'],
     required: true
   },
   timestamp: {

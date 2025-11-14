@@ -49,10 +49,10 @@ router.post('/register', upload.single('image'), async (req, res) => {
 // Clock in/out
 router.post('/clock', upload.single('image'), async (req, res) => {
   try {
-    const { type } = req.body; // 'in' or 'out'
+    const { type } = req.body; // 'in', 'out', 'break_start', or 'break_end'
     
-    if (!type || !['in', 'out'].includes(type)) {
-      return res.status(400).json({ error: 'Clock type must be "in" or "out"' });
+    if (!type || !['in', 'out', 'break_start', 'break_end'].includes(type)) {
+      return res.status(400).json({ error: 'Clock type must be "in", "out", "break_start", or "break_end"' });
     }
     
     if (!req.file) {
@@ -101,7 +101,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       hour12: true 
     });
     
-    const clockTypeText = type === 'in' ? 'Clocked In' : 'Clocked Out';
+    let clockTypeText;
+    if (type === 'in') {
+      clockTypeText = 'Clocked In';
+    } else if (type === 'out') {
+      clockTypeText = 'Clocked Out';
+    } else if (type === 'break_start') {
+      clockTypeText = 'Started Break';
+    } else if (type === 'break_end') {
+      clockTypeText = 'Ended Break';
+    }
     
     res.json({
       success: true,
