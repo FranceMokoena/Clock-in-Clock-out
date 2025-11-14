@@ -4,6 +4,7 @@ const multer = require('multer');
 const Staff = require('../models/Staff');
 const ClockLog = require('../models/ClockLog');
 const { generateEmbedding, findMatchingStaff } = require('../utils/faceRecognition');
+const staffCache = require('../utils/staffCache');
 
 // Configure multer for memory storage
 const upload = multer({ 
@@ -59,6 +60,9 @@ router.post('/register', upload.single('image'), async (req, res) => {
       staff.encryptedEmbedding = Staff.encryptEmbedding(embedding);
       await staff.save();
       console.log(`✅ Staff updated: ${name} - Total embeddings: ${staff.faceEmbeddings.length}`);
+      
+      // Invalidate cache so next request gets fresh data
+      staffCache.invalidate();
     } else {
       // New staff - create with first embedding
       const encryptedEmbedding = Staff.encryptEmbedding(embedding);
@@ -70,6 +74,9 @@ router.post('/register', upload.single('image'), async (req, res) => {
       });
       await staff.save();
       console.log(`✅ Staff registered: ${name} - Face quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
+      
+      // Invalidate cache so next request gets fresh data
+      staffCache.invalidate();
     }
     
     res.json({
@@ -90,6 +97,7 @@ router.post('/register', upload.single('image'), async (req, res) => {
 
 // Clock in/out
 router.post('/clock', upload.single('image'), async (req, res) => {
+  const requestStartTime = Date.now();
   try {
     console.log('📸 Clock request received');
     console.log('Request body:', req.body);
@@ -135,70 +143,13 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       });
     }
     
-    // Get all active staff members
-    const allStaff = await Staff.find({ isActive: true });
+    // Get all active staff members from cache (FAST PATH - no DB query!)
+    const staffWithEmbeddings = await staffCache.getStaff();
     
-    if (allStaff.length === 0) {
+    if (!staffWithEmbeddings || staffWithEmbeddings.length === 0) {
       return res.status(404).json({ 
         success: false,
         error: 'No staff members registered. Please register staff first.' 
-      });
-    }
-    
-    // Extract embeddings for comparison - support both old and new formats
-    const staffWithEmbeddings = allStaff.map(staff => {
-      try {
-        const staffObj = staff.toObject();
-        
-        // Support new format: multiple embeddings per person
-        let faceEmbeddings = [];
-        
-        if (staffObj.faceEmbeddings && Array.isArray(staffObj.faceEmbeddings) && staffObj.faceEmbeddings.length > 0) {
-          // Use multiple embeddings (new format)
-          faceEmbeddings = staffObj.faceEmbeddings;
-          console.log(`   Using ${faceEmbeddings.length} embeddings for ${staffObj.name}`);
-        } else {
-          // Fall back to single embedding (old format)
-          let decryptedEmbedding = staffObj.faceEmbedding;
-          
-          if (!decryptedEmbedding || !Array.isArray(decryptedEmbedding) || decryptedEmbedding.length === 0) {
-            // Try to decrypt if faceEmbedding is not available
-            if (staffObj.encryptedEmbedding) {
-              decryptedEmbedding = Staff.decryptEmbedding(staffObj.encryptedEmbedding);
-              console.log(`   Decrypted embedding for ${staffObj.name}: ${decryptedEmbedding ? decryptedEmbedding.length : 0} dimensions`);
-            } else {
-              console.error(`⚠️ No embedding available for ${staffObj.name}`);
-              return null;
-            }
-          }
-          
-          if (decryptedEmbedding && Array.isArray(decryptedEmbedding) && decryptedEmbedding.length > 0) {
-            faceEmbeddings = [decryptedEmbedding];
-            console.log(`   Using single faceEmbedding for ${staffObj.name}: ${decryptedEmbedding.length} dimensions`);
-          }
-        }
-        
-        if (faceEmbeddings.length === 0) {
-          console.error(`⚠️ No valid embeddings for ${staffObj.name}`);
-          return null;
-        }
-        
-        return {
-          ...staffObj,
-          faceEmbeddings: faceEmbeddings,
-          decryptedEmbedding: faceEmbeddings[0], // Keep for backward compatibility
-          faceEmbedding: faceEmbeddings[0] // Keep for backward compatibility
-        };
-      } catch (decryptError) {
-        console.error(`⚠️ Error processing embeddings for ${staff.name}:`, decryptError?.message || decryptError);
-        return null;
-      }
-    }).filter(staff => staff !== null && staff.faceEmbeddings && Array.isArray(staff.faceEmbeddings) && staff.faceEmbeddings.length > 0);
-    
-    if (staffWithEmbeddings.length === 0) {
-      return res.status(500).json({ 
-        success: false,
-        error: 'No valid staff embeddings found. Please re-register staff members.' 
       });
     }
     
@@ -236,7 +187,9 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     const { staff, similarity, confidenceLevel } = match;
     const confidence = Math.round(similarity * 100);
     
+    const totalRequestTime = Date.now() - requestStartTime;
     console.log(`✅ Match found: ${staff.name} - Confidence: ${confidence}% (${confidenceLevel || 'Medium'})`);
+    console.log(`⚡⚡⚡ TOTAL CLOCK-IN TIME: ${totalRequestTime}ms (Target: <2000ms for bank-level speed)`);
     
     // Format timestamp before saving (in case save fails, we still have the time)
     const timestamp = new Date();
@@ -339,6 +292,29 @@ router.get('/logs', async (req, res) => {
   } catch (error) {
     console.error('Error fetching clock logs:', error);
     res.status(500).json({ error: 'Failed to fetch clock logs' });
+  }
+});
+
+// Get cache statistics (for monitoring)
+router.get('/cache/stats', async (req, res) => {
+  try {
+    const stats = staffCache.getStats();
+    res.json({ success: true, cache: stats });
+  } catch (error) {
+    console.error('Error fetching cache stats:', error);
+    res.status(500).json({ error: 'Failed to fetch cache stats' });
+  }
+});
+
+// Manually refresh cache (admin endpoint)
+router.post('/cache/refresh', async (req, res) => {
+  try {
+    staffCache.invalidate();
+    await staffCache.getStaff();
+    res.json({ success: true, message: 'Cache refreshed successfully' });
+  } catch (error) {
+    console.error('Error refreshing cache:', error);
+    res.status(500).json({ error: 'Failed to refresh cache' });
   }
 });
 

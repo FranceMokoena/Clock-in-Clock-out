@@ -55,12 +55,13 @@ async function loadModels() {
   try {
     // Try to load models from local path first
     if (fs.existsSync(modelsPath)) {
-      // Check if at least one model file exists
-      const manifestPath = path.join(modelsPath, 'ssd_mobilenetv1_model-weights_manifest.json');
+      // Check if at least one model file exists (check for landmark net)
+      const manifestPath = path.join(modelsPath, 'face_landmark_68_model-weights_manifest.json');
       if (fs.existsSync(manifestPath)) {
         console.log('📦 Loading face recognition models from disk...');
         try {
-      await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
+      // Note: TinyFaceDetector doesn't need loading - it's built into face-api.js
+      // We still need landmark and recognition nets
       await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
       await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
       modelsLoaded = true;
@@ -104,8 +105,8 @@ async function loadModels() {
       try {
         console.log(`   Trying ${source.name}...`);
         const baseUrl = source.url;
-        console.log(`   Loading SSD MobileNet v1 from ${baseUrl}...`);
-        await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
+        // Note: TinyFaceDetector doesn't need loading - it's built into face-api.js
+        // We still need landmark and recognition nets
         console.log(`   Loading Face Landmark 68 Net from ${baseUrl}...`);
         await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
         console.log(`   Loading Face Recognition Net from ${baseUrl}...`);
@@ -418,6 +419,7 @@ function validateFaceDetection(detection) {
 
 // Generate face embedding from image buffer with enhanced validation
 async function generateEmbedding(imageBuffer) {
+  const totalStartTime = Date.now();
   await loadModels();
   
   // Check if models actually loaded successfully
@@ -461,23 +463,28 @@ async function generateEmbedding(imageBuffer) {
       throw new Error(`Failed to load image: ${errorMsg}. Please ensure the image is a valid format (JPEG, PNG, etc.).`);
     }
     
-    // Try to detect faces with optimized options for better accuracy
-    // Using SSD MobileNet v1 with lower confidence threshold to catch more faces
-    console.log('🔍 Starting face detection...');
+    // Try to detect faces with optimized options for SPEED
+    // Using TinyFaceDetector (3-4x faster than SSD MobileNet v1) for bank-level speed
+    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for speed)...');
+    const detectionStartTime = Date.now();
     let detections;
     try {
-      // Add timeout for face detection (15 seconds max)
+      // Add timeout for face detection (8 seconds max - should be much faster with TinyFaceDetector)
       const detectionPromise = faceapi
-        .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+        .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({ 
+          inputSize: 320, // Smaller = faster (320, 416, 512, 608) - 320 is fastest
+          scoreThreshold: 0.3 
+        }))
         .withFaceLandmarks()
         .withFaceDescriptors();
       
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Face detection timeout after 15 seconds')), 15000)
+        setTimeout(() => reject(new Error('Face detection timeout after 8 seconds')), 8000)
       );
       
       detections = await Promise.race([detectionPromise, timeoutPromise]);
-      console.log(`✅ Face detection completed - Found ${detections.length} face(s)`);
+      const detectionTime = Date.now() - detectionStartTime;
+      console.log(`✅ Face detection completed in ${detectionTime}ms - Found ${detections.length} face(s)`);
     } catch (detectionError) {
       const errorMsg = detectionError?.message || String(detectionError) || 'Unknown error';
       console.error('❌ Error during face detection:', errorMsg);
@@ -528,7 +535,9 @@ async function generateEmbedding(imageBuffer) {
     }
     
     // Log quality metrics
+    const totalTime = Date.now() - totalStartTime;
     console.log(`✅ Face detected - Quality: ${(finalQuality * 100).toFixed(1)}%, Confidence: ${(finalDetectionScore * 100).toFixed(1)}%`);
+    console.log(`⚡ Total embedding generation time: ${totalTime}ms`);
     
     return {
       embedding: Array.from(bestDetection.descriptor),
@@ -571,6 +580,7 @@ function generateFallbackEmbedding(imageBuffer) {
 
 // Find best matching staff with enhanced matching logic
 async function findMatchingStaff(embeddingData, staffList) {
+  const matchingStartTime = Date.now();
   // Validate input
   if (!embeddingData) {
     console.error('❌ findMatchingStaff: embeddingData is null or undefined');
@@ -752,7 +762,9 @@ async function findMatchingStaff(embeddingData, staffList) {
     confidenceLevel = 'High';
   }
   
+  const matchingTime = Date.now() - matchingStartTime;
   console.log(`✅ Match found: ${bestMatch.staff.name} - Similarity: ${(bestSimilarity * 100).toFixed(1)}% (${confidenceLevel} confidence)`);
+  console.log(`⚡ Matching time: ${matchingTime}ms (${staffList.length} staff members compared)`);
   
   return {
     staff: bestMatch.staff,

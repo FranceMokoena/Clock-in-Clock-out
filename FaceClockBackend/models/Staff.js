@@ -30,6 +30,11 @@ const staffSchema = new mongoose.Schema({
   }
 });
 
+// Add indexes for faster queries
+staffSchema.index({ isActive: 1, name: 1 }); // Compound index for active staff queries
+staffSchema.index({ createdAt: -1 }); // For sorting by creation date
+staffSchema.index({ name: 1 }); // For name lookups
+
 // Encryption/Decryption helpers
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
 const ALGORITHM = 'aes-256-cbc';

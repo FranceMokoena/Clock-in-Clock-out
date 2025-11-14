@@ -5,6 +5,7 @@ require('dotenv').config();
 
 const staffRoutes = require('./routes/staff');
 const { loadModels } = require('./utils/faceRecognition');
+const staffCache = require('./utils/staffCache');
 
 // Pre-load face recognition models on server start
 // This is async but we don't block server startup - models will load in background
@@ -13,6 +14,16 @@ loadModels().then(() => {
 }).catch(err => {
   console.error('⚠️ Face recognition models may not be available:', err.message);
   console.error('⚠️ The system will attempt to load models from CDN on first request');
+});
+
+// Pre-load staff cache on server start (for fast clock-in requests)
+// This runs in background - doesn't block server startup
+staffCache.preload().then(() => {
+  // Start background refresh after initial load
+  staffCache.startBackgroundRefresh();
+}).catch(err => {
+  console.error('⚠️ Staff cache preload failed:', err.message);
+  console.error('⚠️ Cache will load on first request');
 });
 
 const app = express();
