@@ -55,7 +55,9 @@ router.post('/register', upload.single('image'), async (req, res) => {
     });
   } catch (error) {
     console.error('Error registering staff:', error);
-    res.status(500).json({ error: error.message || 'Failed to register staff' });
+    console.error('Error stack:', error?.stack);
+    const errorMessage = error?.message || String(error) || 'Failed to register staff';
+    res.status(500).json({ error: errorMessage });
   }
 });
 

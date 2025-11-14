@@ -116,7 +116,8 @@ async function loadModels() {
         console.log(`✅ Face recognition models loaded successfully from ${source.name}`);
         return;
       } catch (error) {
-        console.warn(`⚠️ Could not load from ${source.name}:`, error.message);
+        const errorMsg = error?.message || String(error) || 'Unknown error';
+        console.warn(`⚠️ Could not load from ${source.name}:`, errorMsg);
         // Continue to next source
       }
     }
@@ -488,11 +489,12 @@ async function generateEmbedding(imageBuffer) {
       faceCount: detections.length
     };
   } catch (error) {
-    console.error('❌ Error generating embedding:', error.message);
+    const errorMessage = error?.message || String(error) || 'Unknown error';
+    console.error('❌ Error generating embedding:', errorMessage);
     
     // Only use fallback if models are actually loaded
     // Otherwise, throw the error so user knows models need to be set up
-    if (error.message.includes('No face detected') || error.message.includes('quality')) {
+    if (errorMessage.includes('No face detected') || errorMessage.includes('quality')) {
       throw error; // Re-throw quality/detection errors
     }
     
