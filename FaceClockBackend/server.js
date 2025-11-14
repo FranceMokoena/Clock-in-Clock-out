@@ -4,6 +4,14 @@ const cors = require('cors');
 require('dotenv').config();
 
 const staffRoutes = require('./routes/staff');
+const { loadModels } = require('./utils/faceRecognition');
+
+// Pre-load face recognition models on server start
+loadModels().then(() => {
+  console.log('✅ Face recognition models ready');
+}).catch(err => {
+  console.error('⚠️ Face recognition models may not be available:', err.message);
+});
 
 const app = express();
 

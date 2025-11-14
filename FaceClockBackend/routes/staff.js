@@ -104,9 +104,24 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     if (!match) {
       console.error('❌ Face not recognized - no matching staff found');
+      console.error(`📊 Debug info:`);
+      console.error(`   - Staff members in database: ${staffWithEmbeddings.length}`);
+      console.error(`   - Embedding quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
+      console.error(`   - Embedding type: ${Array.isArray(embeddingResult.embedding) ? 'Array' : typeof embeddingResult.embedding}`);
+      console.error(`   - Embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
+      
+      // Check if using fallback embeddings (models not loaded)
+      if (embeddingResult.quality && embeddingResult.quality < 0.5) {
+        console.error('⚠️ WARNING: Using fallback embeddings - models may not be loaded!');
+        return res.status(500).json({ 
+          success: false,
+          error: 'Face recognition models not properly loaded. Please contact administrator.' 
+        });
+      }
+      
       return res.status(404).json({ 
         success: false,
-        error: 'Face not recognized. Please register first.' 
+        error: 'Face not recognized. Please ensure you are the same person who registered, with similar lighting and angle.' 
       });
     }
     

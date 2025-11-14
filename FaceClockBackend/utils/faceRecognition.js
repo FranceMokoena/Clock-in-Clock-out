@@ -10,11 +10,12 @@ faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 
 let modelsLoaded = false;
 let modelsLoading = false;
+let modelsLoadError = null;
 
 // Configuration
 const CONFIG = {
   // Recognition thresholds
-  MIN_SIMILARITY_THRESHOLD: 0.65,  // Increased from 0.6 for better accuracy
+  MIN_SIMILARITY_THRESHOLD: 0.60,  // Lowered to 0.60 for better matching (was 0.65)
   HIGH_CONFIDENCE_THRESHOLD: 0.75,  // High confidence match
   VERY_HIGH_CONFIDENCE_THRESHOLD: 0.85, // Very high confidence
   
@@ -73,6 +74,7 @@ async function loadModels() {
     console.error('📝 Please download models and place in: ./models/face-api/');
     console.error('🔗 Download from: https://github.com/justadudewhohacks/face-api.js-models');
     console.error('⚠️ System will use fallback method (less accurate)');
+    modelsLoadError = 'Models not found - using fallback';
     modelsLoaded = true; // Set to true to prevent repeated warnings
     modelsLoading = false;
   } catch (error) {
@@ -361,6 +363,13 @@ function validateFaceDetection(detection) {
 async function generateEmbedding(imageBuffer) {
   await loadModels();
   
+  // Check if models actually loaded successfully
+  if (modelsLoadError) {
+    console.error('❌ Cannot generate proper embeddings: Models not loaded');
+    console.error(`   Error: ${modelsLoadError}`);
+    throw new Error('Face recognition models not loaded. Please ensure models are available.');
+  }
+  
   try {
     const img = await faceapi.bufferToImage(imageBuffer);
     
@@ -450,18 +459,33 @@ async function findMatchingStaff(embeddingData, staffList) {
   
   // Adjust threshold based on image quality
   // Lower quality images need higher similarity to match
+  // BUT: Lower threshold for first-time matching to be more lenient
   let threshold = CONFIG.MIN_SIMILARITY_THRESHOLD;
+  
+  // If using fallback embeddings (low quality), matching won't work - reject early
+  if (quality < 0.5) {
+    console.error('❌ Cannot match: Using fallback embeddings (models not loaded)');
+    return null;
+  }
+  
   if (quality < 0.6) {
     threshold = 0.70; // Stricter threshold for low quality
   } else if (quality < 0.8) {
     threshold = 0.68; // Slightly stricter
+  } else {
+    // For high quality, use slightly lower threshold for better matching
+    threshold = 0.62; // More lenient for good quality images
   }
+  
+  console.log(`🔍 Matching with threshold: ${(threshold * 100).toFixed(1)}% (quality: ${(quality * 100).toFixed(1)}%)`);
   
   let bestMatch = null;
   let bestSimilarity = 0;
   const candidates = [];
   
   // Calculate similarity for all staff members
+  console.log(`🔍 Comparing with ${staffList.length} registered staff members...`);
+  
   for (const staff of staffList) {
     const decryptedEmbedding = staff.decryptedEmbedding || staff.faceEmbedding;
     if (!decryptedEmbedding || !Array.isArray(decryptedEmbedding)) {
@@ -469,7 +493,15 @@ async function findMatchingStaff(embeddingData, staffList) {
       continue;
     }
     
+    // Ensure embeddings are same length
+    if (embedding.length !== decryptedEmbedding.length) {
+      console.warn(`⚠️ Embedding length mismatch for ${staff.name}: ${embedding.length} vs ${decryptedEmbedding.length}`);
+      continue;
+    }
+    
     const similarity = cosineSimilarity(embedding, decryptedEmbedding);
+    
+    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity`);
     
     // Collect all candidates above threshold
     if (similarity >= threshold) {
@@ -482,6 +514,8 @@ async function findMatchingStaff(embeddingData, staffList) {
       bestMatch = { staff, similarity };
     }
   }
+  
+  console.log(`📊 Best match: ${bestMatch ? bestMatch.staff.name : 'None'} - ${(bestSimilarity * 100).toFixed(1)}%`);
   
   // If we have multiple candidates, ensure the best one is significantly better
   if (candidates.length > 1) {
