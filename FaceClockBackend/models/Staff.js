@@ -7,6 +7,35 @@ const staffSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  surname: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  idNumber: {
+    type: String,
+    required: true,
+    trim: true,
+    unique: true,
+    validate: {
+      validator: function(v) {
+        // 13 digits, valid South African ID format (YYMMDDGSSSCAZ)
+        return /^\d{13}$/.test(v);
+      },
+      message: 'ID Number must be exactly 13 digits'
+    }
+  },
+  phoneNumber: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  role: {
+    type: String,
+    required: true,
+    enum: ['Intern', 'Staff', 'Other'],
+    default: 'Staff'
+  },
   faceEmbedding: {
     type: [Number],
     required: false  // Now optional, use faceEmbeddings array instead
@@ -34,6 +63,7 @@ const staffSchema = new mongoose.Schema({
 staffSchema.index({ isActive: 1, name: 1 }); // Compound index for active staff queries
 staffSchema.index({ createdAt: -1 }); // For sorting by creation date
 staffSchema.index({ name: 1 }); // For name lookups
+staffSchema.index({ idNumber: 1 }); // For ID number lookups (unique)
 
 // Encryption/Decryption helpers
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');

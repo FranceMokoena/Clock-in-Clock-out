@@ -1,3 +1,9 @@
+// NOTE: TensorFlow.js Node backend (@tensorflow/tfjs-node) is disabled
+// because it conflicts with face-api.js, causing "forwardFunc_1 is not a function" errors.
+// face-api.js works reliably with the CPU backend (pure JavaScript).
+// If you need faster performance, consider using a different face recognition library
+// that's compatible with TensorFlow.js Node backend.
+
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -131,10 +137,14 @@ async function startServer() {
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 API available at http://localhost:${PORT}/api`);
+    console.log(`📱 Android emulator: http://10.0.2.2:${PORT}/api`);
+    console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.1.104:${PORT}/api)`);
+    console.log(`   Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     if (process.env.RENDER_EXTERNAL_URL) {
       console.log(`🌐 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
     }
+    console.log(`\n✅ Server ready! Make sure Windows Firewall allows connections on port ${PORT}`);
   });
 }
 

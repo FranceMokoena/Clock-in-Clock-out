@@ -19,77 +19,132 @@ router.get('/test', (req, res) => {
   res.json({ success: true, message: 'Staff routes are working!' });
 });
 
-// Register new staff member
-router.post('/register', upload.single('image'), async (req, res) => {
+// Register new staff member - accepts 2 images for accuracy
+router.post('/register', upload.fields([
+  { name: 'image1', maxCount: 1 },
+  { name: 'image2', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, surname, idNumber, phoneNumber, role } = req.body;
     
-    if (!name || !req.file) {
-      return res.status(400).json({ error: 'Name and image are required' });
+    // Validate required fields
+    if (!name || !surname || !idNumber || !phoneNumber || !role) {
+      return res.status(400).json({ error: 'Name, surname, ID number, phone number, and role are required' });
     }
-
-    // Generate face embedding (now returns object with embedding, quality, etc.)
-    const embeddingResult = await generateEmbedding(req.file.buffer);
-    const embedding = embeddingResult.embedding || embeddingResult;
     
-    // Check if staff already exists (update with additional embedding)
-    let staff = await Staff.findOne({ name: name.trim(), isActive: true });
-    
-    if (staff) {
-      // Staff exists - add this embedding to their collection
-      if (!staff.faceEmbeddings) {
-        staff.faceEmbeddings = [];
-      }
-      // If they only have old single embedding, migrate it
-      if (staff.faceEmbedding && staff.faceEmbeddings.length === 0) {
-        staff.faceEmbeddings.push(staff.faceEmbedding);
-      }
-      // Add new embedding (limit to 5 embeddings per person)
-      if (staff.faceEmbeddings.length < 5) {
-        staff.faceEmbeddings.push(embedding);
-        console.log(`✅ Added embedding ${staff.faceEmbeddings.length} for ${name} - Face quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
-      } else {
-        // Replace oldest embedding (simple FIFO)
-        staff.faceEmbeddings.shift();
-        staff.faceEmbeddings.push(embedding);
-        console.log(`✅ Updated embeddings for ${name} (replaced oldest) - Face quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
-      }
-      // Update single embedding (for backward compatibility)
-      staff.faceEmbedding = embedding;
-      // Encrypt embedding
-      staff.encryptedEmbedding = Staff.encryptEmbedding(embedding);
-      await staff.save();
-      console.log(`✅ Staff updated: ${name} - Total embeddings: ${staff.faceEmbeddings.length}`);
-      
-      // Invalidate cache so next request gets fresh data
-      staffCache.invalidate();
-    } else {
-      // New staff - create with first embedding
-      const encryptedEmbedding = Staff.encryptEmbedding(embedding);
-      staff = new Staff({
-        name,
-        faceEmbedding: embedding, // Keep for backward compatibility
-        faceEmbeddings: [embedding], // New multi-embedding format
-        encryptedEmbedding
-      });
-      await staff.save();
-      console.log(`✅ Staff registered: ${name} - Face quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
-      
-      // Invalidate cache so next request gets fresh data
-      staffCache.invalidate();
+    // Validate ID number format (13 digits)
+    if (!/^\d{13}$/.test(idNumber.trim())) {
+      return res.status(400).json({ error: 'ID Number must be exactly 13 digits' });
     }
+    
+    // Validate role
+    if (!['Intern', 'Staff', 'Other'].includes(role)) {
+      return res.status(400).json({ error: 'Role must be Intern, Staff, or Other' });
+    }
+    
+    // Check if both images are provided
+    const image1 = req.files?.image1?.[0];
+    const image2 = req.files?.image2?.[0];
+    
+    if (!image1 || !image2) {
+      return res.status(400).json({ error: 'Two images are required for registration (for accuracy)' });
+    }
+    
+    // Check if staff with this ID number already exists
+    const existingStaff = await Staff.findOne({ idNumber: idNumber.trim(), isActive: true });
+    if (existingStaff) {
+      return res.status(400).json({ error: `Staff with ID number ${idNumber.trim()} is already registered` });
+    }
+    
+    console.log(`📸 Processing registration for ${name.trim()} ${surname.trim()} (ID: ${idNumber.trim()})`);
+    console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}`);
+    console.log(`   Processing 2 face images for accuracy...`);
+    
+    // Generate embeddings for both images
+    let embedding1, embedding2, quality1, quality2;
+    
+    try {
+      console.log('   Processing image 1...');
+      const embeddingResult1 = await generateEmbedding(image1.buffer);
+      embedding1 = embeddingResult1.embedding || embeddingResult1;
+      quality1 = embeddingResult1.quality || 0;
+      console.log(`   ✅ Image 1 processed - Quality: ${(quality1 * 100).toFixed(1)}%`);
+    } catch (error1) {
+      console.error('   ❌ Error processing image 1:', error1.message);
+      return res.status(500).json({ error: `Failed to process first image: ${error1.message}` });
+    }
+    
+    try {
+      console.log('   Processing image 2...');
+      const embeddingResult2 = await generateEmbedding(image2.buffer);
+      embedding2 = embeddingResult2.embedding || embeddingResult2;
+      quality2 = embeddingResult2.quality || 0;
+      console.log(`   ✅ Image 2 processed - Quality: ${(quality2 * 100).toFixed(1)}%`);
+    } catch (error2) {
+      console.error('   ❌ Error processing image 2:', error2.message);
+      return res.status(500).json({ error: `Failed to process second image: ${error2.message}` });
+    }
+    
+    // Validate embeddings
+    if (!embedding1 || !Array.isArray(embedding1) || embedding1.length === 0) {
+      return res.status(500).json({ error: 'Invalid embedding generated from first image' });
+    }
+    if (!embedding2 || !Array.isArray(embedding2) || embedding2.length === 0) {
+      return res.status(500).json({ error: 'Invalid embedding generated from second image' });
+    }
+    
+    // Calculate average quality
+    const avgQuality = ((quality1 + quality2) / 2);
+    console.log(`   📊 Average face quality: ${(avgQuality * 100).toFixed(1)}%`);
+    
+    // Create staff with both embeddings
+    const fullName = `${name.trim()} ${surname.trim()}`;
+    const encryptedEmbedding = Staff.encryptEmbedding(embedding1); // Use first embedding as primary
+    
+    staff = new Staff({
+      name: fullName, // Store full name in name field for backward compatibility
+      surname: surname.trim(),
+      idNumber: idNumber.trim(),
+      phoneNumber: phoneNumber.trim(),
+      role: role,
+      faceEmbedding: embedding1, // Primary embedding (for backward compatibility)
+      faceEmbeddings: [embedding1, embedding2], // Both embeddings for accuracy
+      encryptedEmbedding
+    });
+    
+    await staff.save();
+    console.log(`✅ Staff registered: ${fullName} - ID: ${idNumber.trim()}, Role: ${role}`);
+    console.log(`   Face quality: ${(avgQuality * 100).toFixed(1)}% (Image 1: ${(quality1 * 100).toFixed(1)}%, Image 2: ${(quality2 * 100).toFixed(1)}%)`);
+    console.log(`   Total embeddings: 2`);
+    
+    // Invalidate cache so next request gets fresh data
+    staffCache.invalidate();
     
     res.json({
       success: true,
       staff: {
         id: staff._id,
         name: staff.name,
+        surname: staff.surname,
+        idNumber: staff.idNumber,
+        role: staff.role,
         createdAt: staff.createdAt
+      },
+      quality: {
+        image1: (quality1 * 100).toFixed(1),
+        image2: (quality2 * 100).toFixed(1),
+        average: (avgQuality * 100).toFixed(1)
       }
     });
   } catch (error) {
     console.error('Error registering staff:', error);
     console.error('Error stack:', error?.stack);
+    
+    // Handle duplicate ID number error
+    if (error.code === 11000 && error.keyPattern?.idNumber) {
+      return res.status(400).json({ error: `Staff with ID number ${req.body.idNumber} is already registered` });
+    }
+    
     const errorMessage = error?.message || String(error) || 'Failed to register staff';
     res.status(500).json({ error: errorMessage });
   }
