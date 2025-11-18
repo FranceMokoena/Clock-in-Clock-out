@@ -60,7 +60,13 @@ async function loadModels() {
       if (fs.existsSync(manifestPath)) {
         console.log('📦 Loading face recognition models from disk...');
         try {
-      // Note: TinyFaceDetector doesn't need loading - it's built into face-api.js
+      // Load SSD MobileNet v1 for fallback (if available)
+      // TinyFaceDetector doesn't need loading - it's built into face-api.js
+      const ssdManifestPath = path.join(modelsPath, 'ssd_mobilenetv1_model-weights_manifest.json');
+      if (fs.existsSync(ssdManifestPath)) {
+        await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
+        console.log('   ✅ SSD MobileNet v1 loaded (for fallback)');
+      }
       // We still need landmark and recognition nets
       await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
       await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
@@ -105,7 +111,15 @@ async function loadModels() {
       try {
         console.log(`   Trying ${source.name}...`);
         const baseUrl = source.url;
-        // Note: TinyFaceDetector doesn't need loading - it's built into face-api.js
+        // Load SSD MobileNet v1 for fallback (if TinyFaceDetector fails)
+        // TinyFaceDetector doesn't need loading - it's built into face-api.js
+        try {
+          console.log(`   Loading SSD MobileNet v1 from ${baseUrl} (for fallback)...`);
+          await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
+          console.log(`   ✅ SSD MobileNet v1 loaded (for fallback)`);
+        } catch (ssdError) {
+          console.warn(`   ⚠️ Could not load SSD MobileNet v1 (fallback may not work): ${ssdError.message}`);
+        }
         // We still need landmark and recognition nets
         console.log(`   Loading Face Landmark 68 Net from ${baseUrl}...`);
         await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
@@ -463,37 +477,60 @@ async function generateEmbedding(imageBuffer) {
       throw new Error(`Failed to load image: ${errorMsg}. Please ensure the image is a valid format (JPEG, PNG, etc.).`);
     }
     
-    // Try to detect faces with optimized options for SPEED
-    // Using TinyFaceDetector (3-4x faster than SSD MobileNet v1) for bank-level speed
-    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for speed)...');
+    // Try to detect faces with optimized options for SPEED + QUALITY balance
+    // Using TinyFaceDetector with larger inputSize for better accuracy while staying fast
+    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for speed + quality)...');
     const detectionStartTime = Date.now();
     let detections;
+    let detectionMethod = 'TinyFaceDetector';
+    
     try {
-      // Add timeout for face detection (8 seconds max - should be much faster with TinyFaceDetector)
+      // Use inputSize 416 for better quality (still 2-3x faster than SSD)
+      // inputSize options: 320 (fastest), 416 (balanced), 512 (slower), 608 (slowest)
       const detectionPromise = faceapi
         .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({ 
-          inputSize: 320, // Smaller = faster (320, 416, 512, 608) - 320 is fastest
+          inputSize: 416, // Balanced: faster than SSD but better quality than 320
           scoreThreshold: 0.3 
         }))
         .withFaceLandmarks()
         .withFaceDescriptors();
       
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Face detection timeout after 8 seconds')), 8000)
+        setTimeout(() => reject(new Error('Face detection timeout after 10 seconds')), 10000)
       );
       
       detections = await Promise.race([detectionPromise, timeoutPromise]);
       const detectionTime = Date.now() - detectionStartTime;
-      console.log(`✅ Face detection completed in ${detectionTime}ms - Found ${detections.length} face(s)`);
+      console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
     } catch (detectionError) {
       const errorMsg = detectionError?.message || String(detectionError) || 'Unknown error';
-      console.error('❌ Error during face detection:', errorMsg);
+      console.warn(`⚠️ TinyFaceDetector failed: ${errorMsg}`);
+      console.log('🔄 Falling back to SSD MobileNet v1 for better accuracy...');
       
-      // If timeout or other error, check if it's actually a "no face" case
-      if (errorMsg.includes('timeout')) {
-        throw new Error('Face detection took too long. The image might be too large or complex. Please try with a smaller, clearer image.');
+      // Fallback to SSD MobileNet v1 if TinyFaceDetector fails
+      try {
+        detectionMethod = 'SSD MobileNet v1 (fallback)';
+        const fallbackPromise = faceapi
+          .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.3 }))
+          .withFaceLandmarks()
+          .withFaceDescriptors();
+        
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Face detection timeout after 15 seconds')), 15000)
+        );
+        
+        detections = await Promise.race([fallbackPromise, timeoutPromise]);
+        const detectionTime = Date.now() - detectionStartTime;
+        console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
+      } catch (fallbackError) {
+        const fallbackErrorMsg = fallbackError?.message || String(fallbackError) || 'Unknown error';
+        console.error('❌ Both detection methods failed:', fallbackErrorMsg);
+        
+        if (fallbackErrorMsg.includes('timeout')) {
+          throw new Error('Face detection took too long. The image might be too large or complex. Please try with a smaller, clearer image.');
+        }
+        throw new Error(`Face detection failed: ${fallbackErrorMsg}`);
       }
-      throw new Error(`Face detection failed: ${errorMsg}`);
     }
     
     if (!detections || detections.length === 0) {
@@ -690,14 +727,16 @@ async function findMatchingStaff(embeddingData, staffList) {
       ? `(best of ${staffEmbeddings.length} embeddings: #${matchingEmbeddingIndex + 1})`
       : '';
     
-    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity ${embeddingInfo} (${similarity >= threshold ? '✅ MATCH' : '❌ below threshold'})`);
+    const matchStatus = similarity >= threshold ? '✅ MATCH' : '❌ below threshold';
+    const gapFromThreshold = similarity >= threshold ? '' : ` (${((threshold - similarity) * 100).toFixed(1)}% below)`;
+    console.log(`   ${staff.name}: ${(similarity * 100).toFixed(1)}% similarity ${embeddingInfo} ${matchStatus}${gapFromThreshold}`);
     
     // Collect all candidates above threshold
     if (similarity >= threshold) {
       candidates.push({ staff, similarity });
     }
     
-    // Track best match across all staff
+    // Track best match across all staff (even if below threshold for debugging)
     if (similarity > bestSimilarity) {
       bestSimilarity = similarity;
       bestMatch = { staff, similarity };
@@ -730,6 +769,10 @@ async function findMatchingStaff(embeddingData, staffList) {
   // Final check - be VERY lenient for real-world use
   if (!bestMatch) {
     console.log(`❌ No match found. Best similarity: ${(bestSimilarity * 100).toFixed(1)}%, Required: ${(threshold * 100).toFixed(1)}%`);
+    console.log(`📊 Debug: All similarity scores were below threshold. Consider:`);
+    console.log(`   - Re-registering with better lighting/angle`);
+    console.log(`   - Ensuring same person is registering and clocking in`);
+    console.log(`   - Checking if face detection quality is sufficient`);
     return null;
   }
   

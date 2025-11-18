@@ -168,6 +168,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       console.error(`   - Embedding quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
       console.error(`   - Embedding type: ${Array.isArray(embeddingResult.embedding) ? 'Array' : typeof embeddingResult.embedding}`);
       console.error(`   - Embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
+      console.error(`   - Detection score: ${embeddingResult.detectionScore ? (embeddingResult.detectionScore * 100).toFixed(1) + '%' : 'N/A'}`);
       
       // Check if using fallback embeddings (models not loaded)
       if (embeddingResult.quality && embeddingResult.quality < 0.3) {
@@ -178,9 +179,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         });
       }
       
+      // Provide helpful error message
+      let errorMessage = 'Face not recognized. ';
+      if (embeddingResult.quality && embeddingResult.quality < 0.5) {
+        errorMessage += 'The face detection quality is low. Please ensure good lighting and face the camera directly. ';
+      }
+      errorMessage += 'Please ensure you are the same person who registered, with similar lighting and angle. Try registering again if this persists.';
+      
       return res.status(404).json({ 
         success: false,
-        error: 'Face not recognized. Please ensure you are the same person who registered, with similar lighting and angle. Try registering again if this persists.' 
+        error: errorMessage
       });
     }
     
