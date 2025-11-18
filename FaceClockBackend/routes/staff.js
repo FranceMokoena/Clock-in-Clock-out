@@ -474,52 +474,82 @@ router.post('/cache/refresh', async (req, res) => {
 
 // ========== ADMIN DASHBOARD ROUTES ==========
 
-// Get dashboard statistics
+// Get dashboard statistics (OPTIMIZED - parallel queries + fresh data)
 router.get('/admin/stats', async (req, res) => {
+  const statsStartTime = Date.now();
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    // Total staff
-    const totalStaff = await Staff.countDocuments({ isActive: true });
+    // OPTIMIZATION: Run all queries in parallel for faster response
+    const [
+      totalStaff,
+      clockInsToday,
+      clockOutsToday,
+      clockedInToday,
+      clockedOutToday,
+      lateArrivals
+    ] = await Promise.all([
+      // Total staff count
+      Staff.countDocuments({ isActive: true }),
+      
+      // Clock-ins today count
+      ClockLog.countDocuments({
+        clockType: 'in',
+        timestamp: { $gte: today, $lt: tomorrow }
+      }),
+      
+      // Clock-outs today count
+      ClockLog.countDocuments({
+        clockType: 'out',
+        timestamp: { $gte: today, $lt: tomorrow }
+      }),
+      
+      // Currently clocked in (select only staffId for faster query)
+      ClockLog.find({
+        clockType: 'in',
+        timestamp: { $gte: today, $lt: tomorrow }
+      }).select('staffId staffName').lean(),
+      
+      // Clocked out today
+      ClockLog.find({
+        clockType: 'out',
+        timestamp: { $gte: today, $lt: tomorrow }
+      }).select('staffId').lean(),
+      
+      // Late arrivals (after 8:00 AM)
+      ClockLog.find({
+        clockType: 'in',
+        timestamp: { 
+          $gte: new Date(today.setHours(8, 0, 0, 0)), 
+          $lt: tomorrow 
+        }
+      }).select('staffId staffName timestamp').lean()
+    ]);
 
-    // Clock-ins today
-    const clockInsToday = await ClockLog.countDocuments({
-      clockType: 'in',
-      timestamp: { $gte: today, $lt: tomorrow }
-    });
-
-    // Clock-outs today
-    const clockOutsToday = await ClockLog.countDocuments({
-      clockType: 'out',
-      timestamp: { $gte: today, $lt: tomorrow }
-    });
-
-    // Currently clocked in (clocked in but not clocked out today)
-    const clockedInToday = await ClockLog.find({
-      clockType: 'in',
-      timestamp: { $gte: today, $lt: tomorrow }
-    }).select('staffId');
-
-    const clockedOutToday = await ClockLog.find({
-      clockType: 'out',
-      timestamp: { $gte: today, $lt: tomorrow }
-    }).select('staffId');
-
-    const clockedInIds = new Set(clockedInToday.map(log => log.staffId.toString()));
-    const clockedOutIds = new Set(clockedOutToday.map(log => log.staffId.toString()));
+    // Calculate currently in (using staffName from logs to avoid populate)
+    const clockedInIds = new Set(clockedInToday.map(log => log.staffId?.toString()).filter(Boolean));
+    const clockedOutIds = new Set(clockedOutToday.map(log => log.staffId?.toString()).filter(Boolean));
     const currentlyIn = clockedInIds.size - clockedOutIds.size;
 
-    // Late arrivals (assuming 8:00 AM is standard start time)
-    const lateThreshold = new Date(today);
-    lateThreshold.setHours(8, 0, 0, 0);
+    // Format late arrivals (use staffName from log, fallback to lookup if needed)
+    const lateArrivalsList = lateArrivals
+      .filter(log => log.staffId && log.staffName) // Filter out null references
+      .map(log => ({
+        staffId: log.staffId,
+        staffName: log.staffName || 'Unknown',
+        timestamp: log.timestamp,
+        time: new Date(log.timestamp).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        })
+      }));
 
-    const lateArrivals = await ClockLog.find({
-      clockType: 'in',
-      timestamp: { $gte: today, $lt: tomorrow, $gt: lateThreshold }
-    }).populate('staffId', 'name');
+    const statsTime = Date.now() - statsStartTime;
+    console.log(`⚡ Admin stats fetched in ${statsTime}ms`);
 
     res.json({
       success: true,
@@ -528,17 +558,8 @@ router.get('/admin/stats', async (req, res) => {
         clockInsToday,
         clockOutsToday,
         currentlyIn: Math.max(0, currentlyIn),
-        lateArrivals: lateArrivals.length,
-        lateArrivalsList: lateArrivals.map(log => ({
-          staffId: log.staffId._id || log.staffId,
-          staffName: log.staffName,
-          timestamp: log.timestamp,
-          time: new Date(log.timestamp).toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            hour12: true
-          })
-        }))
+        lateArrivals: lateArrivalsList.length,
+        lateArrivalsList
       }
     });
   } catch (error) {
@@ -547,8 +568,9 @@ router.get('/admin/stats', async (req, res) => {
   }
 });
 
-// Get all staff with their monthly timesheet
+// Get all staff with their monthly timesheet (OPTIMIZED - single query instead of N+1)
 router.get('/admin/staff', async (req, res) => {
+  const staffStartTime = Date.now();
   try {
     const { month, year } = req.query;
     const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
@@ -557,16 +579,36 @@ router.get('/admin/staff', async (req, res) => {
     const startDate = new Date(targetYear, targetMonth - 1, 1);
     const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
 
-    const staff = await Staff.find({ isActive: true })
-      .select('name surname idNumber phoneNumber role location createdAt')
-      .sort({ name: 1 });
+    // OPTIMIZATION: Fetch staff and logs in parallel, then group in memory
+    const [staff, allLogs] = await Promise.all([
+      Staff.find({ isActive: true })
+        .select('name surname idNumber phoneNumber role location createdAt')
+        .sort({ name: 1 })
+        .lean(), // Use lean() for faster queries (returns plain objects)
+      
+      ClockLog.find({
+        timestamp: { $gte: startDate, $lte: endDate }
+      })
+        .select('staffId clockType timestamp')
+        .sort({ timestamp: 1 })
+        .lean()
+    ]);
 
-    const staffWithTimesheets = await Promise.all(
-      staff.map(async (member) => {
-        const logs = await ClockLog.find({
-          staffId: member._id,
-          timestamp: { $gte: startDate, $lte: endDate }
-        }).sort({ timestamp: 1 });
+    // Group logs by staffId in memory (much faster than N+1 queries)
+    const logsByStaffId = {};
+    allLogs.forEach(log => {
+      const staffId = log.staffId?.toString();
+      if (!staffId) return; // Skip logs with null staffId
+      if (!logsByStaffId[staffId]) {
+        logsByStaffId[staffId] = [];
+      }
+      logsByStaffId[staffId].push(log);
+    });
+
+    // Build timesheets for each staff member
+    const staffWithTimesheets = staff.map(member => {
+      const staffId = member._id.toString();
+      const logs = logsByStaffId[staffId] || [];
 
         // Group logs by date
         const timesheetByDate = {};
@@ -604,19 +646,21 @@ router.get('/admin/staff', async (req, res) => {
           new Date(a.date) - new Date(b.date)
         );
 
-        return {
-          _id: member._id,
-          name: member.name,
-          surname: member.surname,
-          idNumber: member.idNumber,
-          phoneNumber: member.phoneNumber,
-          role: member.role,
-          location: member.location,
-          createdAt: member.createdAt,
-          timesheet
-        };
-      })
-    );
+      return {
+        _id: member._id,
+        name: member.name,
+        surname: member.surname,
+        idNumber: member.idNumber,
+        phoneNumber: member.phoneNumber,
+        role: member.role,
+        location: member.location,
+        createdAt: member.createdAt,
+        timesheet
+      };
+    });
+
+    const staffTime = Date.now() - staffStartTime;
+    console.log(`⚡ Admin staff data fetched in ${staffTime}ms (${staff.length} staff, ${allLogs.length} logs)`);
 
     res.json({
       success: true,
@@ -630,8 +674,9 @@ router.get('/admin/staff', async (req, res) => {
   }
 });
 
-// Get not accountable (wrong time usage) for a specific date
+// Get not accountable (wrong time usage) for a specific date (OPTIMIZED)
 router.get('/admin/not-accountable', async (req, res) => {
+  const notAccountableStartTime = Date.now();
   try {
     const { date } = req.query;
     const targetDate = date ? new Date(date) : new Date();
@@ -650,19 +695,33 @@ router.get('/admin/not-accountable', async (req, res) => {
     // Tolerance window (in minutes) - allow 15 minutes before/after
     const TOLERANCE = 15;
 
-    // Get all logs for the date
-    const allLogs = await ClockLog.find({
-      timestamp: { $gte: targetDate, $lt: nextDate }
-    }).populate('staffId', 'name').sort({ timestamp: 1 });
+    // OPTIMIZATION: Fetch logs and staff in parallel, use lean() for speed
+    const [allLogs, allStaff] = await Promise.all([
+      ClockLog.find({
+        timestamp: { $gte: targetDate, $lt: nextDate }
+      })
+        .select('staffId staffName clockType timestamp')
+        .sort({ timestamp: 1 })
+        .lean(), // Use lean() - we don't need Mongoose documents
+      
+      Staff.find({ isActive: true })
+        .select('_id name')
+        .lean()
+    ]);
 
-    // Get all active staff
-    const allStaff = await Staff.find({ isActive: true }).select('_id name');
+    // Create staff map for quick lookup
     const staffMap = new Map(allStaff.map(s => [s._id.toString(), s.name]));
 
     // Group logs by staff member
+    // Handle null staffId (orphaned references) - with lean(), staffId is just an ObjectId, not populated
     const staffLogs = {};
     allLogs.forEach(log => {
-      const staffId = log.staffId._id.toString();
+      // Check if staffId exists (with lean(), it's just an ObjectId, not an object)
+      const staffId = log.staffId?.toString();
+      if (!staffId) {
+        console.warn(`⚠️ Skipping log with null/invalid staffId: ${log._id}`);
+        return; // Skip logs with invalid staffId references
+      }
       if (!staffLogs[staffId]) {
         staffLogs[staffId] = [];
       }
@@ -783,6 +842,9 @@ router.get('/admin/not-accountable', async (req, res) => {
         }
       }
     });
+
+    const notAccountableTime = Date.now() - notAccountableStartTime;
+    console.log(`⚡ Not accountable data fetched in ${notAccountableTime}ms (${notAccountable.length} issues found)`);
 
     res.json({
       success: true,

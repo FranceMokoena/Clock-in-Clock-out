@@ -485,18 +485,15 @@ async function generateEmbedding(imageBuffer) {
       throw new Error(`Failed to load image: ${errorMsg}. Please ensure the image is a valid format (JPEG, PNG, etc.).`);
     }
     
-    // Detect faces using SSD MobileNet v1 (reliable and accurate)
-    // SSD MobileNet is more accurate than TinyFaceDetector and works well with 400px images
-    console.log('🔍 Starting face detection (SSD MobileNet v1 - optimized for accuracy)...');
+    // Try TinyFaceDetector first (3-5x faster), fallback to SSD MobileNet v1
+    // TinyFaceDetector is optimized for speed while maintaining good accuracy
+    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for speed)...');
     const detectionStartTime = Date.now();
     let detections;
-    const detectionMethod = 'SSD MobileNet v1';
+    let detectionMethod = 'TinyFaceDetector';
     
     try {
-      // Verify SSD MobileNet is loaded before using it
-      if (!faceapi.nets.ssdMobilenetv1.isLoaded) {
-        throw new Error('SSD MobileNet v1 model is not loaded. Please ensure models are properly downloaded.');
-      }
+      // Verify models are loaded
       if (!faceapi.nets.faceLandmark68Net.isLoaded) {
         throw new Error('Face Landmark 68 model is not loaded. Please ensure models are properly downloaded.');
       }
@@ -504,42 +501,67 @@ async function generateEmbedding(imageBuffer) {
         throw new Error('Face Recognition model is not loaded. Please ensure models are properly downloaded.');
       }
       
-      // Use SSD MobileNet v1 - reliable, accurate, and fast enough with 400px images
-      const detectionPromise = faceapi
-        .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ 
-          minConfidence: 0.3,  // Lower threshold for better detection
-          maxResults: 5  // Limit to 5 faces for faster processing
-        }))
-        .withFaceLandmarks()
-        .withFaceDescriptors();
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Face detection timeout after 8 seconds')), 8000)
-      );
-      
-      detections = await Promise.race([detectionPromise, timeoutPromise]);
-      const detectionTime = Date.now() - detectionStartTime;
-      console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
-    } catch (detectionError) {
-      const errorMsg = detectionError?.message || String(detectionError) || 'Unknown error';
-      console.error('❌ Face detection failed:', errorMsg);
-      
-      // Log more details for debugging
-      if (errorMsg.includes('forwardFunc') || errorMsg.includes('is not a function')) {
-        console.error('⚠️ This error suggests a TensorFlow.js backend conflict.');
-        console.error('   Models loaded status:');
-        console.error(`   - SSD MobileNet: ${faceapi.nets.ssdMobilenetv1.isLoaded}`);
-        console.error(`   - Landmarks: ${faceapi.nets.faceLandmark68Net.isLoaded}`);
-        console.error(`   - Recognition: ${faceapi.nets.faceRecognitionNet.isLoaded}`);
-        throw new Error('Face detection model error. Please restart the server and ensure models are properly loaded.');
+      // Try TinyFaceDetector first (faster - 3-5x speed improvement)
+      if (faceapi.nets.tinyFaceDetector.isLoaded) {
+        try {
+          const detectionPromise = faceapi
+            .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({ 
+              inputSize: 320, // 320 = fastest, 512 = balanced, 608 = most accurate
+              scoreThreshold: 0.3  // Lower threshold for better detection
+            }))
+            .withFaceLandmarks()
+            .withFaceDescriptors();
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Face detection timeout after 5 seconds')), 5000)
+          );
+          
+          detections = await Promise.race([detectionPromise, timeoutPromise]);
+          const detectionTime = Date.now() - detectionStartTime;
+          console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
+        } catch (tinyError) {
+          console.warn(`⚠️ TinyFaceDetector failed: ${tinyError.message}, falling back to SSD MobileNet v1`);
+          detectionMethod = 'SSD MobileNet v1 (fallback)';
+          throw tinyError; // Will be caught by outer catch
+        }
+      } else {
+        // Fallback to SSD MobileNet v1 if TinyFaceDetector not available
+        detectionMethod = 'SSD MobileNet v1 (fallback)';
+        throw new Error('TinyFaceDetector not loaded, using SSD MobileNet v1');
       }
-      
-      if (errorMsg.includes('timeout')) {
-        throw new Error('Face detection took too long. The image might be too large or complex. Please try with a smaller, clearer image.');
+    } catch (primaryError) {
+      // Fallback to SSD MobileNet v1 if TinyFaceDetector fails or not available
+      if (faceapi.nets.ssdMobilenetv1.isLoaded) {
+        try {
+          console.log('🔄 Falling back to SSD MobileNet v1 for face detection...');
+          detectionMethod = 'SSD MobileNet v1 (fallback)';
+          
+          const detectionPromise = faceapi
+            .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ 
+              minConfidence: 0.3,
+              maxResults: 5
+            }))
+            .withFaceLandmarks()
+            .withFaceDescriptors();
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Face detection timeout after 8 seconds')), 8000)
+          );
+          
+          detections = await Promise.race([detectionPromise, timeoutPromise]);
+          const detectionTime = Date.now() - detectionStartTime;
+          console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
+        } catch (ssdError) {
+          // If SSD also fails, throw the original error
+          const errorMsg = ssdError?.message || primaryError?.message || String(ssdError) || 'Unknown error';
+          throw new Error(`Face detection failed: ${errorMsg}`);
+        }
+      } else {
+        throw new Error('No face detection model available. Please ensure models are properly loaded.');
       }
-      throw new Error(`Face detection failed: ${errorMsg}`);
     }
     
+    // Check if detections were successful
     if (!detections || detections.length === 0) {
       throw new Error('No face detected in image. Please ensure your face is visible and well-lit.');
     }

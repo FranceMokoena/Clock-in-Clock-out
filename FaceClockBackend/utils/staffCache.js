@@ -17,7 +17,7 @@ class StaffCache {
   constructor() {
     this.data = null;
     this.lastUpdate = null;
-    this.ttl = 5 * 60 * 1000; // 5 minutes TTL
+    this.ttl = 2 * 60 * 1000; // 2 minutes TTL (reduced for fresher data in admin dashboard)
     this.isLoading = false;
     this.loadPromise = null;
   }
