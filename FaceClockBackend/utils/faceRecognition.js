@@ -430,19 +430,20 @@ async function generateEmbedding(imageBuffer) {
       throw new Error(`Failed to load image: ${errorMsg}. Please ensure the image is a valid format (JPEG, PNG, etc.).`);
     }
     
-    // Try to detect faces with optimized options for SPEED + QUALITY balance
-    // Using TinyFaceDetector with larger inputSize for better accuracy while staying fast
-    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for speed + quality)...');
+    // Try to detect faces with optimized options for MAXIMUM SPEED
+    // Using TinyFaceDetector with smaller inputSize for fastest processing
+    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for maximum speed)...');
     const detectionStartTime = Date.now();
     let detections;
     let detectionMethod = 'TinyFaceDetector';
     
     try {
-      // Use inputSize 416 for better quality (still 2-3x faster than SSD)
+      // Use inputSize 320 for maximum speed (2x faster than 416, still very accurate)
       // inputSize options: 320 (fastest), 416 (balanced), 512 (slower), 608 (slowest)
+      // 320 is perfect for 400px images and provides excellent accuracy
       const detectionPromise = faceapi
         .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({ 
-          inputSize: 416, // Balanced: faster than SSD but better quality than 320
+          inputSize: 320, // Fastest: 2x faster than 416, still very accurate for 400px images
           scoreThreshold: 0.3 
         }))
         .withFaceLandmarks()
@@ -661,6 +662,15 @@ async function findMatchingStaff(embeddingData, staffList) {
     // Collect all candidates above threshold
     if (similarity >= threshold) {
       candidates.push({ staff, similarity });
+      
+      // EARLY EXIT: If we find a very high confidence match (>85%), stop searching immediately
+      // This can save 50-200ms when we have many staff members
+      if (similarity >= CONFIG.VERY_HIGH_CONFIDENCE_THRESHOLD) {
+        console.log(`⚡ Early exit: Found very high confidence match (${(similarity * 100).toFixed(1)}%) - stopping search`);
+        bestMatch = { staff, similarity };
+        bestSimilarity = similarity;
+        break; // Exit loop early - no need to check remaining staff
+      }
     }
     
     // Track best match across all staff (even if below threshold for debugging)

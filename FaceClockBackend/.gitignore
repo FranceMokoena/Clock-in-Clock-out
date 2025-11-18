@@ -113,8 +113,8 @@ Thumbs.db
 .classpath
 .settings/
 
-# Face recognition models (too large for git)
-models/face-api/
+# Face recognition models - NOTE: We need these in git for Render deployment
+# models/face-api/  # Commented out - models need to be committed for fast deployment
 *.pb
 *.onnx
 
