@@ -2,15 +2,13 @@ const faceapi = require('face-api.js');
 const { Canvas, Image, ImageData, loadImage } = require('canvas');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const http = require('http');
 
 // Configure face-api.js to use node-canvas
 faceapi.env.monkeyPatch({ Canvas, Image, ImageData });
 
 let modelsLoaded = false;
-let modelsLoading = false;
 let modelsLoadError = null;
+let modelsPromise = null;
 
 // Configuration
 const CONFIG = {
@@ -30,130 +28,99 @@ const CONFIG = {
 };
 
 async function loadModels() {
-  if (modelsLoaded && !modelsLoadError) {
-    // Models already loaded successfully
+  if (modelsLoaded) {
     return;
   }
-  
-  if (modelsLoading) {
-    // Wait for ongoing load
-    while (modelsLoading) {
-      await new Promise(resolve => setTimeout(resolve, 100));
-    }
-    return;
+
+  if (modelsPromise) {
+    return modelsPromise;
   }
-  
-  // Reset error if we're retrying
-  if (modelsLoadError) {
-    console.log('🔄 Retrying to load face recognition models...');
-    modelsLoadError = null;
-  }
-  
-  modelsLoading = true;
+
   const modelsPath = path.join(__dirname, '../models/face-api');
-  
-  try {
-    // Try to load models from local path first
-    if (fs.existsSync(modelsPath)) {
-      // Check if at least one model file exists (check for landmark net)
-      const manifestPath = path.join(modelsPath, 'face_landmark_68_model-weights_manifest.json');
-      if (fs.existsSync(manifestPath)) {
-        console.log('📦 Loading face recognition models from disk...');
-        try {
-      // Load SSD MobileNet v1 for fallback (if available)
-      // TinyFaceDetector doesn't need loading - it's built into face-api.js
-      const ssdManifestPath = path.join(modelsPath, 'ssd_mobilenetv1_model-weights_manifest.json');
-      if (fs.existsSync(ssdManifestPath)) {
-        await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
-        console.log('   ✅ SSD MobileNet v1 loaded (for fallback)');
+  modelsPromise = (async () => {
+    modelsLoadError = null;
+
+    try {
+      const loadedFromDisk = await tryLoadModelsFromDisk(modelsPath);
+      if (loadedFromDisk) {
+        modelsLoaded = true;
+        return;
       }
-      // We still need landmark and recognition nets
-      await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
-      await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
-      modelsLoaded = true;
-          modelsLoading = false;
-          modelsLoadError = null; // Clear any previous errors
-          console.log('✅ Face recognition models loaded successfully from disk');
-          return;
-        } catch (diskError) {
-          console.warn('⚠️ Failed to load models from disk, will try CDN:', diskError.message);
-          // Continue to CDN fallback
-        }
-    } else {
-        console.log('📦 Models directory exists but is empty, will use CDN');
-      }
+    } catch (diskError) {
+      console.warn(`⚠️ Failed to load models from disk: ${diskError.message}`);
     }
-    
-    // Try to load from CDN/remote (for Render deployment)
+
     console.log('📦 Attempting to load models from CDN...');
-    
-    // Try multiple CDN sources in order of reliability
     const cdnSources = [
-      {
-        name: 'jsdelivr CDN',
-        url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model'
-      },
-      {
-        name: 'unpkg CDN',
-        url: 'https://unpkg.com/@vladmandic/face-api@1.7.14/model'
-      },
-      {
-        name: 'GitHub Raw',
-        url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights'
-      },
-      {
-        name: 'GitHub Raw (alternative)',
-        url: 'https://github.com/justadudewhohacks/face-api.js-models/raw/master/weights'
-      }
+      { name: 'jsDelivr (@vladmandic)', url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model' },
+      { name: 'unpkg (@vladmandic)', url: 'https://unpkg.com/@vladmandic/face-api@1.7.14/model' },
+      { name: 'GitHub raw (main)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/main/weights' },
+      { name: 'GitHub raw (master)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights' },
+      { name: 'GitHub download (main)', url: 'https://github.com/justadudewhohacks/face-api.js-models/raw/main/weights' },
     ];
-    
+
     for (const source of cdnSources) {
       try {
-        console.log(`   Trying ${source.name}...`);
-        const baseUrl = source.url;
-        // Load SSD MobileNet v1 for fallback (if TinyFaceDetector fails)
-        // TinyFaceDetector doesn't need loading - it's built into face-api.js
-        try {
-          console.log(`   Loading SSD MobileNet v1 from ${baseUrl} (for fallback)...`);
-          await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
-          console.log(`   ✅ SSD MobileNet v1 loaded (for fallback)`);
-        } catch (ssdError) {
-          console.warn(`   ⚠️ Could not load SSD MobileNet v1 (fallback may not work): ${ssdError.message}`);
-        }
-        // We still need landmark and recognition nets
-        console.log(`   Loading Face Landmark 68 Net from ${baseUrl}...`);
-        await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
-        console.log(`   Loading Face Recognition Net from ${baseUrl}...`);
-        await faceapi.nets.faceRecognitionNet.loadFromUri(baseUrl);
+        await loadModelsFromUri(source.url, source.name);
         modelsLoaded = true;
-        modelsLoading = false;
-        modelsLoadError = null; // Clear any previous errors
         console.log(`✅ Face recognition models loaded successfully from ${source.name}`);
         return;
       } catch (error) {
-        const errorMsg = error?.message || String(error) || 'Unknown error';
-        console.warn(`⚠️ Could not load from ${source.name}:`, errorMsg);
-        // Continue to next source
+        console.warn(`⚠️ Could not load from ${source.name}: ${error?.message || error}`);
       }
     }
-    
-    // If all CDN sources failed
-    console.error('❌ All CDN sources failed to load models');
-    modelsLoadError = 'All CDN attempts failed';
-    
-    // If both fail, warn but don't crash
-    console.error('❌ Face recognition models not found!');
-    console.error('📝 Please download models and place in: ./models/face-api/');
-    console.error('🔗 Download from: https://github.com/justadudewhohacks/face-api.js-models');
-    console.error('⚠️ System will use fallback method (less accurate)');
-    modelsLoadError = 'Models not found - using fallback';
-    modelsLoaded = true; // Set to true to prevent repeated warnings
-    modelsLoading = false;
+
+    throw new Error('Unable to load face recognition models from disk or CDN sources');
+  })();
+
+  try {
+    await modelsPromise;
   } catch (error) {
-    console.error('❌ Error loading face recognition models:', error);
-    modelsLoaded = true; // Set to true to prevent repeated attempts
-    modelsLoading = false;
+    modelsLoadError = error;
+    modelsLoaded = false;
+    throw error;
+  } finally {
+    modelsPromise = null;
   }
+}
+
+async function tryLoadModelsFromDisk(modelsPath) {
+  if (!fs.existsSync(modelsPath)) {
+    console.log('📁 Local models directory missing. Skipping disk load.');
+    return false;
+  }
+
+  const requiredManifest = path.join(modelsPath, 'face_landmark_68_model-weights_manifest.json');
+  if (!fs.existsSync(requiredManifest)) {
+    console.warn('⚠️ Local models directory exists but required files are missing.');
+    return false;
+  }
+
+  console.log('📦 Loading face recognition models from disk...');
+  const ssdManifestPath = path.join(modelsPath, 'ssd_mobilenetv1_model-weights_manifest.json');
+  if (fs.existsSync(ssdManifestPath)) {
+    await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
+    console.log('   ✅ SSD MobileNet v1 loaded (fallback detector available)');
+  } else {
+    console.warn('   ⚠️ SSD MobileNet manifest not found locally. Continuing without fallback detector.');
+  }
+  await faceapi.nets.faceLandmark68Net.loadFromDisk(modelsPath);
+  await faceapi.nets.faceRecognitionNet.loadFromDisk(modelsPath);
+  console.log('✅ Face recognition models loaded successfully from disk');
+  return true;
+}
+
+async function loadModelsFromUri(baseUrl, sourceName) {
+  console.log(`   Loading models from ${sourceName} (${baseUrl})...`);
+  try {
+    await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
+    console.log('   ✅ SSD MobileNet v1 loaded (fallback detector available)');
+  } catch (ssdError) {
+    console.warn(`   ⚠️ SSD MobileNet v1 unavailable from ${sourceName}: ${ssdError.message}`);
+  }
+
+  await faceapi.nets.faceLandmark68Net.loadFromUri(baseUrl);
+  await faceapi.nets.faceRecognitionNet.loadFromUri(baseUrl);
 }
 
 // Simple cosine similarity for comparing embeddings
@@ -434,25 +401,11 @@ function validateFaceDetection(detection) {
 // Generate face embedding from image buffer with enhanced validation
 async function generateEmbedding(imageBuffer) {
   const totalStartTime = Date.now();
-  await loadModels();
-  
-  // Check if models actually loaded successfully
-  // If models failed to load, try one more time before giving up
-  if (modelsLoadError) {
-    console.warn('⚠️ Models previously failed to load, attempting to reload...');
-    modelsLoaded = false; // Reset to allow retry
+  try {
     await loadModels();
-    
-    // Check again after retry
-    if (modelsLoadError) {
-      console.error('❌ Cannot generate proper embeddings: Models not loaded after retry');
-      console.error(`   Error: ${modelsLoadError}`);
-      console.error('💡 Suggestions:');
-      console.error('   1. Check Render logs for model download errors');
-      console.error('   2. Verify CDN connectivity');
-      console.error('   3. Manually download models and commit to repository');
-      throw new Error('Face recognition models not loaded. Please ensure models are available.');
-    }
+  } catch (err) {
+    console.error('❌ Face recognition models not loaded:', err?.message || err);
+    throw new Error('Face recognition models are not available. Please ensure download-models.js has been executed successfully.');
   }
   
   try {
@@ -585,34 +538,8 @@ async function generateEmbedding(imageBuffer) {
   } catch (error) {
     const errorMessage = error?.message || String(error) || 'Unknown error';
     console.error('❌ Error generating embedding:', errorMessage);
-    
-    // Only use fallback if models are actually loaded
-    // Otherwise, throw the error so user knows models need to be set up
-    if (errorMessage.includes('No face detected') || errorMessage.includes('quality')) {
-      throw error; // Re-throw quality/detection errors
-    }
-    
-    // For other errors, try fallback but warn
-    console.warn('⚠️ Using fallback embedding method (less accurate)');
-    return {
-      embedding: generateFallbackEmbedding(imageBuffer),
-      quality: 0.3, // Low quality for fallback
-      detectionScore: 0.3,
-      faceCount: 0
-    };
+    throw error instanceof Error ? error : new Error(errorMessage);
   }
-}
-
-// Fallback embedding generator (simple hash-based)
-function generateFallbackEmbedding(imageBuffer) {
-  const crypto = require('crypto');
-  const hash = crypto.createHash('sha256').update(imageBuffer).digest();
-  // Convert to 128-dimensional vector (like face-api.js)
-  const embedding = [];
-  for (let i = 0; i < 128; i++) {
-    embedding.push((hash[i % hash.length] - 128) / 128);
-  }
-  return embedding;
 }
 
 // Find best matching staff with enhanced matching logic

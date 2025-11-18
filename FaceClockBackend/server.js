@@ -7,25 +7,6 @@ const staffRoutes = require('./routes/staff');
 const { loadModels } = require('./utils/faceRecognition');
 const staffCache = require('./utils/staffCache');
 
-// Pre-load face recognition models on server start
-// This is async but we don't block server startup - models will load in background
-loadModels().then(() => {
-  console.log('✅ Face recognition models ready');
-}).catch(err => {
-  console.error('⚠️ Face recognition models may not be available:', err.message);
-  console.error('⚠️ The system will attempt to load models from CDN on first request');
-});
-
-// Pre-load staff cache on server start (for fast clock-in requests)
-// This runs in background - doesn't block server startup
-staffCache.preload().then(() => {
-  // Start background refresh after initial load
-  staffCache.startBackgroundRefresh();
-}).catch(err => {
-  console.error('⚠️ Staff cache preload failed:', err.message);
-  console.error('⚠️ Cache will load on first request');
-});
-
 const app = express();
 
 // CORS configuration - allow all origins (adjust for production if needed)
@@ -138,11 +119,26 @@ process.on('unhandledRejection', (err) => {
   console.error('Unhandled Rejection:', err);
 });
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-  console.log(`📡 API available at http://localhost:${PORT}/api`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  if (process.env.RENDER_EXTERNAL_URL) {
-    console.log(`🌐 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
-  }
+async function startServer() {
+  console.log('🚀 Preparing face recognition services...');
+  await loadModels();
+  console.log('✅ Face recognition models ready');
+
+  console.log('📦 Warming staff cache...');
+  await staffCache.preload();
+  staffCache.startBackgroundRefresh();
+
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+    console.log(`📡 API available at http://localhost:${PORT}/api`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    if (process.env.RENDER_EXTERNAL_URL) {
+      console.log(`🌐 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
+    }
+  });
+}
+
+startServer().catch((err) => {
+  console.error('❌ Failed to start server:', err);
+  process.exit(1);
 });

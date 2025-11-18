@@ -10,74 +10,90 @@ const fs = require('fs');
 const path = require('path');
 
 const modelsDir = path.join(__dirname, 'models', 'face-api');
-// Try multiple sources for reliability - using correct repository structure
-const modelSources = [
-  'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master',
-  'https://github.com/justadudewhohacks/face-api.js-models/raw/master',
-  'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js-models@master',
+
+// Files required by face-api.js
+const modelFiles = [
+  'ssd_mobilenetv1_model-weights_manifest.json',
+  'ssd_mobilenetv1_model-shard1.bin',
+  'face_landmark_68_model-weights_manifest.json',
+  'face_landmark_68_model-shard1.bin',
+  'face_recognition_model-weights_manifest.json',
+  'face_recognition_model-shard1.bin',
+  'face_recognition_model-shard2.bin',
 ];
-const modelsBaseUrl = modelSources[0];
 
-// Model files needed - with correct paths in repository
-const models = {
-  'ssd_mobilenetv1_model-weights_manifest.json': 'weights/ssd_mobilenetv1_model-weights_manifest.json',
-  'ssd_mobilenetv1_model-shard1': 'weights/ssd_mobilenetv1_model-shard1',
-  'face_landmark_68_model-weights_manifest.json': 'weights/face_landmark_68_model-weights_manifest.json',
-  'face_landmark_68_model-shard1': 'weights/face_landmark_68_model-shard1',
-  'face_recognition_model-weights_manifest.json': 'weights/face_recognition_model-weights_manifest.json',
-  'face_recognition_model-shard1': 'weights/face_recognition_model-shard1',
-  'face_recognition_model-shard2': 'weights/face_recognition_model-shard2',
-};
+// Mirrors to try (ordered). Some store files in /weights, others in /model.
+const modelSources = [
+  {
+    name: 'GitHub raw (main)',
+    baseUrl: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/main',
+    pathPrefix: 'weights',
+  },
+  {
+    name: 'GitHub raw (master fallback)',
+    baseUrl: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master',
+    pathPrefix: 'weights',
+  },
+  {
+    name: 'GitHub download (main)',
+    baseUrl: 'https://github.com/justadudewhohacks/face-api.js-models/raw/main',
+    pathPrefix: 'weights',
+  },
+  {
+    name: 'GitHub download (master fallback)',
+    baseUrl: 'https://github.com/justadudewhohacks/face-api.js-models/raw/master',
+    pathPrefix: 'weights',
+  },
+  {
+    name: 'jsDelivr mirror (GH)',
+    baseUrl: 'https://cdn.jsdelivr.net/gh/justadudewhohacks/face-api.js-models@main',
+    pathPrefix: 'weights',
+  },
+  {
+    name: '@vladmandic npm package',
+    baseUrl: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14',
+    pathPrefix: 'model',
+  },
+];
 
-function downloadFile(url, filepath, retries = 3) {
+function buildUrl(source, filename) {
+  const prefix = source.pathPrefix ? `/${source.pathPrefix}` : '';
+  return `${source.baseUrl}${prefix}/${filename}`;
+}
+
+function downloadFile(url, filepath) {
   return new Promise((resolve, reject) => {
-    const attemptDownload = (attemptUrl, attemptNumber) => {
-      console.log(`📥 Downloading (attempt ${attemptNumber}/${retries}): ${path.basename(filepath)} from ${attemptUrl}`);
-      const file = fs.createWriteStream(filepath);
-      
-      https.get(attemptUrl, (response) => {
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          // Handle redirect
+    console.log(`📥 Downloading: ${path.basename(filepath)} from ${url}`);
+    const file = fs.createWriteStream(filepath);
+
+    https
+      .get(url, (response) => {
+        if (response.statusCode === 301 || response.statusCode === 302) {
+          const redirectUrl = response.headers.location;
           file.close();
-          return attemptDownload(response.headers.location, attemptNumber);
+          fs.unlink(filepath, () => {});
+          return resolve(downloadFile(redirectUrl, filepath));
         }
-        
+
         if (response.statusCode !== 200) {
           file.close();
-          fs.unlink(filepath, () => {}); // Delete the file on error
-          if (attemptNumber < retries) {
-            // Try alternative source
-            const altUrl = attemptUrl.replace(modelSources[0], modelSources[1] || modelSources[0]);
-            if (altUrl !== attemptUrl) {
-              return attemptDownload(altUrl, attemptNumber + 1);
-            }
-          }
-          reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
-          return;
+          fs.unlink(filepath, () => {});
+          return reject(new Error(`Failed to download: ${response.statusCode} ${response.statusMessage}`));
         }
-        
+
         response.pipe(file);
-        
+
         file.on('finish', () => {
           file.close();
           console.log(`✅ Downloaded: ${path.basename(filepath)} (${(fs.statSync(filepath).size / 1024).toFixed(1)} KB)`);
           resolve();
         });
-      }).on('error', (err) => {
+      })
+      .on('error', (err) => {
         file.close();
-        fs.unlink(filepath, () => {}); // Delete the file on error
-        if (attemptNumber < retries) {
-          // Try alternative source
-          const altUrl = attemptUrl.replace(modelSources[0], modelSources[1] || modelSources[0]);
-          if (altUrl !== attemptUrl) {
-            return attemptDownload(altUrl, attemptNumber + 1);
-          }
-        }
+        fs.unlink(filepath, () => {});
         reject(err);
       });
-    };
-    
-    attemptDownload(url, 1);
   });
 }
 
@@ -104,7 +120,7 @@ async function downloadModels() {
     let failCount = 0;
     const failedFiles = [];
     
-    for (const [filename, urlPath] of Object.entries(models)) {
+    for (const filename of modelFiles) {
       const filepath = path.join(modelsDir, filename);
       
       // Check if file exists and has content
@@ -123,15 +139,15 @@ async function downloadModels() {
       // Try each source
       let downloaded = false;
       for (let i = 0; i < modelSources.length; i++) {
-        const baseUrl = modelSources[i];
-        const url = `${baseUrl}/${urlPath}`;
+        const source = modelSources[i];
+        const url = buildUrl(source, filename);
         try {
           await downloadFile(url, filepath);
           successCount++;
           downloaded = true;
           break; // Success, move to next file
         } catch (error) {
-          console.warn(`   Failed from source ${i + 1} (${baseUrl}): ${error.message}`);
+          console.warn(`   Failed from source ${i + 1} (${source.name}): ${error.message}`);
           // Try next source
         }
       }
@@ -145,13 +161,13 @@ async function downloadModels() {
     
     console.log(`\n📊 Download summary: ${successCount} succeeded, ${failCount} failed`);
     
-    if (successCount === Object.keys(models).length) {
+    if (successCount === modelFiles.length) {
       console.log('✅ All models downloaded successfully!');
       console.log(`📁 Models saved to: ${modelsDir}`);
       
       // Verify all files exist
       let allExist = true;
-      for (const filename of Object.keys(models)) {
+      for (const filename of modelFiles) {
         const filepath = path.join(modelsDir, filename);
         if (!fs.existsSync(filepath) || fs.statSync(filepath).size === 0) {
           console.error(`❌ Verification failed: ${filename} is missing or empty`);
@@ -170,7 +186,7 @@ async function downloadModels() {
       console.log(`   Failed files: ${failedFiles.join(', ')}`);
     }
     
-    return successCount === Object.keys(models).length;
+    return successCount === modelFiles.length;
   } catch (error) {
     console.error('❌ Error in downloadModels:', error.message);
     return false;
