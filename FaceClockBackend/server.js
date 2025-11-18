@@ -106,7 +106,11 @@ app.use((req, res) => {
       'POST /api/staff/clock',
       'GET /api/staff/list',
       'GET /api/staff/logs',
-      'GET /api/staff/test'
+      'GET /api/staff/test',
+      'GET /api/staff/admin/stats',
+      'GET /api/staff/admin/staff',
+      'GET /api/staff/admin/not-accountable',
+      'GET /api/staff/admin/staff/:staffId/timesheet'
     ]
   });
 });

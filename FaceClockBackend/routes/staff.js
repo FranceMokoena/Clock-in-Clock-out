@@ -25,11 +25,11 @@ router.post('/register', upload.fields([
   { name: 'image2', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { name, surname, idNumber, phoneNumber, role } = req.body;
+    const { name, surname, idNumber, phoneNumber, role, location } = req.body;
     
     // Validate required fields
-    if (!name || !surname || !idNumber || !phoneNumber || !role) {
-      return res.status(400).json({ error: 'Name, surname, ID number, phone number, and role are required' });
+    if (!name || !surname || !idNumber || !phoneNumber || !role || !location) {
+      return res.status(400).json({ error: 'Name, surname, ID number, phone number, role, and location are required' });
     }
     
     // Validate ID number format (13 digits)
@@ -40,6 +40,13 @@ router.post('/register', upload.fields([
     // Validate role
     if (!['Intern', 'Staff', 'Other'].includes(role)) {
       return res.status(400).json({ error: 'Role must be Intern, Staff, or Other' });
+    }
+    
+    // Validate location
+    const { getLocation } = require('../config/locations');
+    const locationData = getLocation(location);
+    if (!locationData) {
+      return res.status(400).json({ error: 'Invalid location selected' });
     }
     
     // Check if both images are provided
@@ -57,7 +64,7 @@ router.post('/register', upload.fields([
     }
     
     console.log(`📸 Processing registration for ${name.trim()} ${surname.trim()} (ID: ${idNumber.trim()})`);
-    console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}`);
+    console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}, Location: ${locationData.name}`);
     console.log(`   Processing 2 face images for accuracy...`);
     
     // Generate embeddings for both images
@@ -107,6 +114,7 @@ router.post('/register', upload.fields([
       idNumber: idNumber.trim(),
       phoneNumber: phoneNumber.trim(),
       role: role,
+      location: location, // Store location key
       faceEmbedding: embedding1, // Primary embedding (for backward compatibility)
       faceEmbeddings: [embedding1, embedding2], // Both embeddings for accuracy
       encryptedEmbedding
@@ -158,7 +166,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.log('Request body:', req.body);
     console.log('Request file:', req.file ? `File received (${req.file.size} bytes)` : 'No file');
     
-    const { type } = req.body; // 'in', 'out', 'break_start', or 'break_end'
+    const { type, latitude, longitude } = req.body; // 'in', 'out', 'break_start', or 'break_end'
     
     if (!type || !['in', 'out', 'break_start', 'break_end'].includes(type)) {
       console.error('❌ Invalid clock type:', type);
@@ -170,7 +178,22 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'Image is required' });
     }
     
+    // Validate location coordinates
+    if (!latitude || !longitude) {
+      console.error('❌ Location coordinates missing');
+      return res.status(400).json({ error: 'Location coordinates (latitude and longitude) are required' });
+    }
+    
+    const userLat = parseFloat(latitude);
+    const userLon = parseFloat(longitude);
+    
+    if (isNaN(userLat) || isNaN(userLon)) {
+      console.error('❌ Invalid location coordinates:', latitude, longitude);
+      return res.status(400).json({ error: 'Invalid location coordinates. Please ensure GPS is enabled.' });
+    }
+    
     console.log(`✅ Processing ${type} request for staff member`);
+    console.log(`   User location: ${userLat}, ${userLon}`);
 
     // Generate embedding from captured image (now returns object with embedding, quality, etc.)
     let embeddingResult;
@@ -250,16 +273,50 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     const { staff, similarity, confidenceLevel } = match;
     const confidence = Math.round(similarity * 100);
     
+    // Validate location - user must be at their assigned location
+    const { isLocationValid } = require('../config/locations');
+    const locationValidation = isLocationValid(userLat, userLon, staff.location);
+    
+    if (!locationValidation.valid) {
+      console.error(`❌ Location validation failed for ${staff.name}`);
+      console.error(`   Assigned location: ${staff.location}`);
+      console.error(`   User location: ${userLat}, ${userLon}`);
+      console.error(`   Error: ${locationValidation.error}`);
+      return res.status(403).json({
+        success: false,
+        error: locationValidation.error
+      });
+    }
+    
+    console.log(`✅ Location validated: ${staff.name} is at ${locationValidation.locationName} (${locationValidation.distance}m away)`);
+    
     const totalRequestTime = Date.now() - requestStartTime;
     console.log(`✅ Match found: ${staff.name} - Confidence: ${confidence}% (${confidenceLevel || 'Medium'})`);
     console.log(`⚡⚡⚡ TOTAL CLOCK-IN TIME: ${totalRequestTime}ms (Target: <2000ms for bank-level speed)`);
     
     // Format timestamp before saving (in case save fails, we still have the time)
     const timestamp = new Date();
+    
+    // Format date and time separately for better display
+    const dateString = timestamp.toLocaleDateString('en-US', { 
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    });
+    
     const timeString = timestamp.toLocaleTimeString('en-US', { 
       hour: '2-digit', 
       minute: '2-digit',
+      second: '2-digit',
       hour12: true 
+    });
+    
+    // Short date format for console logs
+    const shortDateString = timestamp.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
     });
     
     let clockTypeText;
@@ -273,15 +330,18 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       clockTypeText = 'Ended Break';
     }
     
-    console.log(`✅ Success: ${staff.name} ${clockTypeText} at ${timeString}`);
+    console.log(`✅ Success: ${staff.name} ${clockTypeText} on ${shortDateString} at ${timeString}`);
     
-    // Prepare response data
+    // Prepare response data with date and time
     const responseData = {
       success: true,
-      message: `${staff.name} — ${clockTypeText} at ${timeString}`,
+      message: `${staff.name} — ${clockTypeText}`,
       staffName: staff.name,
       clockType: type,
       timestamp: timestamp.toISOString(),
+      date: dateString,
+      time: timeString,
+      dateTime: `${dateString} at ${timeString}`,
       confidence
     };
     
@@ -351,7 +411,38 @@ router.get('/logs', async (req, res) => {
       .sort({ timestamp: -1 })
       .limit(parseInt(limit));
     
-    res.json({ success: true, logs });
+    // Format dates for better readability
+    const formattedLogs = logs.map(log => {
+      const timestamp = new Date(log.timestamp);
+      return {
+        ...log.toObject(),
+        date: timestamp.toLocaleDateString('en-US', { 
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        }),
+        time: timestamp.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true 
+        }),
+        dateTime: `${timestamp.toLocaleDateString('en-US', { 
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric'
+        })} at ${timestamp.toLocaleTimeString('en-US', { 
+          hour: '2-digit', 
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true 
+        })}`
+      };
+    });
+    
+    res.json({ success: true, logs: formattedLogs });
   } catch (error) {
     console.error('Error fetching clock logs:', error);
     res.status(500).json({ error: 'Failed to fetch clock logs' });
@@ -378,6 +469,476 @@ router.post('/cache/refresh', async (req, res) => {
   } catch (error) {
     console.error('Error refreshing cache:', error);
     res.status(500).json({ error: 'Failed to refresh cache' });
+  }
+});
+
+// ========== ADMIN DASHBOARD ROUTES ==========
+
+// Get dashboard statistics
+router.get('/admin/stats', async (req, res) => {
+  try {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Total staff
+    const totalStaff = await Staff.countDocuments({ isActive: true });
+
+    // Clock-ins today
+    const clockInsToday = await ClockLog.countDocuments({
+      clockType: 'in',
+      timestamp: { $gte: today, $lt: tomorrow }
+    });
+
+    // Clock-outs today
+    const clockOutsToday = await ClockLog.countDocuments({
+      clockType: 'out',
+      timestamp: { $gte: today, $lt: tomorrow }
+    });
+
+    // Currently clocked in (clocked in but not clocked out today)
+    const clockedInToday = await ClockLog.find({
+      clockType: 'in',
+      timestamp: { $gte: today, $lt: tomorrow }
+    }).select('staffId');
+
+    const clockedOutToday = await ClockLog.find({
+      clockType: 'out',
+      timestamp: { $gte: today, $lt: tomorrow }
+    }).select('staffId');
+
+    const clockedInIds = new Set(clockedInToday.map(log => log.staffId.toString()));
+    const clockedOutIds = new Set(clockedOutToday.map(log => log.staffId.toString()));
+    const currentlyIn = clockedInIds.size - clockedOutIds.size;
+
+    // Late arrivals (assuming 8:00 AM is standard start time)
+    const lateThreshold = new Date(today);
+    lateThreshold.setHours(8, 0, 0, 0);
+
+    const lateArrivals = await ClockLog.find({
+      clockType: 'in',
+      timestamp: { $gte: today, $lt: tomorrow, $gt: lateThreshold }
+    }).populate('staffId', 'name');
+
+    res.json({
+      success: true,
+      stats: {
+        totalStaff,
+        clockInsToday,
+        clockOutsToday,
+        currentlyIn: Math.max(0, currentlyIn),
+        lateArrivals: lateArrivals.length,
+        lateArrivalsList: lateArrivals.map(log => ({
+          staffId: log.staffId._id || log.staffId,
+          staffName: log.staffName,
+          timestamp: log.timestamp,
+          time: new Date(log.timestamp).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          })
+        }))
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
+    res.status(500).json({ error: 'Failed to fetch dashboard stats' });
+  }
+});
+
+// Get all staff with their monthly timesheet
+router.get('/admin/staff', async (req, res) => {
+  try {
+    const { month, year } = req.query;
+    const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
+    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+
+    const startDate = new Date(targetYear, targetMonth - 1, 1);
+    const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
+    const staff = await Staff.find({ isActive: true })
+      .select('name surname idNumber phoneNumber role location createdAt')
+      .sort({ name: 1 });
+
+    const staffWithTimesheets = await Promise.all(
+      staff.map(async (member) => {
+        const logs = await ClockLog.find({
+          staffId: member._id,
+          timestamp: { $gte: startDate, $lte: endDate }
+        }).sort({ timestamp: 1 });
+
+        // Group logs by date
+        const timesheetByDate = {};
+        logs.forEach(log => {
+          const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+          if (!timesheetByDate[dateKey]) {
+            timesheetByDate[dateKey] = {
+              date: dateKey,
+              timeIn: null,
+              startLunch: null,
+              endLunch: null,
+              timeOut: null
+            };
+          }
+
+          const timeStr = new Date(log.timestamp).toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+          });
+
+          if (log.clockType === 'in') {
+            timesheetByDate[dateKey].timeIn = timeStr;
+          } else if (log.clockType === 'break_start') {
+            timesheetByDate[dateKey].startLunch = timeStr;
+          } else if (log.clockType === 'break_end') {
+            timesheetByDate[dateKey].endLunch = timeStr;
+          } else if (log.clockType === 'out') {
+            timesheetByDate[dateKey].timeOut = timeStr;
+          }
+        });
+
+        const timesheet = Object.values(timesheetByDate).sort((a, b) => 
+          new Date(a.date) - new Date(b.date)
+        );
+
+        return {
+          _id: member._id,
+          name: member.name,
+          surname: member.surname,
+          idNumber: member.idNumber,
+          phoneNumber: member.phoneNumber,
+          role: member.role,
+          location: member.location,
+          createdAt: member.createdAt,
+          timesheet
+        };
+      })
+    );
+
+    res.json({
+      success: true,
+      month: targetMonth,
+      year: targetYear,
+      staff: staffWithTimesheets
+    });
+  } catch (error) {
+    console.error('Error fetching staff with timesheets:', error);
+    res.status(500).json({ error: 'Failed to fetch staff data' });
+  }
+});
+
+// Get not accountable (wrong time usage) for a specific date
+router.get('/admin/not-accountable', async (req, res) => {
+  try {
+    const { date } = req.query;
+    const targetDate = date ? new Date(date) : new Date();
+    targetDate.setHours(0, 0, 0, 0);
+    const nextDate = new Date(targetDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    // Expected times (in 24-hour format for easier comparison)
+    const EXPECTED_TIMES = {
+      clockIn: { hour: 7, minute: 30 },      // 07:30 AM
+      startBreak: { hour: 13, minute: 0 },  // 13:00 PM (1:00 PM)
+      endBreak: { hour: 14, minute: 0 },   // 14:00 PM (2:00 PM)
+      clockOut: { hour: 16, minute: 30 }    // 16:30 PM (4:30 PM)
+    };
+
+    // Tolerance window (in minutes) - allow 15 minutes before/after
+    const TOLERANCE = 15;
+
+    // Get all logs for the date
+    const allLogs = await ClockLog.find({
+      timestamp: { $gte: targetDate, $lt: nextDate }
+    }).populate('staffId', 'name').sort({ timestamp: 1 });
+
+    // Get all active staff
+    const allStaff = await Staff.find({ isActive: true }).select('_id name');
+    const staffMap = new Map(allStaff.map(s => [s._id.toString(), s.name]));
+
+    // Group logs by staff member
+    const staffLogs = {};
+    allLogs.forEach(log => {
+      const staffId = log.staffId._id.toString();
+      if (!staffLogs[staffId]) {
+        staffLogs[staffId] = [];
+      }
+      staffLogs[staffId].push(log);
+    });
+
+    const notAccountable = [];
+
+    // Check each staff member
+    allStaff.forEach(staff => {
+      const staffId = staff._id.toString();
+      const logs = staffLogs[staffId] || [];
+      
+      // Check if clock-in exists and is at wrong time
+      const clockInLog = logs.find(log => log.clockType === 'in');
+      if (!clockInLog) {
+        notAccountable.push({
+          staffId: staff._id,
+          staffName: staff.name,
+          reason: 'No clock-in recorded',
+          details: 'Staff member did not clock in'
+        });
+      } else {
+        const clockInTime = new Date(clockInLog.timestamp);
+        const expectedTime = new Date(targetDate);
+        expectedTime.setHours(EXPECTED_TIMES.clockIn.hour, EXPECTED_TIMES.clockIn.minute, 0, 0);
+        
+        const diffMinutes = (clockInTime - expectedTime) / (1000 * 60);
+        if (Math.abs(diffMinutes) > TOLERANCE) {
+          const actualTime = clockInTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+          notAccountable.push({
+            staffId: staff._id,
+            staffName: staff.name,
+            reason: `Clock-in at wrong time: ${actualTime} (Expected: 07:30 AM)`,
+            details: `Clocked in at ${actualTime} instead of 07:30 AM`,
+            clockInTime: actualTime,
+            clockInTimestamp: clockInLog.timestamp
+          });
+        }
+      }
+
+      // Check break start time
+      const breakStartLog = logs.find(log => log.clockType === 'break_start');
+      if (breakStartLog) {
+        const breakStartTime = new Date(breakStartLog.timestamp);
+        const expectedTime = new Date(targetDate);
+        expectedTime.setHours(EXPECTED_TIMES.startBreak.hour, EXPECTED_TIMES.startBreak.minute, 0, 0);
+        
+        const diffMinutes = (breakStartTime - expectedTime) / (1000 * 60);
+        if (Math.abs(diffMinutes) > TOLERANCE) {
+          const actualTime = breakStartTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+          notAccountable.push({
+            staffId: staff._id,
+            staffName: staff.name,
+            reason: `Start break at wrong time: ${actualTime} (Expected: 01:00 PM)`,
+            details: `Started break at ${actualTime} instead of 01:00 PM`,
+            breakStartTime: actualTime,
+            breakStartTimestamp: breakStartLog.timestamp
+          });
+        }
+      }
+
+      // Check break end time
+      const breakEndLog = logs.find(log => log.clockType === 'break_end');
+      if (breakEndLog) {
+        const breakEndTime = new Date(breakEndLog.timestamp);
+        const expectedTime = new Date(targetDate);
+        expectedTime.setHours(EXPECTED_TIMES.endBreak.hour, EXPECTED_TIMES.endBreak.minute, 0, 0);
+        
+        const diffMinutes = (breakEndTime - expectedTime) / (1000 * 60);
+        if (Math.abs(diffMinutes) > TOLERANCE) {
+          const actualTime = breakEndTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+          notAccountable.push({
+            staffId: staff._id,
+            staffName: staff.name,
+            reason: `End break at wrong time: ${actualTime} (Expected: 02:00 PM)`,
+            details: `Ended break at ${actualTime} instead of 02:00 PM`,
+            breakEndTime: actualTime,
+            breakEndTimestamp: breakEndLog.timestamp
+          });
+        }
+      }
+
+      // Check clock-out time
+      const clockOutLog = logs.find(log => log.clockType === 'out');
+      if (clockOutLog) {
+        const clockOutTime = new Date(clockOutLog.timestamp);
+        const expectedTime = new Date(targetDate);
+        expectedTime.setHours(EXPECTED_TIMES.clockOut.hour, EXPECTED_TIMES.clockOut.minute, 0, 0);
+        
+        const diffMinutes = (clockOutTime - expectedTime) / (1000 * 60);
+        if (Math.abs(diffMinutes) > TOLERANCE) {
+          const actualTime = clockOutTime.toLocaleTimeString('en-US', {
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: true
+          });
+          notAccountable.push({
+            staffId: staff._id,
+            staffName: staff.name,
+            reason: `Clock-out at wrong time: ${actualTime} (Expected: 04:30 PM)`,
+            details: `Clocked out at ${actualTime} instead of 04:30 PM`,
+            clockOutTime: actualTime,
+            clockOutTimestamp: clockOutLog.timestamp
+          });
+        }
+      }
+    });
+
+    res.json({
+      success: true,
+      date: targetDate.toISOString().split('T')[0],
+      notAccountable
+    });
+  } catch (error) {
+    console.error('Error fetching not accountable:', error);
+    res.status(500).json({ error: 'Failed to fetch not accountable list' });
+  }
+});
+
+// Get detailed day data for a specific staff member and date
+router.get('/admin/staff/:staffId/day-details', async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const { date } = req.query;
+    const targetDate = date ? new Date(date) : new Date();
+    targetDate.setHours(0, 0, 0, 0);
+    const nextDate = new Date(targetDate);
+    nextDate.setDate(nextDate.getDate() + 1);
+
+    const staff = await Staff.findById(staffId);
+    if (!staff) {
+      return res.status(404).json({ error: 'Staff member not found' });
+    }
+
+    const logs = await ClockLog.find({
+      staffId: staff._id,
+      timestamp: { $gte: targetDate, $lt: nextDate }
+    }).sort({ timestamp: 1 });
+
+    const dayDetails = {
+      staff: {
+        _id: staff._id,
+        name: staff.name,
+        surname: staff.surname,
+        idNumber: staff.idNumber,
+        role: staff.role,
+        location: staff.location
+      },
+      date: targetDate.toISOString().split('T')[0],
+      logs: logs.map(log => ({
+        clockType: log.clockType,
+        timestamp: log.timestamp,
+        time: new Date(log.timestamp).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        }),
+        dateTime: new Date(log.timestamp).toLocaleString('en-US', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
+        }),
+        confidence: log.confidence
+      })),
+      summary: {
+        clockIn: logs.find(log => log.clockType === 'in') || null,
+        startBreak: logs.find(log => log.clockType === 'break_start') || null,
+        endBreak: logs.find(log => log.clockType === 'break_end') || null,
+        clockOut: logs.find(log => log.clockType === 'out') || null
+      }
+    };
+
+    res.json({
+      success: true,
+      ...dayDetails
+    });
+  } catch (error) {
+    console.error('Error fetching day details:', error);
+    res.status(500).json({ error: 'Failed to fetch day details' });
+  }
+});
+
+// Get single staff member timesheet for PDF export
+router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const { month, year } = req.query;
+    const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
+    const targetYear = year ? parseInt(year) : new Date().getFullYear();
+
+    const startDate = new Date(targetYear, targetMonth - 1, 1);
+    const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
+
+    const staff = await Staff.findById(staffId);
+    if (!staff) {
+      return res.status(404).json({ error: 'Staff member not found' });
+    }
+
+    const logs = await ClockLog.find({
+      staffId: staff._id,
+      timestamp: { $gte: startDate, $lte: endDate }
+    }).sort({ timestamp: 1 });
+
+    // Group logs by date
+    const timesheetByDate = {};
+    logs.forEach(log => {
+      const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+      if (!timesheetByDate[dateKey]) {
+        timesheetByDate[dateKey] = {
+          date: dateKey,
+          timeIn: null,
+          startLunch: null,
+          endLunch: null,
+          timeOut: null
+        };
+      }
+
+      const timeStr = new Date(log.timestamp).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+
+      if (log.clockType === 'in') {
+        timesheetByDate[dateKey].timeIn = timeStr;
+      } else if (log.clockType === 'break_start') {
+        timesheetByDate[dateKey].startLunch = timeStr;
+      } else if (log.clockType === 'break_end') {
+        timesheetByDate[dateKey].endLunch = timeStr;
+      } else if (log.clockType === 'out') {
+        timesheetByDate[dateKey].timeOut = timeStr;
+      }
+    });
+
+    const timesheet = Object.values(timesheetByDate).sort((a, b) => 
+      new Date(a.date) - new Date(b.date)
+    );
+
+    res.json({
+      success: true,
+      staff: {
+        _id: staff._id,
+        name: staff.name,
+        surname: staff.surname,
+        idNumber: staff.idNumber,
+        phoneNumber: staff.phoneNumber,
+        role: staff.role,
+        location: staff.location
+      },
+      month: targetMonth,
+      year: targetYear,
+      timesheet
+    });
+  } catch (error) {
+    console.error('Error fetching staff timesheet:', error);
+    res.status(500).json({ error: 'Failed to fetch timesheet' });
   }
 });
 

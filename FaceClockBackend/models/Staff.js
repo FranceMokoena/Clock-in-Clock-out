@@ -36,6 +36,11 @@ const staffSchema = new mongoose.Schema({
     enum: ['Intern', 'Staff', 'Other'],
     default: 'Staff'
   },
+  location: {
+    type: String,
+    required: true,
+    trim: true
+  },
   faceEmbedding: {
     type: [Number],
     required: false  // Now optional, use faceEmbeddings array instead
