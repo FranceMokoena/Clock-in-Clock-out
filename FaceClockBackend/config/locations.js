@@ -1,27 +1,40 @@
 // Allowed locations for clock-in/clock-out
+// ⚠️ CRITICAL: ONLY TWO LOCATIONS ARE ALLOWED BY THE APP ⚠️
 // Each location has a name, address, and coordinates (latitude, longitude)
-// Staff can only clock-in/out at their assigned location
+// Staff can ONLY clock-in/out when they are at their assigned location (within 200m radius)
+// Radius is set to 200m to account for GPS inaccuracy (typical GPS accuracy is 5-10m, but can be up to 50m in urban areas)
+// During registration, users choose their location from the dropdown
+// During clock-in, the app validates they are at that exact location using HIGHEST GPS accuracy
 
 const ALLOWED_LOCATIONS = {
-  'SHELL_HOUSE_MBOMBELA': {
-    name: '1st Floor, Shell House',
-    address: 'Ferreira St, Mbombela. 1200',
-    latitude: -25.320163183253243,
-    longitude: 31.04449850623618,
-    radius: 100 // meters - allowed radius from location center
+  'FERREIRA_STREET_MBOMBELA': {
+    name: '20 Ferreira Street, Mbombela',
+    address: '20 Ferreira Street, Mbombela 1240',
+    latitude: -25.475297, // Updated to match actual location coordinates
+    longitude: 30.982345, // Updated to match actual location coordinates
+    radius: 200 // meters - allows for GPS inaccuracy and building area
   },
-  'WHITE_RIVER_MAJOJOS': {
-    name: 'White River, Majojos Residence',
-    address: 'White River, Majojos Residence',
-    latitude: -25.3204201,
-    longitude: 31.0440858,
-    radius: 100 // meters - allowed radius from location center
+  'WHITE_RIVER': {
+    name: 'White River',
+    address: 'White River, Mpumalanga',
+    latitude: -25.3318,
+    longitude: 31.0117,
+    radius: 200 // meters - increased to account for GPS inaccuracy (was 100m)
   }
 };
 
 // Get location by key
+// Includes backward compatibility for old location keys
 function getLocation(key) {
-  return ALLOWED_LOCATIONS[key];
+  // Backward compatibility: map old keys to new keys
+  const keyMapping = {
+    'SHELL_HOUSE_MBOMBELA': 'FERREIRA_STREET_MBOMBELA',
+    'WHITE_RIVER_MAJOJOS': 'WHITE_RIVER'
+  };
+  
+  // If key exists in mapping, use the new key
+  const actualKey = keyMapping[key] || key;
+  return ALLOWED_LOCATIONS[actualKey];
 }
 
 // Get all locations as array for dropdown
@@ -52,12 +65,40 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
 }
 
 // Check if user's location is within allowed radius of their assigned location
+// CRITICAL: This function ensures users can ONLY clock in at their assigned location
 function isLocationValid(userLat, userLon, assignedLocationKey) {
+  // Validate input coordinates
+  if (typeof userLat !== 'number' || typeof userLon !== 'number' || isNaN(userLat) || isNaN(userLon)) {
+    return { 
+      valid: false, 
+      error: 'Invalid GPS coordinates. Please ensure GPS is enabled and try again.',
+      distance: null,
+      requiredRadius: null
+    };
+  }
+  
+  // Validate location key exists
+  if (!assignedLocationKey || typeof assignedLocationKey !== 'string') {
+    return { 
+      valid: false, 
+      error: 'Invalid location assigned to staff member. Please contact administrator.',
+      distance: null,
+      requiredRadius: null
+    };
+  }
+  
+  // Get location data
   const location = getLocation(assignedLocationKey);
   if (!location) {
-    return { valid: false, error: 'Invalid location assigned to staff member' };
+    return { 
+      valid: false, 
+      error: `Invalid location assigned: "${assignedLocationKey}". Please contact administrator.`,
+      distance: null,
+      requiredRadius: null
+    };
   }
 
+  // Calculate distance using Haversine formula (accurate for Earth's surface)
   const distance = calculateDistance(
     userLat,
     userLon,
@@ -65,19 +106,26 @@ function isLocationValid(userLat, userLon, assignedLocationKey) {
     location.longitude
   );
 
+  // STRICT VALIDATION: User must be within the allowed radius
+  // Note: Radius is set to 200m to account for GPS inaccuracy (typical GPS accuracy is 5-10m, but can be up to 50m in urban areas)
   if (distance > location.radius) {
     return {
       valid: false,
-      error: `You are ${Math.round(distance)}m away from your assigned location (${location.name}). You must be within ${location.radius}m to clock in/out.`,
+      error: `You are ${Math.round(distance)}m away from your assigned location (${location.name}). You must be within ${location.radius}m to clock in/out.\n\nYour current coordinates: ${userLat.toFixed(6)}, ${userLon.toFixed(6)}\nLocation coordinates: ${location.latitude.toFixed(6)}, ${location.longitude.toFixed(6)}`,
       distance: Math.round(distance),
-      requiredRadius: location.radius
+      requiredRadius: location.radius,
+      assignedLocation: location.name,
+      userCoordinates: { lat: userLat, lon: userLon },
+      locationCoordinates: { lat: location.latitude, lon: location.longitude }
     };
   }
 
+  // Location is valid - user is within allowed radius
   return {
     valid: true,
     distance: Math.round(distance),
-    locationName: location.name
+    locationName: location.name,
+    requiredRadius: location.radius
   };
 }
 

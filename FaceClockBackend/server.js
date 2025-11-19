@@ -142,7 +142,7 @@ async function startServer() {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 API available at http://localhost:${PORT}/api`);
     console.log(`📱 Android emulator: http://10.0.2.2:${PORT}/api`);
-    console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.1.104:${PORT}/api)`);
+    console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.88.51:${PORT}/api)`);
     console.log(`   Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     if (process.env.RENDER_EXTERNAL_URL) {

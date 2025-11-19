@@ -36,6 +36,8 @@ async function loadModels() {
     return modelsPromise;
   }
 
+  // Models path: C:\Clock-in\FaceClockBackend\models\face-api
+  // Official repository: https://github.com/justadudewhohacks/face-api.js/tree/master/weights
   const modelsPath = path.join(__dirname, '../models/face-api');
   modelsPromise = (async () => {
     modelsLoadError = null;
@@ -44,19 +46,21 @@ async function loadModels() {
       const loadedFromDisk = await tryLoadModelsFromDisk(modelsPath);
       if (loadedFromDisk) {
         modelsLoaded = true;
+        console.log(`✅ Models loaded from local directory: ${modelsPath}`);
         return;
       }
     } catch (diskError) {
       console.warn(`⚠️ Failed to load models from disk: ${diskError.message}`);
     }
 
-    console.log('📦 Attempting to load models from CDN...');
+    console.log('📦 Attempting to load models from CDN (fallback)...');
+    // Official repository: https://github.com/justadudewhohacks/face-api.js/tree/master/weights
     const cdnSources = [
+      { name: 'GitHub raw (master - official)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js/master/weights' },
       { name: 'jsDelivr (@vladmandic)', url: 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.14/model' },
       { name: 'unpkg (@vladmandic)', url: 'https://unpkg.com/@vladmandic/face-api@1.7.14/model' },
-      { name: 'GitHub raw (main)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/main/weights' },
-      { name: 'GitHub raw (master)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights' },
-      { name: 'GitHub download (main)', url: 'https://github.com/justadudewhohacks/face-api.js-models/raw/main/weights' },
+      { name: 'GitHub raw (face-api.js-models main)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/main/weights' },
+      { name: 'GitHub raw (face-api.js-models master)', url: 'https://raw.githubusercontent.com/justadudewhohacks/face-api.js-models/master/weights' },
     ];
 
     for (const source of cdnSources) {
@@ -86,42 +90,48 @@ async function loadModels() {
 
 async function tryLoadModelsFromDisk(modelsPath) {
   if (!fs.existsSync(modelsPath)) {
-    console.log('📁 Local models directory missing. Skipping disk load.');
+    console.log(`📁 Local models directory missing: ${modelsPath}`);
+    console.log('   Skipping disk load. Will try CDN fallback.');
     return false;
   }
 
+  console.log(`📁 Found local models directory: ${modelsPath}`);
+  
   const requiredManifest = path.join(modelsPath, 'face_landmark_68_model-weights_manifest.json');
   if (!fs.existsSync(requiredManifest)) {
-    console.warn('⚠️ Local models directory exists but required files are missing.');
+    console.warn(`⚠️ Local models directory exists but required files are missing.`);
+    console.warn(`   Expected manifest: ${requiredManifest}`);
     return false;
   }
 
-  console.log('📦 Loading face recognition models from disk...');
+  console.log('📦 Loading face recognition models from local disk...');
+  console.log(`   Models path: ${modelsPath}`);
+  console.log(`   Official repo: https://github.com/justadudewhohacks/face-api.js/tree/master/weights`);
   
-  // Load TinyFaceDetector first (our primary detector - fastest)
-  const tinyDetectorManifestPath = path.join(modelsPath, 'tiny_face_detector_model-weights_manifest.json');
-  if (fs.existsSync(tinyDetectorManifestPath)) {
-    try {
-      await faceapi.nets.tinyFaceDetector.loadFromDisk(modelsPath);
-      console.log('   ✅ TinyFaceDetector loaded (primary detector - fastest)');
-    } catch (err) {
-      console.warn(`   ⚠️ TinyFaceDetector load failed: ${err.message}`);
-    }
-  } else {
-    console.warn('   ⚠️ TinyFaceDetector manifest not found. Will use SSD MobileNet instead.');
-  }
-  
-  // Load SSD MobileNet v1 (fallback detector)
+  // Load SSD MobileNet v1 first (our PRIMARY detector - most reliable)
   const ssdManifestPath = path.join(modelsPath, 'ssd_mobilenetv1_model-weights_manifest.json');
   if (fs.existsSync(ssdManifestPath)) {
     try {
       await faceapi.nets.ssdMobilenetv1.loadFromDisk(modelsPath);
-      console.log('   ✅ SSD MobileNet v1 loaded (fallback detector available)');
+      console.log('   ✅ SSD MobileNet v1 loaded (primary detector - default)');
     } catch (err) {
-      console.warn(`   ⚠️ SSD MobileNet load failed: ${err.message}`);
+      console.warn(`   ⚠️ SSD MobileNet v1 load failed: ${err.message}`);
     }
   } else {
-    console.warn('   ⚠️ SSD MobileNet manifest not found locally. Continuing without fallback detector.');
+    console.warn('   ⚠️ SSD MobileNet v1 manifest not found. Will use TinyFaceDetector as fallback.');
+  }
+  
+  // Load TinyFaceDetector (fallback detector - faster but less reliable)
+  const tinyDetectorManifestPath = path.join(modelsPath, 'tiny_face_detector_model-weights_manifest.json');
+  if (fs.existsSync(tinyDetectorManifestPath)) {
+    try {
+      await faceapi.nets.tinyFaceDetector.loadFromDisk(modelsPath);
+      console.log('   ✅ TinyFaceDetector loaded (fallback detector available)');
+    } catch (err) {
+      console.warn(`   ⚠️ TinyFaceDetector load failed: ${err.message}`);
+    }
+  } else {
+    console.warn('   ⚠️ TinyFaceDetector manifest not found locally. Continuing without fallback detector.');
   }
   
   // Load required models (landmarks and recognition)
@@ -146,20 +156,20 @@ async function tryLoadModelsFromDisk(modelsPath) {
 async function loadModelsFromUri(baseUrl, sourceName) {
   console.log(`   Loading models from ${sourceName} (${baseUrl})...`);
   
-  // Try to load TinyFaceDetector first (primary detector)
-  try {
-    await faceapi.nets.tinyFaceDetector.loadFromUri(baseUrl);
-    console.log('   ✅ TinyFaceDetector loaded (primary detector - fastest)');
-  } catch (tinyError) {
-    console.warn(`   ⚠️ TinyFaceDetector unavailable from ${sourceName}: ${tinyError.message}`);
-  }
-  
-  // Load SSD MobileNet v1 (fallback detector)
+  // Load SSD MobileNet v1 first (PRIMARY detector - most reliable)
   try {
     await faceapi.nets.ssdMobilenetv1.loadFromUri(baseUrl);
-    console.log('   ✅ SSD MobileNet v1 loaded (fallback detector available)');
+    console.log('   ✅ SSD MobileNet v1 loaded (primary detector - default)');
   } catch (ssdError) {
     console.warn(`   ⚠️ SSD MobileNet v1 unavailable from ${sourceName}: ${ssdError.message}`);
+  }
+  
+  // Load TinyFaceDetector (fallback detector - faster but less reliable)
+  try {
+    await faceapi.nets.tinyFaceDetector.loadFromUri(baseUrl);
+    console.log('   ✅ TinyFaceDetector loaded (fallback detector available)');
+  } catch (tinyError) {
+    console.warn(`   ⚠️ TinyFaceDetector unavailable from ${sourceName}: ${tinyError.message}`);
   }
 
   // Load required models (landmarks and recognition)
@@ -471,10 +481,10 @@ async function generateEmbedding(imageBuffer) {
     try {
       // Use canvas.loadImage which properly handles Buffers in Node.js
       // This supports JPEG, PNG, GIF, WebP, SVG, and other formats
-      // Add timeout to prevent hanging (10 seconds max for image loading)
+      // ⚡ OPTIMIZED: Reduced timeout from 10s to 5s (faster failure detection)
       const loadImagePromise = loadImage(imageBuffer);
       const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Image loading timeout after 10 seconds')), 10000)
+        setTimeout(() => reject(new Error('Image loading timeout after 5 seconds')), 5000)
       );
       
       img = await Promise.race([loadImagePromise, timeoutPromise]);
@@ -485,12 +495,12 @@ async function generateEmbedding(imageBuffer) {
       throw new Error(`Failed to load image: ${errorMsg}. Please ensure the image is a valid format (JPEG, PNG, etc.).`);
     }
     
-    // Try TinyFaceDetector first (3-5x faster), fallback to SSD MobileNet v1
-    // TinyFaceDetector is optimized for speed while maintaining good accuracy
-    console.log('🔍 Starting face detection (TinyFaceDetector - optimized for speed)...');
+    // Use SSD MobileNet v1 as PRIMARY detector (most reliable and accurate)
+    // SSD MobileNet v1 is the default because it always works reliably
+    console.log('🔍 Starting face detection (SSD MobileNet v1 - default detector)...');
     const detectionStartTime = Date.now();
     let detections;
-    let detectionMethod = 'TinyFaceDetector';
+    let detectionMethod = 'SSD MobileNet v1';
     
     try {
       // Verify models are loaded
@@ -501,59 +511,62 @@ async function generateEmbedding(imageBuffer) {
         throw new Error('Face Recognition model is not loaded. Please ensure models are properly downloaded.');
       }
       
-      // Try TinyFaceDetector first (faster - 3-5x speed improvement)
-      if (faceapi.nets.tinyFaceDetector.isLoaded) {
-        try {
-          const detectionPromise = faceapi
-            .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({ 
-              inputSize: 320, // 320 = fastest, 512 = balanced, 608 = most accurate
-              scoreThreshold: 0.3  // Lower threshold for better detection
-            }))
-            .withFaceLandmarks()
-            .withFaceDescriptors();
-          
-          const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Face detection timeout after 5 seconds')), 5000)
-          );
-          
-          detections = await Promise.race([detectionPromise, timeoutPromise]);
-          const detectionTime = Date.now() - detectionStartTime;
-          console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
-        } catch (tinyError) {
-          console.warn(`⚠️ TinyFaceDetector failed: ${tinyError.message}, falling back to SSD MobileNet v1`);
-          detectionMethod = 'SSD MobileNet v1 (fallback)';
-          throw tinyError; // Will be caught by outer catch
-        }
-      } else {
-        // Fallback to SSD MobileNet v1 if TinyFaceDetector not available
-        detectionMethod = 'SSD MobileNet v1 (fallback)';
-        throw new Error('TinyFaceDetector not loaded, using SSD MobileNet v1');
-      }
-    } catch (primaryError) {
-      // Fallback to SSD MobileNet v1 if TinyFaceDetector fails or not available
+      // Use SSD MobileNet v1 as PRIMARY detector (most reliable)
+      // ⚡ OPTIMIZED: Reduced timeout and optimized settings for speed
       if (faceapi.nets.ssdMobilenetv1.isLoaded) {
         try {
-          console.log('🔄 Falling back to SSD MobileNet v1 for face detection...');
-          detectionMethod = 'SSD MobileNet v1 (fallback)';
-          
           const detectionPromise = faceapi
             .detectAllFaces(img, new faceapi.SsdMobilenetv1Options({ 
-              minConfidence: 0.3,
-              maxResults: 5
+              minConfidence: 0.4, // Slightly higher for faster processing (fewer false positives)
+              maxResults: 1 // Only need 1 face - faster processing
             }))
             .withFaceLandmarks()
             .withFaceDescriptors();
           
+          // ⚡ OPTIMIZED: Reduced timeout from 8s to 6s (faster failure detection)
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('Face detection timeout after 8 seconds')), 8000)
+            setTimeout(() => reject(new Error('Face detection timeout after 6 seconds')), 6000)
           );
           
           detections = await Promise.race([detectionPromise, timeoutPromise]);
           const detectionTime = Date.now() - detectionStartTime;
           console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
         } catch (ssdError) {
-          // If SSD also fails, throw the original error
-          const errorMsg = ssdError?.message || primaryError?.message || String(ssdError) || 'Unknown error';
+          console.warn(`⚠️ SSD MobileNet v1 failed: ${ssdError.message}, falling back to TinyFaceDetector`);
+          detectionMethod = 'TinyFaceDetector (fallback)';
+          throw ssdError; // Will be caught by outer catch
+        }
+      } else {
+        // Fallback to TinyFaceDetector if SSD MobileNet v1 not available
+        detectionMethod = 'TinyFaceDetector (fallback)';
+        throw new Error('SSD MobileNet v1 not loaded, using TinyFaceDetector');
+      }
+    } catch (primaryError) {
+      // Fallback to TinyFaceDetector if SSD MobileNet v1 fails or not available
+      if (faceapi.nets.tinyFaceDetector.isLoaded) {
+        try {
+          console.log('🔄 Falling back to TinyFaceDetector for face detection...');
+          detectionMethod = 'TinyFaceDetector (fallback)';
+          
+          const detectionPromise = faceapi
+            .detectAllFaces(img, new faceapi.TinyFaceDetectorOptions({ 
+              inputSize: 320, // 320 = fastest (optimized for speed)
+              scoreThreshold: 0.4  // Slightly higher for faster processing
+            }))
+            .withFaceLandmarks()
+            .withFaceDescriptors();
+          
+          // ⚡ OPTIMIZED: Reduced timeout from 5s to 4s
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('Face detection timeout after 4 seconds')), 4000)
+          );
+          
+          detections = await Promise.race([detectionPromise, timeoutPromise]);
+          const detectionTime = Date.now() - detectionStartTime;
+          console.log(`✅ Face detection completed in ${detectionTime}ms (${detectionMethod}) - Found ${detections.length} face(s)`);
+        } catch (tinyError) {
+          // If TinyFaceDetector also fails, throw the original error
+          const errorMsg = tinyError?.message || primaryError?.message || String(tinyError) || 'Unknown error';
           throw new Error(`Face detection failed: ${errorMsg}`);
         }
       } else {
