@@ -1,18 +1,18 @@
 services:
   - type: web
-    name: faceclock-backend
+    name: clock-in-clock-out-backend
     env: node
     plan: free
-    buildCommand: npm install
+    region: oregon
+    buildCommand: npm install && npm run postinstall
     startCommand: npm start
-    rootDir: FaceClockBackend
+    healthCheckPath: /api/staff/health
     envVars:
       - key: NODE_ENV
         value: production
       - key: PORT
         value: 10000
-      - key: MONGO_URI
-        sync: false
-      - key: ENCRYPTION_KEY
-        sync: false
-
+      # Add these in Render Dashboard:
+      # - MONGO_URI (your MongoDB connection string)
+      # - GOOGLE_VISION_API_KEY (if using Google Vision)
+      # - ENCRYPTION_KEY (if using encryption)
