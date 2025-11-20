@@ -11,7 +11,7 @@ const path = require('path');
 
 const modelsDir = path.join(__dirname, 'models', 'face-api');
 
-// Files required by face-api.js
+// Files required by @vladmandic/face-api (upgraded from face-api.js)
 const modelFiles = [
   'ssd_mobilenetv1_model-weights_manifest.json',
   'ssd_mobilenetv1_model-shard1.bin',

@@ -50,6 +50,40 @@ const staffSchema = new mongoose.Schema({
     type: [[Number]],  // Array of embedding arrays
     default: []
   },
+  // Facial features for enhanced matching accuracy (eyes, nose, mouth, head shape)
+  facialFeatures: {
+    type: [{
+      // Eye features
+      eyeWidth: Number,        // Average eye width
+      eyeHeight: Number,       // Average eye height
+      eyeSpacing: Number,      // Distance between eyes
+      eyeShape: Number,        // Eye shape ratio (width/height)
+      
+      // Nose features
+      noseWidth: Number,       // Nose width
+      noseHeight: Number,      // Nose height
+      noseShape: Number,      // Nose shape ratio
+      
+      // Mouth features
+      mouthWidth: Number,     // Mouth width
+      mouthHeight: Number,     // Mouth height
+      mouthShape: Number,      // Mouth shape ratio
+      
+      // Head/face shape features
+      faceWidth: Number,       // Face width (jaw points)
+      faceHeight: Number,     // Face height
+      faceShape: Number,      // Face shape ratio
+      jawShape: [Number],      // Jaw shape (normalized coordinates)
+      
+      // Symmetry features
+      faceSymmetry: Number,    // Face symmetry score (0-1)
+      eyeLevel: Number,        // Eye level alignment
+      
+      // Feature vector for comparison (normalized)
+      featureVector: [Number]  // Combined normalized feature vector
+    }],
+    default: []
+  },
   encryptedEmbedding: {
     type: String,
     required: true

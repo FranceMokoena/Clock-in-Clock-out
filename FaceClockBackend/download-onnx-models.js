@@ -1,0 +1,226 @@
+/**
+ * Script to download ONNX models (SCRFD + ArcFace) for face recognition
+ * 
+ * Models:
+ * - SCRFD: Face detection (scrfd_500m_bnkps.onnx)
+ * - ArcFace: Face recognition (w600k_r50.onnx or glint360k_r50.onnx)
+ * 
+ * Usage: node download-onnx-models.js
+ */
+
+const https = require('https');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+
+const modelsDir = path.join(__dirname, 'models', 'onnx');
+
+// ONNX models required for face recognition
+// Note: These models need to be converted from PyTorch/MXNet to ONNX format
+// For now, we'll use alternative pre-converted models or provide conversion instructions
+const modelFiles = [
+  {
+    filename: 'scrfd_500m_bnkps.onnx',
+    description: 'SCRFD face detection model (500M)',
+    sources: [
+      // Hugging Face (often has pre-converted models)
+      'https://huggingface.co/deepinsight/scrfd-500m/resolve/main/scrfd_500m_bnkps.onnx',
+      // Alternative: Use InsightFace Python to convert, or find pre-converted versions
+      'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
+      // Model Zoo alternative
+      'https://github.com/onnx/models/raw/main/vision/body_analysis/insightface/scrfd_500m_bnkps.onnx',
+    ],
+    note: 'If download fails, you may need to convert from PyTorch using InsightFace tools'
+  },
+  {
+    filename: 'w600k_r50.onnx',
+    description: 'ArcFace recognition model (W600K)',
+    sources: [
+      // Hugging Face
+      'https://huggingface.co/deepinsight/arcface-r50/resolve/main/w600k_r50.onnx',
+      // Alternative model (Glint360K - more accurate)
+      'https://huggingface.co/deepinsight/glint360k-r50/resolve/main/glint360k_r50.onnx',
+      // GitHub releases
+      'https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_r50.onnx',
+    ],
+    note: 'If download fails, you may need to convert from PyTorch using InsightFace tools'
+  }
+];
+
+function downloadFile(url, filepath) {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    const filename = path.basename(filepath);
+    
+    console.log(`📥 Downloading: ${filename}`);
+    console.log(`   From: ${url}`);
+    
+    const file = fs.createWriteStream(filepath);
+    let downloadedBytes = 0;
+    let totalBytes = 0;
+
+    protocol
+      .get(url, (response) => {
+        // Handle redirects
+        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
+          const redirectUrl = response.headers.location;
+          file.close();
+          fs.unlink(filepath, () => {});
+          console.log(`   Redirecting to: ${redirectUrl}`);
+          return resolve(downloadFile(redirectUrl, filepath));
+        }
+
+        if (response.statusCode !== 200) {
+          file.close();
+          fs.unlink(filepath, () => {});
+          return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+        }
+
+        totalBytes = parseInt(response.headers['content-length'] || '0', 10);
+        
+        response.on('data', (chunk) => {
+          downloadedBytes += chunk.length;
+          if (totalBytes > 0) {
+            const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
+            process.stdout.write(`\r   Progress: ${percent}% (${(downloadedBytes / 1024 / 1024).toFixed(2)} MB)`);
+          }
+        });
+
+        response.pipe(file);
+
+        file.on('finish', () => {
+          file.close();
+          const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
+          console.log(`\n✅ Downloaded: ${filename} (${sizeMB} MB)`);
+          resolve();
+        });
+      })
+      .on('error', (err) => {
+        file.close();
+        fs.unlink(filepath, () => {});
+        reject(err);
+      });
+  });
+}
+
+async function downloadModels() {
+  try {
+    // Create models directory
+    if (!fs.existsSync(modelsDir)) {
+      fs.mkdirSync(modelsDir, { recursive: true });
+      console.log(`📁 Created directory: ${modelsDir}`);
+    } else {
+      console.log(`📁 Using existing directory: ${modelsDir}`);
+    }
+
+    console.log('📦 Starting ONNX model download...');
+    console.log(`📁 Target directory: ${modelsDir}\n`);
+
+    let successCount = 0;
+    let failCount = 0;
+    const failedFiles = [];
+
+    for (const model of modelFiles) {
+      const filepath = path.join(modelsDir, model.filename);
+
+      // Check if file already exists
+      if (fs.existsSync(filepath)) {
+        const stats = fs.statSync(filepath);
+        if (stats.size > 1024) { // At least 1KB
+          console.log(`⏭️  Skipping (already exists): ${model.filename} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
+          successCount++;
+          continue;
+        } else {
+          console.log(`⚠️  File exists but is too small, re-downloading: ${model.filename}`);
+          fs.unlinkSync(filepath);
+        }
+      }
+
+      // Try each source
+      let downloaded = false;
+      for (let i = 0; i < model.sources.length; i++) {
+        const url = model.sources[i];
+        try {
+          await downloadFile(url, filepath);
+          successCount++;
+          downloaded = true;
+          break; // Success, move to next model
+        } catch (error) {
+          console.warn(`\n   ⚠️  Failed from source ${i + 1}: ${error.message}`);
+          // Try next source
+        }
+      }
+
+      if (!downloaded) {
+        console.error(`\n❌ Error downloading ${model.filename} from all sources`);
+        failCount++;
+        failedFiles.push(model.filename);
+      }
+    }
+
+    console.log(`\n📊 Download summary: ${successCount} succeeded, ${failCount} failed`);
+
+    if (successCount === modelFiles.length) {
+      console.log('✅ All ONNX models downloaded successfully!');
+      console.log(`📁 Models saved to: ${modelsDir}`);
+
+      // Verify all files exist
+      let allExist = true;
+      for (const model of modelFiles) {
+        const filepath = path.join(modelsDir, model.filename);
+        if (!fs.existsSync(filepath) || fs.statSync(filepath).size < 1024) {
+          console.error(`❌ Verification failed: ${model.filename} is missing or too small`);
+          allExist = false;
+        }
+      }
+
+      if (allExist) {
+        console.log('✅ All model files verified successfully!');
+      }
+    } else if (successCount > 0) {
+      console.log('⚠️  Some models failed to download.');
+      console.log(`   Failed files: ${failedFiles.join(', ')}`);
+      console.log('   You may need to download them manually or use alternative sources.');
+    } else {
+      console.log('❌ All model downloads failed.');
+      console.log(`   Failed files: ${failedFiles.join(', ')}`);
+      console.log('\n💡 Manual download options:');
+      console.log('   1. Hugging Face (recommended):');
+      console.log('      - Visit: https://huggingface.co/models?search=scrfd+onnx');
+      console.log('      - Visit: https://huggingface.co/models?search=arcface+onnx');
+      console.log('   2. GitHub: https://github.com/deepinsight/insightface/releases');
+      console.log('   3. Download models manually to:', modelsDir);
+      console.log('   4. See ALTERNATIVE_MODEL_SOURCES.md for more options');
+      console.log('\n⚠️  Note: ONNX models may need to be converted from PyTorch/MXNet');
+      console.log('   The models are not always available as direct ONNX downloads.');
+    }
+
+    return successCount === modelFiles.length;
+  } catch (error) {
+    console.error('❌ Error in downloadModels:', error.message);
+    return false;
+  }
+}
+
+// Run if called directly
+if (require.main === module) {
+  downloadModels()
+    .then((success) => {
+      if (success) {
+        console.log('\n✅ ONNX model download process completed successfully');
+        process.exit(0);
+      } else {
+        console.log('\n⚠️  Model download completed with some failures');
+        console.log('   The system will attempt to download models at runtime if needed.');
+        process.exit(0); // Exit with 0 so postinstall doesn't fail
+      }
+    })
+    .catch((error) => {
+      console.error('\n❌ Model download failed:', error.message);
+      console.error('⚠️  You may need to download models manually');
+      process.exit(0); // Exit with 0 so postinstall doesn't fail the build
+    });
+}
+
+module.exports = { downloadModels };
+

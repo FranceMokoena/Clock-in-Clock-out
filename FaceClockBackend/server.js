@@ -10,8 +10,64 @@ const cors = require('cors');
 require('dotenv').config();
 
 const staffRoutes = require('./routes/staff');
-const { loadModels } = require('./utils/faceRecognition');
-const staffCache = require('./utils/staffCache');
+let loadModels;
+let staffCache;
+
+// Try to load face recognition module with error handling
+// Use ONNX Runtime implementation (no TensorFlow.js dependencies)
+let faceRecognition;
+
+// Check if ONNX is explicitly disabled
+const useONNX = process.env.USE_ONNX !== 'false';
+
+if (useONNX) {
+  // Try ONNX implementation first (recommended - no TensorFlow.js)
+  try {
+    faceRecognition = require('./utils/faceRecognitionONNX');
+    loadModels = faceRecognition.loadModels;
+    console.log('✅ Using ONNX Runtime face recognition (SCRFD + ArcFace)');
+    console.log('   No TensorFlow.js dependencies required!');
+  } catch (onnxError) {
+    console.error('\n❌ ========================================');
+    console.error('❌ ONNX IMPLEMENTATION LOAD FAILED');
+    console.error('❌ ========================================');
+    console.error(`\nError: ${onnxError.message}`);
+    console.error('\n💡 Solutions:');
+    console.error('   1. Download ONNX models:');
+    console.error('      npm run download-models');
+    console.error('   2. If models fail to download, see MIGRATION_INSTRUCTIONS.md');
+    console.error('   3. Or set USE_ONNX=false to use legacy face-api.js');
+    console.error('\n');
+    process.exit(1);
+  }
+} else {
+  // Legacy face-api.js implementation (requires TensorFlow.js)
+  console.warn('⚠️ Using legacy face-api.js (TensorFlow.js required)');
+  try {
+    faceRecognition = require('./utils/faceRecognition');
+    loadModels = faceRecognition.loadModels;
+    console.log('✅ Using legacy face-api.js implementation');
+  } catch (faceRecognitionError) {
+    console.error('\n❌ ========================================');
+    console.error('❌ FACE RECOGNITION MODULE LOAD FAILED');
+    console.error('❌ ========================================');
+    console.error(`\nError: ${faceRecognitionError.message}`);
+    if (faceRecognitionError.code === 'ERR_DLOPEN_FAILED' || 
+        faceRecognitionError.message.includes('tfjs_binding.node')) {
+      console.error('\n💡 TensorFlow.js native module error. Solutions:');
+      console.error('   1. Use ONNX Runtime (recommended - no native bindings):');
+      console.error('      - Remove USE_ONNX=false from .env');
+      console.error('      - Run: npm run download-models');
+      console.error('   2. Or fix TensorFlow.js:');
+      console.error('      - Install Visual C++ Redistributables');
+      console.error('      - Or run: npm rebuild @tensorflow/tfjs-node');
+    }
+    console.error('\n');
+    process.exit(1);
+  }
+}
+
+staffCache = require('./utils/staffCache');
 
 const app = express();
 
@@ -27,7 +83,11 @@ app.use(express.urlencoded({ extended: true }));
 
 // Request logging middleware
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
+  console.log(`📥 ${new Date().toISOString()} - ${req.method} ${req.path}`);
+  if (req.path.includes('/register') || req.path.includes('/clock')) {
+    console.log(`   📦 Body keys: ${Object.keys(req.body || {}).join(', ')}`);
+    console.log(`   📦 Files: ${req.files ? Object.keys(req.files).join(', ') : 'none'}`);
+  }
   next();
 });
 
@@ -60,10 +120,18 @@ mongoose.connect(MONGO_URI)
 
 // Debug: Log all incoming requests to /api/staff (must be before routes)
 app.use('/api/staff', (req, res, next) => {
-  console.log(`📥 ${req.method} ${req.path} - Headers:`, {
+  console.log(`📥 ========== INCOMING REQUEST TO /api/staff ==========`);
+  console.log(`📥 Method: ${req.method}`);
+  console.log(`📥 Path: ${req.path}`);
+  console.log(`📥 Full URL: ${req.url}`);
+  console.log(`📥 Headers:`, {
     'content-type': req.headers['content-type'],
-    'content-length': req.headers['content-length']
+    'content-length': req.headers['content-length'],
+    'user-agent': req.headers['user-agent']?.substring(0, 50)
   });
+  console.log(`📥 Body keys: ${Object.keys(req.body || {}).join(', ') || 'none'}`);
+  console.log(`📥 Files: ${req.files ? Object.keys(req.files).join(', ') : 'none'}`);
+  console.log(`📥 ===================================================`);
   next();
 });
 

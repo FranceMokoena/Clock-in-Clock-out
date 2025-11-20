@@ -3,8 +3,25 @@ const router = express.Router();
 const multer = require('multer');
 const Staff = require('../models/Staff');
 const ClockLog = require('../models/ClockLog');
-const { generateEmbedding, findMatchingStaff } = require('../utils/faceRecognition');
 const staffCache = require('../utils/staffCache');
+
+// Load face recognition module based on USE_ONNX setting (same logic as server.js)
+// This prevents loading TensorFlow.js when ONNX is enabled
+let faceRecognition;
+const useONNX = process.env.USE_ONNX !== 'false';
+
+if (useONNX) {
+  try {
+    faceRecognition = require('../utils/faceRecognitionONNX');
+  } catch (onnxError) {
+    console.error('❌ Failed to load ONNX face recognition:', onnxError.message);
+    throw onnxError;
+  }
+} else {
+  faceRecognition = require('../utils/faceRecognition');
+}
+
+const { generateEmbedding, findMatchingStaff } = faceRecognition;
 
 // Configure multer for memory storage
 const upload = multer({ 
@@ -14,18 +31,62 @@ const upload = multer({
   }
 });
 
+// Add error handling for multer
+const handleMulterError = (err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    console.error('❌ ========== MULTER ERROR ==========');
+    console.error('❌ Multer error:', err.code, err.message);
+    console.error('❌ Field:', err.field);
+    console.error('❌ ===================================');
+    return res.status(400).json({ error: `File upload error: ${err.message}` });
+  } else if (err) {
+    console.error('❌ ========== UPLOAD ERROR ==========');
+    console.error('❌ Upload error:', err.message);
+    console.error('❌ Error stack:', err.stack);
+    console.error('❌ ===================================');
+    return res.status(500).json({ error: `Upload error: ${err.message}` });
+  }
+  next();
+};
+
 // Test route to verify router is working
 router.get('/test', (req, res) => {
   res.json({ success: true, message: 'Staff routes are working!' });
 });
 
-// Register new staff member - accepts 2 images for accuracy
+// Register new staff member - ENTERPRISE: accepts 3-5 images for maximum accuracy
 router.post('/register', upload.fields([
   { name: 'image1', maxCount: 1 },
-  { name: 'image2', maxCount: 1 }
-]), async (req, res) => {
+  { name: 'image2', maxCount: 1 },
+  { name: 'image3', maxCount: 1 },
+  { name: 'image4', maxCount: 1 },
+  { name: 'image5', maxCount: 1 }
+]), handleMulterError, (req, res, next) => {
+  // Log immediately when route handler is called (before async)
+  console.log('🚀 ========== REGISTRATION ROUTE HANDLER CALLED ==========');
+  console.log('🚀 This log should appear IMMEDIATELY when request arrives');
+  console.log('🚀 ======================================================');
+  // Call the async handler
+  (async () => {
+    try {
+      await handleRegistration(req, res);
+    } catch (error) {
+      next(error);
+    }
+  })();
+});
+
+async function handleRegistration(req, res) {
+  console.log('🚀 ========== REGISTRATION REQUEST RECEIVED ==========');
+  console.log('   📥 Request method:', req.method);
+  console.log('   📥 Request URL:', req.url);
+  console.log('   📥 Request body keys:', Object.keys(req.body || {}));
+  console.log('   📥 Request files:', req.files ? Object.keys(req.files) : 'none');
+  console.log('   📥 Number of image files:', req.files ? Object.values(req.files).flat().length : 0);
+  
   try {
     const { name, surname, idNumber, phoneNumber, role, location } = req.body;
+    console.log('   📋 Extracted form data:', { name, surname, idNumber, role, location });
     
     // Validate required fields
     if (!name || !surname || !idNumber || !phoneNumber || !role || !location) {
@@ -63,13 +124,24 @@ router.post('/register', upload.fields([
       });
     }
     
-    // Check if both images are provided
-    const image1 = req.files?.image1?.[0];
-    const image2 = req.files?.image2?.[0];
+    // ENTERPRISE: Accept 3-5 images for maximum accuracy (minimum 3 required)
+    const images = [
+      req.files?.image1?.[0],
+      req.files?.image2?.[0],
+      req.files?.image3?.[0],
+      req.files?.image4?.[0],
+      req.files?.image5?.[0]
+    ].filter(img => img !== undefined && img !== null); // Filter out undefined/null
     
-    if (!image1 || !image2) {
-      return res.status(400).json({ error: 'Two images are required for registration (for accuracy)' });
+    if (images.length < 3) {
+      return res.status(400).json({ error: 'Minimum 3 images are required for enterprise-grade registration accuracy (recommended: 5 images with different angles/lighting)' });
     }
+    
+    if (images.length > 5) {
+      return res.status(400).json({ error: 'Maximum 5 images allowed for registration' });
+    }
+    
+    console.log(`   📸 Processing ${images.length} images for registration (enterprise-grade accuracy)`);
     
     // ⚡ OPTIMIZED: Use lean() for faster query (returns plain JS object, not Mongoose document)
     const existingStaff = await Staff.findOne({ idNumber: idNumber.trim(), isActive: true }).lean();
@@ -79,57 +151,90 @@ router.post('/register', upload.fields([
     
     console.log(`📸 Processing registration for ${name.trim()} ${surname.trim()} (ID: ${idNumber.trim()})`);
     console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}, Location: ${locationData.name}`);
-    console.log(`   ⚡ Processing 2 face images in PARALLEL for maximum speed...`);
+    console.log(`   ⚡ ENTERPRISE: Processing ${images.length} face images SEQUENTIALLY (ONNX Runtime requires sequential inference)...`);
     
-    // ⚡ OPTIMIZATION: Process both images in PARALLEL instead of sequentially
-    // This cuts registration time in HALF (from ~60-90s to ~30-45s)
+    // ⚡ ENTERPRISE: Process images SEQUENTIALLY to avoid ONNX Runtime concurrency issues
+    // ONNX Runtime sessions are not thread-safe for concurrent inference
+    // Multiple embeddings (3-5) dramatically improve recognition accuracy
     const registrationStartTime = Date.now();
-    let embedding1, embedding2, quality1, quality2;
+    const embeddingResults = [];
+    const qualities = [];
+    
+    // Validate images before processing
+    console.log(`   📋 Validating ${images.length} images before processing...`);
+    for (let i = 0; i < images.length; i++) {
+      const img = images[i];
+      console.log(`   📸 Image ${i + 1}: buffer size = ${img?.buffer?.length || 0} bytes, mimetype = ${img?.mimetype || 'unknown'}`);
+      if (!img || !img.buffer || img.buffer.length === 0) {
+        throw new Error(`Image ${i + 1} is invalid or empty`);
+      }
+    }
+    console.log(`   ✅ All images validated`);
     
     try {
-      // Process both images simultaneously using Promise.all
-      const [embeddingResult1, embeddingResult2] = await Promise.all([
-        (async () => {
-          console.log('   ⚡ Processing image 1 (parallel)...');
-          const result = await generateEmbedding(image1.buffer);
-          console.log(`   ✅ Image 1 processed - Quality: ${((result.quality || 0) * 100).toFixed(1)}%`);
-          return result;
-        })(),
-        (async () => {
-          console.log('   ⚡ Processing image 2 (parallel)...');
-          const result = await generateEmbedding(image2.buffer);
-          console.log(`   ✅ Image 2 processed - Quality: ${((result.quality || 0) * 100).toFixed(1)}%`);
-          return result;
-        })()
-      ]);
+      // Process images sequentially to avoid ONNX Runtime concurrency issues
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        console.log(`   ⚡ Processing image ${i + 1}/${images.length} (sequential)...`);
+        console.log(`   📦 Image ${i + 1} buffer size: ${image.buffer.length} bytes`);
+        try {
+          console.log(`   🚀 Calling generateEmbedding for image ${i + 1}...`);
+          const result = await generateEmbedding(image.buffer);
+          console.log(`   ✅ Image ${i + 1} processed - Quality: ${((result.quality || 0) * 100).toFixed(1)}%`);
+          
+          const embedding = result.embedding || result;
+          const quality = result.quality || 0;
+          
+          if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
+            console.warn(`⚠️ Invalid embedding from image ${i + 1}, skipping...`);
+            continue;
+          }
+          
+          embeddingResults.push(embedding);
+          qualities.push(quality);
+        } catch (imageError) {
+          console.error(`   ❌ ========== ERROR PROCESSING IMAGE ${i + 1} ==========`);
+          console.error(`   ❌ Error message: ${imageError.message}`);
+          console.error(`   ❌ Error name: ${imageError.name}`);
+          console.error(`   ❌ Error stack: ${imageError.stack}`);
+          if (imageError.cause) {
+            console.error(`   ❌ Error cause: ${imageError.cause}`);
+          }
+          console.error(`   ❌ Full error object:`, JSON.stringify(imageError, Object.getOwnPropertyNames(imageError)));
+          console.error(`   ❌ ===============================================`);
+          // Continue with other images even if one fails
+          continue;
+        }
+      }
       
-      embedding1 = embeddingResult1.embedding || embeddingResult1;
-      embedding2 = embeddingResult2.embedding || embeddingResult2;
-      quality1 = embeddingResult1.quality || 0;
-      quality2 = embeddingResult2.quality || 0;
+      if (embeddingResults.length < 3) {
+        return res.status(500).json({ error: `Failed to generate valid embeddings from at least 3 images. Only ${embeddingResults.length} valid embeddings generated.` });
+      }
       
-      const parallelProcessingTime = Date.now() - registrationStartTime;
-      console.log(`   ⚡⚡⚡ Parallel processing completed in ${parallelProcessingTime}ms (vs ~60-90s sequential)`);
+      const sequentialProcessingTime = Date.now() - registrationStartTime;
+      console.log(`   ⚡⚡⚡ Sequential processing completed in ${sequentialProcessingTime}ms - ${embeddingResults.length} embeddings generated`);
     } catch (error) {
-      console.error('   ❌ Error processing images:', error.message);
+      console.error('   ❌ ========== ERROR PROCESSING IMAGES ==========');
+      console.error('   ❌ Error message:', error.message);
+      console.error('   ❌ Error name:', error.name);
+      console.error('   ❌ Error stack:', error.stack);
+      console.error('   ❌ Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+      if (error.cause) {
+        console.error('   ❌ Error cause:', error.cause);
+      }
+      console.error('   ❌ ===============================================');
       return res.status(500).json({ error: `Failed to process images: ${error.message}` });
     }
     
-    // Validate embeddings
-    if (!embedding1 || !Array.isArray(embedding1) || embedding1.length === 0) {
-      return res.status(500).json({ error: 'Invalid embedding generated from first image' });
-    }
-    if (!embedding2 || !Array.isArray(embedding2) || embedding2.length === 0) {
-      return res.status(500).json({ error: 'Invalid embedding generated from second image' });
-    }
-    
     // Calculate average quality
-    const avgQuality = ((quality1 + quality2) / 2);
-    console.log(`   📊 Average face quality: ${(avgQuality * 100).toFixed(1)}%`);
+    const avgQuality = qualities.reduce((sum, q) => sum + q, 0) / qualities.length;
+    const qualityDetails = qualities.map((q, i) => `Image ${i + 1}: ${(q * 100).toFixed(1)}%`).join(', ');
+    console.log(`   📊 Average face quality: ${(avgQuality * 100).toFixed(1)}% (${qualityDetails})`);
     
-    // Create staff with both embeddings
+    // ENTERPRISE: Store all embeddings (3-5) for maximum accuracy
     const fullName = `${name.trim()} ${surname.trim()}`;
-    const encryptedEmbedding = Staff.encryptEmbedding(embedding1); // Use first embedding as primary
+    const primaryEmbedding = embeddingResults[0]; // Use first embedding as primary
+    const encryptedEmbedding = Staff.encryptEmbedding(primaryEmbedding);
     
     staff = new Staff({
       name: fullName, // Store full name in name field for backward compatibility
@@ -138,8 +243,8 @@ router.post('/register', upload.fields([
       phoneNumber: phoneNumber.trim(),
       role: role,
       location: location, // Store location key
-      faceEmbedding: embedding1, // Primary embedding (for backward compatibility)
-      faceEmbeddings: [embedding1, embedding2], // Both embeddings for accuracy
+      faceEmbedding: primaryEmbedding, // Primary embedding (for backward compatibility)
+      faceEmbeddings: embeddingResults, // ALL embeddings (3-5) for enterprise accuracy
       encryptedEmbedding
     });
     
@@ -150,15 +255,26 @@ router.post('/register', upload.fields([
     
     const totalRegistrationTime = Date.now() - registrationStartTime;
     console.log(`✅ Staff registered: ${fullName} - ID: ${idNumber.trim()}, Role: ${role}`);
-    console.log(`   Face quality: ${(avgQuality * 100).toFixed(1)}% (Image 1: ${(quality1 * 100).toFixed(1)}%, Image 2: ${(quality2 * 100).toFixed(1)}%)`);
-    console.log(`   Total embeddings: 2`);
+    console.log(`   Face quality: ${(avgQuality * 100).toFixed(1)}% (${qualityDetails})`);
+    console.log(`   Total embeddings: ${embeddingResults.length} (ENTERPRISE-GRADE)`);
     console.log(`   ⚡⚡⚡ TOTAL REGISTRATION TIME: ${totalRegistrationTime}ms (DB save: ${saveTime}ms)`);
     
     // ⚡ OPTIMIZED: Invalidate cache asynchronously (don't wait for it)
     staffCache.invalidate(); // This triggers async refresh, doesn't block response
     
+    // ⚡ OPTIMIZED: Include request ID for status verification
+    const requestId = `${staff._id}_${Date.now()}`;
+    
+    // Build quality object for response
+    const qualityResponse = {};
+    qualities.forEach((q, i) => {
+      qualityResponse[`image${i + 1}`] = (q * 100).toFixed(1);
+    });
+    qualityResponse.average = (avgQuality * 100).toFixed(1);
+    
     res.json({
       success: true,
+      requestId, // For status verification
       staff: {
         id: staff._id,
         name: staff.name,
@@ -167,15 +283,18 @@ router.post('/register', upload.fields([
         role: staff.role,
         createdAt: staff.createdAt
       },
-      quality: {
-        image1: (quality1 * 100).toFixed(1),
-        image2: (quality2 * 100).toFixed(1),
-        average: (avgQuality * 100).toFixed(1)
-      }
+      quality: qualityResponse,
+      embeddingsCount: embeddingResults.length
     });
   } catch (error) {
-    console.error('Error registering staff:', error);
-    console.error('Error stack:', error?.stack);
+    console.error('❌ ========== REGISTRATION ERROR ==========');
+    console.error('❌ Error registering staff:', error);
+    console.error('❌ Error message:', error?.message);
+    console.error('❌ Error name:', error?.name);
+    console.error('❌ Error stack:', error?.stack);
+    console.error('❌ Error code:', error?.code);
+    console.error('❌ Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    console.error('❌ =========================================');
     
     // Handle duplicate ID number error
     if (error.code === 11000 && error.keyPattern?.idNumber) {
@@ -401,9 +520,12 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       confidence
     };
     
+    // ⚡ OPTIMIZED: Include request ID for status verification
+    responseData.requestId = `${staff._id}_${type}_${timestamp.getTime()}`;
+    
     // Send response immediately - don't wait for database save
     res.json(responseData);
-    console.log(`📤 Response sent to client for ${staff.name}`);
+    console.log(`📤 Response sent to client for ${staff.name} (Request ID: ${responseData.requestId})`);
     
     // Save clock log in background (non-blocking, fire-and-forget)
     // Don't await - let it run in background while response is sent
@@ -446,6 +568,73 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.error('Error stack:', error?.stack);
     const errorMessage = error?.message || String(error) || 'Failed to process clock in/out';
     res.status(500).json({ error: errorMessage });
+  }
+});
+
+// ⚡ STATUS VERIFICATION: Check if registration succeeded (for timeout recovery)
+router.get('/verify-registration', async (req, res) => {
+  try {
+    const { idNumber } = req.query;
+    if (!idNumber) {
+      return res.status(400).json({ error: 'ID number is required' });
+    }
+    
+    const staff = await Staff.findOne({ idNumber: idNumber.trim(), isActive: true }).lean();
+    if (staff) {
+      res.json({ 
+        success: true, 
+        registered: true,
+        staff: {
+          id: staff._id,
+          name: staff.name,
+          idNumber: staff.idNumber,
+          createdAt: staff.createdAt
+        }
+      });
+    } else {
+      res.json({ success: true, registered: false });
+    }
+  } catch (error) {
+    console.error('Error verifying registration:', error);
+    res.status(500).json({ error: 'Failed to verify registration' });
+  }
+});
+
+// ⚡ STATUS VERIFICATION: Check if clock-in succeeded (for timeout recovery)
+router.get('/verify-clock', async (req, res) => {
+  try {
+    const { staffId, type, timestamp } = req.query;
+    if (!staffId || !type || !timestamp) {
+      return res.status(400).json({ error: 'staffId, type, and timestamp are required' });
+    }
+    
+    // Check for clock log within 5 minutes of the timestamp
+    const checkTime = new Date(parseInt(timestamp));
+    const startTime = new Date(checkTime.getTime() - 5 * 60 * 1000); // 5 minutes before
+    const endTime = new Date(checkTime.getTime() + 5 * 60 * 1000); // 5 minutes after
+    
+    const log = await ClockLog.findOne({
+      staffId: staffId,
+      clockType: type,
+      timestamp: { $gte: startTime, $lte: endTime }
+    }).lean();
+    
+    if (log) {
+      res.json({ 
+        success: true, 
+        clocked: true,
+        log: {
+          clockType: log.clockType,
+          timestamp: log.timestamp,
+          confidence: log.confidence
+        }
+      });
+    } else {
+      res.json({ success: true, clocked: false });
+    }
+  } catch (error) {
+    console.error('Error verifying clock:', error);
+    res.status(500).json({ error: 'Failed to verify clock' });
   }
 });
 
