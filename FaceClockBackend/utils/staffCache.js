@@ -98,11 +98,41 @@ class StaffCache {
             return null;
           }
           
+          // CRITICAL: Only accept 512-d embeddings (ONNX ArcFace)
+          // Reject 128-d embeddings (old face-api.js) - they must re-register
+          const validEmbeddings = faceEmbeddings.filter(emb => {
+            if (!Array.isArray(emb)) return false;
+            if (emb.length === 128) {
+              console.error(`❌ ${staffObj.name}: Found 128-d embedding (old face-api.js). This staff member must be deleted and re-registered with ONNX (512-d).`);
+              return false;
+            }
+            return emb.length === 512;
+          });
+          
+          if (validEmbeddings.length === 0) {
+            console.error(`❌ ${staffObj.name}: No valid 512-d embeddings (found ${faceEmbeddings.length} embeddings, but none are 512-d ArcFace)`);
+            console.error(`   ACTION REQUIRED: Delete and re-register this staff member.`);
+            return null;
+          }
+          
+          if (validEmbeddings.length < faceEmbeddings.length) {
+            const rejected = faceEmbeddings.length - validEmbeddings.length;
+            console.warn(`⚠️ ${staffObj.name}: Rejected ${rejected} invalid/old embedding(s) (must be 512-d ArcFace)`);
+          }
+          
+          // Verify first embedding is normalized
+          if (validEmbeddings[0] && validEmbeddings[0].length === 512) {
+            const norm = Math.sqrt(validEmbeddings[0].reduce((sum, val) => sum + val * val, 0));
+            if (Math.abs(norm - 1.0) > 0.1) {
+              console.warn(`⚠️ ${staffObj.name}: First embedding not normalized (norm=${norm.toFixed(3)})`);
+            }
+          }
+          
           return {
             ...staffObj,
-            faceEmbeddings: faceEmbeddings,
-            decryptedEmbedding: faceEmbeddings[0], // Keep for backward compatibility
-            faceEmbedding: faceEmbeddings[0] // Keep for backward compatibility
+            faceEmbeddings: validEmbeddings,
+            decryptedEmbedding: validEmbeddings[0], // Keep for backward compatibility
+            faceEmbedding: validEmbeddings[0] // Keep for backward compatibility
           };
         } catch (decryptError) {
           console.error(`⚠️ Error processing embeddings for ${staff.name}:`, decryptError?.message || decryptError);

@@ -10,61 +10,35 @@ const cors = require('cors');
 require('dotenv').config();
 
 const staffRoutes = require('./routes/staff');
+const locationsRoutes = require('./routes/locations');
 let loadModels;
 let staffCache;
 
-// Try to load face recognition module with error handling
-// Use ONNX Runtime implementation (no TensorFlow.js dependencies)
+// ONNX Runtime is MANDATORY - face-api.js has been removed
+// Using SCRFD (face detection) + ArcFace (face recognition) for maximum accuracy
 let faceRecognition;
 
-// Check if ONNX is explicitly disabled
-const useONNX = process.env.USE_ONNX !== 'false';
-
-if (useONNX) {
-  // Try ONNX implementation first (recommended - no TensorFlow.js)
-  try {
-    faceRecognition = require('./utils/faceRecognitionONNX');
-    loadModels = faceRecognition.loadModels;
-    console.log('✅ Using ONNX Runtime face recognition (SCRFD + ArcFace)');
-    console.log('   No TensorFlow.js dependencies required!');
-  } catch (onnxError) {
-    console.error('\n❌ ========================================');
-    console.error('❌ ONNX IMPLEMENTATION LOAD FAILED');
-    console.error('❌ ========================================');
-    console.error(`\nError: ${onnxError.message}`);
-    console.error('\n💡 Solutions:');
-    console.error('   1. Download ONNX models:');
-    console.error('      npm run download-models');
-    console.error('   2. If models fail to download, see MIGRATION_INSTRUCTIONS.md');
-    console.error('   3. Or set USE_ONNX=false to use legacy face-api.js');
-    console.error('\n');
-    process.exit(1);
-  }
-} else {
-  // Legacy face-api.js implementation (requires TensorFlow.js)
-  console.warn('⚠️ Using legacy face-api.js (TensorFlow.js required)');
-  try {
-    faceRecognition = require('./utils/faceRecognition');
-    loadModels = faceRecognition.loadModels;
-    console.log('✅ Using legacy face-api.js implementation');
-  } catch (faceRecognitionError) {
-    console.error('\n❌ ========================================');
-    console.error('❌ FACE RECOGNITION MODULE LOAD FAILED');
-    console.error('❌ ========================================');
-    console.error(`\nError: ${faceRecognitionError.message}`);
-    if (faceRecognitionError.code === 'ERR_DLOPEN_FAILED' || 
-        faceRecognitionError.message.includes('tfjs_binding.node')) {
-      console.error('\n💡 TensorFlow.js native module error. Solutions:');
-      console.error('   1. Use ONNX Runtime (recommended - no native bindings):');
-      console.error('      - Remove USE_ONNX=false from .env');
-      console.error('      - Run: npm run download-models');
-      console.error('   2. Or fix TensorFlow.js:');
-      console.error('      - Install Visual C++ Redistributables');
-      console.error('      - Or run: npm rebuild @tensorflow/tfjs-node');
-    }
-    console.error('\n');
-    process.exit(1);
-  }
+try {
+  faceRecognition = require('./utils/faceRecognitionONNX');
+  loadModels = faceRecognition.loadModels;
+  console.log('✅ Using ONNX Runtime face recognition (SCRFD + ArcFace)');
+  console.log('   SCRFD face detection: ~95% accuracy');
+  console.log('   ArcFace recognition: 99.83% accuracy on LFW');
+  console.log('   No TensorFlow.js dependencies required!');
+} catch (onnxError) {
+  console.error('\n❌ ========================================');
+  console.error('❌ ONNX IMPLEMENTATION LOAD FAILED');
+  console.error('❌ ========================================');
+  console.error(`\nError: ${onnxError.message}`);
+  console.error('\n💡 Solutions:');
+  console.error('   1. Download ONNX models:');
+  console.error('      npm run download-models');
+  console.error('   2. If models fail to download, see MIGRATION_INSTRUCTIONS.md');
+  console.error('   3. Ensure models are in: models/onnx/');
+  console.error('      - scrfd_10g_gnkps_fp32.onnx (face detection)');
+  console.error('      - w600k_r50.onnx (face recognition)');
+  console.error('\n');
+  process.exit(1);
 }
 
 staffCache = require('./utils/staffCache');
@@ -78,8 +52,10 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+// Body parsers - Express automatically skips multipart/form-data
+// But we'll configure them to be safe
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Request logging middleware
 app.use((req, res, next) => {
@@ -137,6 +113,7 @@ app.use('/api/staff', (req, res, next) => {
 
 // Routes
 app.use('/api/staff', staffRoutes);
+app.use('/api/locations', locationsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
@@ -148,13 +125,16 @@ app.get('/', (req, res) => {
   res.json({ 
     status: 'OK', 
     message: 'Internship Success Clock-in/Clock-out API',
-    endpoints: {
+      endpoints: {
       health: '/api/health',
       register: 'POST /api/staff/register',
       clock: 'POST /api/staff/clock',
       list: 'GET /api/staff/list',
       logs: 'GET /api/staff/logs',
-      test: 'GET /api/staff/test'
+      test: 'GET /api/staff/test',
+      locations: 'GET /api/locations/all',
+      locationsSearch: 'GET /api/locations/search?q=query',
+      provinces: 'GET /api/locations/provinces'
     }
   });
 });
@@ -168,18 +148,19 @@ app.use((req, res) => {
     error: 'Route not found',
     method: req.method,
     path: req.path,
-    availableEndpoints: [
-      'GET /api/health',
-      'POST /api/staff/register',
-      'POST /api/staff/clock',
-      'GET /api/staff/list',
-      'GET /api/staff/logs',
-      'GET /api/staff/test',
-      'GET /api/staff/admin/stats',
-      'GET /api/staff/admin/staff',
-      'GET /api/staff/admin/not-accountable',
-      'GET /api/staff/admin/staff/:staffId/timesheet'
-    ]
+      availableEndpoints: [
+        'GET /api/health',
+        'POST /api/staff/login',
+        'POST /api/staff/register',
+        'POST /api/staff/clock',
+        'GET /api/staff/list',
+        'GET /api/staff/logs',
+        'GET /api/staff/test',
+        'GET /api/staff/admin/stats',
+        'GET /api/staff/admin/staff',
+        'GET /api/staff/admin/not-accountable',
+        'GET /api/staff/admin/staff/:staffId/timesheet'
+      ]
   });
 });
 
@@ -210,7 +191,7 @@ async function startServer() {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`📡 API available at http://localhost:${PORT}/api`);
     console.log(`📱 Android emulator: http://10.0.2.2:${PORT}/api`);
-    console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.88.51:${PORT}/api)`);
+    console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.0.104:${PORT}/api)`);
     console.log(`   Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)`);
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     if (process.env.RENDER_EXTERNAL_URL) {

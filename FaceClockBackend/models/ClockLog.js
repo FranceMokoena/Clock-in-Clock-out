@@ -22,6 +22,34 @@ const clockLogSchema = new mongoose.Schema({
   confidence: {
     type: Number,
     required: true
+  },
+  // 🏦 BANK-GRADE Phase 3: Device fingerprinting
+  deviceFingerprint: {
+    type: String,
+    required: false,
+    index: true // Index for faster device-based queries
+  },
+  // 🏦 BANK-GRADE Phase 4: Risk scoring
+  riskScore: {
+    score: {
+      type: Number,
+      default: 0
+    },
+    level: {
+      type: String,
+      enum: ['low', 'medium', 'high', 'critical'],
+      default: 'low'
+    },
+    factors: [{
+      type: String
+    }]
+  },
+  // 🏦 BANK-GRADE Phase 3: Signal values for audit trail
+  signals: {
+    face: Number,      // Face similarity (0-1)
+    temporal: Number,  // Temporal signal (0-1)
+    device: Number,    // Device signal (0-1)
+    location: Number,  // Location signal (0-1)
   }
 });
 

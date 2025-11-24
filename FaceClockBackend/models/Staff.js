@@ -36,9 +36,48 @@ const staffSchema = new mongoose.Schema({
     enum: ['Intern', 'Staff', 'Other'],
     default: 'Staff'
   },
+  department: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  hostCompanyId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'HostCompany',
+    required: false // Optional for backward compatibility
+  },
   location: {
     type: String,
     required: true,
+    trim: true
+  },
+  // Location coordinates for GPS validation
+  locationLatitude: {
+    type: Number,
+    required: true,
+    validate: {
+      validator: function(v) {
+        // Valid latitude range: -90 to 90
+        return typeof v === 'number' && !isNaN(v) && v >= -90 && v <= 90;
+      },
+      message: 'Latitude must be a number between -90 and 90'
+    }
+  },
+  locationLongitude: {
+    type: Number,
+    required: true,
+    validate: {
+      validator: function(v) {
+        // Valid longitude range: -180 to 180
+        return typeof v === 'number' && !isNaN(v) && v >= -180 && v <= 180;
+      },
+      message: 'Longitude must be a number between -180 and 180'
+    }
+  },
+  // Full address (if custom address was used)
+  locationAddress: {
+    type: String,
+    required: false,
     trim: true
   },
   faceEmbedding: {
@@ -47,8 +86,65 @@ const staffSchema = new mongoose.Schema({
   },
   // Multiple embeddings per person for better matching
   faceEmbeddings: {
-    type: [[Number]],  // Array of embedding arrays
+    type: [[Number]],  // Array of embedding arrays (512-d normalized embeddings)
     default: []
+  },
+  // 🏦 BANK-GRADE: Quality metadata for each embedding (for weighted centroid)
+  embeddingQualities: {
+    type: [{
+      score: Number,           // Detection confidence (0-1)
+      sharpness: Number,       // Blur/sharpness score (0-1)
+      blurVariance: Number,    // Laplacian variance
+      brightness: Number,      // Brightness (0-1)
+      faceSize: Number,        // Face size in pixels²
+      faceWidth: Number,       // Face width in pixels
+      faceHeight: Number,      // Face height in pixels
+      pose: {                  // Pose angles in degrees
+        yaw: Number,
+        pitch: Number,
+        roll: Number
+      },
+      detectionScore: Number,  // Detection score (0-1)
+      createdAt: {             // When this embedding was created
+        type: Date,
+        default: Date.now
+      }
+    }],
+    default: []
+  },
+  // 🏦 BANK-GRADE: Weighted centroid template (primary matching template)
+  centroidEmbedding: {
+    type: [Number],  // 512-d normalized centroid embedding
+    required: false
+  },
+  // 🏦 BANK-GRADE Phase 5: ID Document anchor embedding (stable reference)
+  idEmbedding: {
+    type: [Number],  // 512-d normalized embedding from ID document photo
+    required: false
+  },
+  // Quality metrics for ID document extraction
+  idEmbeddingQuality: {
+    type: {
+      score: Number,           // Detection confidence (0-1)
+      sharpness: Number,       // Blur/sharpness score (0-1)
+      blurVariance: Number,    // Laplacian variance
+      brightness: Number,      // Brightness (0-1)
+      faceSize: Number,        // Face size in pixels²
+      faceWidth: Number,       // Face width in pixels
+      faceHeight: Number,     // Face height in pixels
+      detectionScore: Number,  // Detection score (0-1)
+      extractedAt: {           // When ID embedding was extracted
+        type: Date,
+        default: Date.now
+      }
+    },
+    required: false
+  },
+  // Document type (optional, for future use)
+  idDocumentType: {
+    type: String,
+    enum: ['ID_CARD', 'PASSPORT', 'DRIVERS_LICENSE', 'UNKNOWN'],
+    default: 'UNKNOWN'
   },
   // Facial features for enhanced matching accuracy (eyes, nose, mouth, head shape)
   facialFeatures: {

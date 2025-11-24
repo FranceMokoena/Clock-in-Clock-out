@@ -13,6 +13,10 @@
  *   node staffManager.js --delete-all --include-logs
  *   node staffManager.js --delete-id 65ab12cd34ef
  *   node staffManager.js --delete-name "john"
+ *   node FaceClockBackend/scripts/deleteAllStaff.js --view
+ *   node scripts/deleteAllStaff.js --delete-all --include-logs
+ *   node FaceClockBackend/scripts/deleteAllStaff.js --delete-id 65ab12cd34ef
+ *   node FaceClockBackend/scripts/deleteAllStaff.js --delete-name "john"
  */
 
 require("dotenv").config();

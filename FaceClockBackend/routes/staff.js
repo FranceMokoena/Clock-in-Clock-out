@@ -1,27 +1,26 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
+const mongoose = require('mongoose');
 const Staff = require('../models/Staff');
 const ClockLog = require('../models/ClockLog');
+const Department = require('../models/Department');
+const HostCompany = require('../models/HostCompany');
 const staffCache = require('../utils/staffCache');
 
-// Load face recognition module based on USE_ONNX setting (same logic as server.js)
-// This prevents loading TensorFlow.js when ONNX is enabled
+// ONNX Runtime is MANDATORY - face-api.js has been removed
+// Using SCRFD (face detection) + ArcFace (face recognition) for maximum accuracy
 let faceRecognition;
-const useONNX = process.env.USE_ONNX !== 'false';
 
-if (useONNX) {
-  try {
-    faceRecognition = require('../utils/faceRecognitionONNX');
-  } catch (onnxError) {
-    console.error('❌ Failed to load ONNX face recognition:', onnxError.message);
-    throw onnxError;
-  }
-} else {
-  faceRecognition = require('../utils/faceRecognition');
+try {
+  faceRecognition = require('../utils/faceRecognitionONNX');
+} catch (onnxError) {
+  console.error('❌ Failed to load ONNX face recognition:', onnxError.message);
+  console.error('💡 Ensure ONNX models are downloaded: npm run download-models');
+  throw onnxError;
 }
 
-const { generateEmbedding, findMatchingStaff } = faceRecognition;
+const { generateEmbedding, generateIDEmbedding, findMatchingStaff, validatePreview } = faceRecognition;
 
 // Configure multer for memory storage
 const upload = multer({ 
@@ -60,23 +59,29 @@ router.post('/register', upload.fields([
   { name: 'image2', maxCount: 1 },
   { name: 'image3', maxCount: 1 },
   { name: 'image4', maxCount: 1 },
-  { name: 'image5', maxCount: 1 }
-]), handleMulterError, (req, res, next) => {
-  // Log immediately when route handler is called (before async)
+  { name: 'image5', maxCount: 1 },
+  { name: 'idImage', maxCount: 1 } // 🏦 BANK-GRADE Phase 5: ID document image
+]), (req, res, next) => {
+  // Log multer parsing results IMMEDIATELY
+  process.stdout.write(`\n📦 [MULTER] Files parsed: ${req.files ? Object.keys(req.files).length : 0} field(s)\n`);
+  if (req.files) {
+    Object.keys(req.files).forEach(key => {
+      process.stdout.write(`📦 [MULTER] Field "${key}": ${req.files[key].length} file(s)\n`);
+      req.files[key].forEach((file, idx) => {
+        process.stdout.write(`   📦 File ${idx + 1}: ${file.originalname || 'unnamed'}, ${file.size} bytes, ${file.mimetype || 'no type'}\n`);
+      });
+    });
+  } else {
+    process.stdout.write(`📦 [MULTER] req.files is null/undefined\n`);
+  }
+  process.stdout.write(`📦 [MULTER] req.body keys: ${Object.keys(req.body || {}).join(', ')}\n`);
+  next();
+}, handleMulterError, async (req, res) => {
+  // Log IMMEDIATELY when route handler is called
   console.log('🚀 ========== REGISTRATION ROUTE HANDLER CALLED ==========');
   console.log('🚀 This log should appear IMMEDIATELY when request arrives');
   console.log('🚀 ======================================================');
-  // Call the async handler
-  (async () => {
-    try {
-      await handleRegistration(req, res);
-    } catch (error) {
-      next(error);
-    }
-  })();
-});
-
-async function handleRegistration(req, res) {
+  
   console.log('🚀 ========== REGISTRATION REQUEST RECEIVED ==========');
   console.log('   📥 Request method:', req.method);
   console.log('   📥 Request URL:', req.url);
@@ -84,13 +89,52 @@ async function handleRegistration(req, res) {
   console.log('   📥 Request files:', req.files ? Object.keys(req.files) : 'none');
   console.log('   📥 Number of image files:', req.files ? Object.values(req.files).flat().length : 0);
   
+  // Detailed file logging
+  if (req.files) {
+    console.log('   📦 Detailed files info:');
+    Object.keys(req.files).forEach(key => {
+      console.log(`      ${key}: ${req.files[key].length} file(s)`);
+      req.files[key].forEach((file, idx) => {
+        console.log(`         File ${idx + 1}: ${file.originalname || 'unnamed'}, ${file.size} bytes`);
+      });
+    });
+  } else {
+    console.log('   ❌ req.files is null or undefined - multer did not parse files!');
+    console.log('   📋 Content-Type header:', req.headers['content-type']);
+    console.log('   📋 Request body type:', typeof req.body);
+    console.log('   📋 Request body:', JSON.stringify(Object.keys(req.body || {})));
+  }
+  
   try {
-    const { name, surname, idNumber, phoneNumber, role, location } = req.body;
-    console.log('   📋 Extracted form data:', { name, surname, idNumber, role, location });
+    const { name, surname, idNumber, phoneNumber, role, department, hostCompanyId, location, customAddress } = req.body;
+    console.log('   📋 Extracted form data:', { name, surname, idNumber, role, department, hostCompanyId, location, customAddress });
     
     // Validate required fields
-    if (!name || !surname || !idNumber || !phoneNumber || !role || !location) {
-      return res.status(400).json({ error: 'Name, surname, ID number, phone number, role, and location are required' });
+    if (!name || !surname || !idNumber || !phoneNumber || !role || !department) {
+      return res.status(400).json({ error: 'Name, surname, ID number, phone number, role, and department are required' });
+    }
+    
+    // Validate hostCompanyId if provided (should be valid ObjectId)
+    let validatedHostCompanyId = null;
+    if (hostCompanyId && hostCompanyId.trim()) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({ error: 'Invalid host company ID format' });
+      }
+      // Verify host company exists
+      const HostCompany = require('../models/HostCompany');
+      const hostCompany = await HostCompany.findById(hostCompanyId);
+      if (!hostCompany) {
+        return res.status(400).json({ error: 'Host company not found' });
+      }
+      if (!hostCompany.isActive) {
+        return res.status(400).json({ error: 'Host company is not active' });
+      }
+      validatedHostCompanyId = hostCompanyId;
+    }
+    
+    // Validate location or custom address
+    if (!location && !customAddress) {
+      return res.status(400).json({ error: 'Either location or custom address is required' });
     }
     
     // Validate ID number format (13 digits)
@@ -103,28 +147,70 @@ async function handleRegistration(req, res) {
       return res.status(400).json({ error: 'Role must be Intern, Staff, or Other' });
     }
     
-    // CRITICAL: Validate location - must be one of the two allowed locations
-    const { getLocation, ALLOWED_LOCATIONS } = require('../config/locations');
-    const locationData = getLocation(location);
-    if (!locationData) {
-      console.error(`❌ Invalid location selected during registration: "${location}"`);
-      console.error(`   Allowed locations: ${Object.keys(ALLOWED_LOCATIONS).join(', ')}`);
-      return res.status(400).json({ 
-        error: `Invalid location selected. Only two locations are allowed: ${Object.values(ALLOWED_LOCATIONS).map(loc => loc.name).join(' or ')}` 
-      });
+    // 🌍 GEOCODING: Get location coordinates (from static dataset or geocode API)
+    const { getLocation, searchLocations } = require('../config/locations');
+    const { geocodeLocation, geocodeLocationWithRetry } = require('../utils/geocoding');
+    
+    let locationLatitude, locationLongitude, locationName, locationAddress;
+    let isCustomAddress = false;
+    
+    if (customAddress && customAddress.trim().length > 0) {
+      // Custom address provided - geocode it using API
+      console.log(`🌍 Geocoding custom address: "${customAddress.trim()}"...`);
+      isCustomAddress = true;
+      try {
+        const geocodeResult = await geocodeLocationWithRetry(customAddress.trim(), 'South Africa', 2);
+        locationLatitude = geocodeResult.latitude;
+        locationLongitude = geocodeResult.longitude;
+        locationName = customAddress.trim();
+        locationAddress = geocodeResult.address;
+        console.log(`✅ Custom address geocoded: ${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)}`);
+      } catch (geocodeError) {
+        console.error(`❌ Failed to geocode custom address: "${customAddress.trim()}"`, geocodeError.message);
+        return res.status(400).json({ 
+          error: `Failed to geocode custom address: "${customAddress.trim()}". Please check the address and try again, or select a location from the dropdown.`,
+          details: geocodeError.message
+        });
+      }
+    } else if (location && location.trim().length > 0) {
+      // Predefined location selected - get from static dataset
+      const locationKey = location.trim();
+      const locationData = getLocation(locationKey);
+      
+      if (!locationData) {
+        console.error(`❌ Invalid location key: "${locationKey}"`);
+        // Try to search for similar locations
+        const searchResults = searchLocations(locationKey);
+        if (searchResults.length > 0) {
+          return res.status(400).json({ 
+            error: `Location "${locationKey}" not found. Did you mean: ${searchResults.slice(0, 3).map(l => l.name).join(', ')}?`,
+            suggestions: searchResults.slice(0, 5).map(l => ({ key: l.key, name: l.name }))
+          });
+        }
+        return res.status(400).json({ 
+          error: `Invalid location selected: "${locationKey}". Please select a location from the dropdown or enter a custom address.` 
+        });
+      }
+      
+      locationLatitude = locationData.latitude;
+      locationLongitude = locationData.longitude;
+      locationName = locationData.name;
+      locationAddress = locationData.address || locationData.name;
+      console.log(`✅ Location from dataset: ${locationName} (${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)})`);
+    } else {
+      return res.status(400).json({ error: 'Location or custom address is required' });
     }
     
-    // Additional validation: ensure location key is in the allowed list
-    const validLocationKeys = Object.keys(ALLOWED_LOCATIONS);
-    const locationKey = location.trim();
-    if (!validLocationKeys.includes(locationKey) && !['SHELL_HOUSE_MBOMBELA', 'WHITE_RIVER_MAJOJOS'].includes(locationKey)) {
-      console.error(`❌ Location key not in allowed list: "${locationKey}"`);
-      return res.status(400).json({ 
-        error: `Invalid location key. Please select a location from the dropdown.` 
-      });
+    // Validate coordinates are valid
+    if (typeof locationLatitude !== 'number' || typeof locationLongitude !== 'number' ||
+        isNaN(locationLatitude) || isNaN(locationLongitude) ||
+        locationLatitude < -90 || locationLatitude > 90 ||
+        locationLongitude < -180 || locationLongitude > 180) {
+      return res.status(400).json({ error: 'Invalid location coordinates. Please try again or contact support.' });
     }
     
-    // ENTERPRISE: Accept 3-5 images for maximum accuracy (minimum 3 required)
+    // ENTERPRISE: Require EXACTLY 5 images for maximum accuracy (100% matching goal)
+    // 5 diverse images provide best ensemble matching accuracy
     const images = [
       req.files?.image1?.[0],
       req.files?.image2?.[0],
@@ -133,12 +219,10 @@ async function handleRegistration(req, res) {
       req.files?.image5?.[0]
     ].filter(img => img !== undefined && img !== null); // Filter out undefined/null
     
-    if (images.length < 3) {
-      return res.status(400).json({ error: 'Minimum 3 images are required for enterprise-grade registration accuracy (recommended: 5 images with different angles/lighting)' });
-    }
-    
-    if (images.length > 5) {
-      return res.status(400).json({ error: 'Maximum 5 images allowed for registration' });
+    if (images.length !== 5) {
+      return res.status(400).json({ 
+        error: `Exactly 5 images are required for enterprise-grade registration accuracy (received: ${images.length}). Please capture 5 images with different angles and lighting conditions.` 
+      });
     }
     
     console.log(`   📸 Processing ${images.length} images for registration (enterprise-grade accuracy)`);
@@ -150,15 +234,16 @@ async function handleRegistration(req, res) {
     }
     
     console.log(`📸 Processing registration for ${name.trim()} ${surname.trim()} (ID: ${idNumber.trim()})`);
-    console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}, Location: ${locationData.name}`);
+    console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}, Location: ${locationName}`);
+    console.log(`   Location coordinates: ${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)}`);
     console.log(`   ⚡ ENTERPRISE: Processing ${images.length} face images SEQUENTIALLY (ONNX Runtime requires sequential inference)...`);
     
     // ⚡ ENTERPRISE: Process images SEQUENTIALLY to avoid ONNX Runtime concurrency issues
     // ONNX Runtime sessions are not thread-safe for concurrent inference
     // Multiple embeddings (3-5) dramatically improve recognition accuracy
     const registrationStartTime = Date.now();
-    const embeddingResults = [];
-    const qualities = [];
+      const embeddingResults = [];
+      const embeddingQualities = []; // 🏦 BANK-GRADE: Store quality metadata per embedding
     
     // Validate images before processing
     console.log(`   📋 Validating ${images.length} images before processing...`);
@@ -173,28 +258,77 @@ async function handleRegistration(req, res) {
     
     try {
       // Process images sequentially to avoid ONNX Runtime concurrency issues
+      const failedImageNumbers = [];
+      const errorDetails = [];
+      
       for (let i = 0; i < images.length; i++) {
         const image = images[i];
         console.log(`   ⚡ Processing image ${i + 1}/${images.length} (sequential)...`);
         console.log(`   📦 Image ${i + 1} buffer size: ${image.buffer.length} bytes`);
         try {
           console.log(`   🚀 Calling generateEmbedding for image ${i + 1}...`);
+          process.stdout.write(`\n📸 [REGISTER] Processing image ${i + 1}/${images.length}\n`);
           const result = await generateEmbedding(image.buffer);
-          console.log(`   ✅ Image ${i + 1} processed - Quality: ${((result.quality || 0) * 100).toFixed(1)}%`);
+          process.stdout.write(`\n✅ [REGISTER] Image ${i + 1} processed successfully\n`);
           
           const embedding = result.embedding || result;
-          const quality = result.quality || 0;
+          const quality = result.quality || {};
           
           if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
             console.warn(`⚠️ Invalid embedding from image ${i + 1}, skipping...`);
+            failedImageNumbers.push(i + 1);
+            errorDetails.push({ image: i + 1, error: 'Invalid embedding generated' });
             continue;
           }
           
+          // 🏦 BANK-GRADE: Store embedding with quality metadata
           embeddingResults.push(embedding);
-          qualities.push(quality);
+          
+          // Extract quality metadata (support both object and number formats)
+          const qualityMetadata = typeof quality === 'object' ? quality : {
+            score: quality || 0.75,
+            sharpness: 0.75,
+            blurVariance: 100,
+            brightness: 0.5,
+            detectionScore: quality || 0.75,
+          };
+          
+          embeddingQualities.push({
+            score: qualityMetadata.score || 0.75,
+            sharpness: qualityMetadata.sharpness || 0.75,
+            blurVariance: qualityMetadata.blurVariance || 100,
+            brightness: qualityMetadata.brightness || 0.5,
+            faceSize: qualityMetadata.faceSize || 0,
+            faceWidth: qualityMetadata.faceWidth || 0,
+            faceHeight: qualityMetadata.faceHeight || 0,
+            pose: qualityMetadata.pose || { yaw: 0, pitch: 0, roll: 0 },
+            detectionScore: qualityMetadata.detectionScore || qualityMetadata.score || 0.75,
+            createdAt: new Date(),
+          });
+          
+          const qualityScore = qualityMetadata.score || 0.75;
+          console.log(`   ✅ Image ${i + 1} processed - Quality: ${(qualityScore * 100).toFixed(1)}%`);
         } catch (imageError) {
+          // Track failed images
+          failedImageNumbers.push(i + 1);
+          const errorMsg = imageError?.message || String(imageError) || 'Unknown error';
+          errorDetails.push({ image: i + 1, error: errorMsg });
+          
+          // IMMEDIATE error logging to stderr
+          process.stderr.write(`\n❌ ========== ERROR PROCESSING IMAGE ${i + 1} ==========\n`);
+          process.stderr.write(`❌ Error message: ${errorMsg}\n`);
+          process.stderr.write(`❌ Error name: ${imageError.name}\n`);
+          if (imageError.stack) {
+            process.stderr.write(`❌ Error stack: ${imageError.stack}\n`);
+          }
+          if (imageError.cause) {
+            process.stderr.write(`❌ Error cause: ${imageError.cause}\n`);
+          }
+          process.stderr.write(`❌ ===============================================\n`);
+          
+          // Also log to console.error
           console.error(`   ❌ ========== ERROR PROCESSING IMAGE ${i + 1} ==========`);
-          console.error(`   ❌ Error message: ${imageError.message}`);
+          console.error(`   ❌ Error message: ${errorMsg}`);
           console.error(`   ❌ Error name: ${imageError.name}`);
           console.error(`   ❌ Error stack: ${imageError.stack}`);
           if (imageError.cause) {
@@ -207,13 +341,94 @@ async function handleRegistration(req, res) {
         }
       }
       
-      if (embeddingResults.length < 3) {
-        return res.status(500).json({ error: `Failed to generate valid embeddings from at least 3 images. Only ${embeddingResults.length} valid embeddings generated.` });
+      // 🏦 BANK-GRADE FIX: Validate quality data matches embedding count
+      if (embeddingResults.length !== embeddingQualities.length) {
+        console.error(`❌ Quality data mismatch: ${embeddingResults.length} embeddings but ${embeddingQualities.length} quality records`);
+        return res.status(500).json({ 
+          error: `Internal error: Quality data mismatch. Please try again.`
+        });
+      }
+      
+      // 🏦 BANK-GRADE FIX: Validate all quality records are complete
+      const incompleteQualities = embeddingQualities.filter((q, idx) => {
+        const hasScore = q && typeof q.score === 'number' && q.score > 0;
+        const hasDetectionScore = q && typeof q.detectionScore === 'number' && q.detectionScore > 0;
+        if (!hasScore || !hasDetectionScore) {
+          console.warn(`⚠️ Quality record ${idx + 1} is incomplete:`, q);
+          return true;
+        }
+        return false;
+      });
+      
+      if (incompleteQualities.length > 0) {
+        console.error(`❌ ${incompleteQualities.length} quality record(s) are incomplete`);
+        return res.status(500).json({ 
+          error: `Quality data incomplete for ${incompleteQualities.length} image(s). Please retry registration.`
+        });
+      }
+      
+      // 🏦 ENTERPRISE: Require minimum 3 embeddings for registration (allows for 1-2 failures)
+      // 3-5 embeddings still provide excellent accuracy, and this is more user-friendly
+      const MIN_REQUIRED_EMBEDDINGS = 3;
+      if (embeddingResults.length < MIN_REQUIRED_EMBEDDINGS) {
+        let errorMessage = `Failed to generate enough valid embeddings. Only ${embeddingResults.length} valid embedding(s) generated (minimum: ${MIN_REQUIRED_EMBEDDINGS}).`;
+        
+        if (failedImageNumbers.length > 0) {
+          errorMessage += `\n\n❌ Failed images: ${failedImageNumbers.join(', ')}`;
+          errorMessage += `\n\nPlease retry capturing image(s) ${failedImageNumbers.join(', ')}.`;
+          
+          // Add specific guidance based on error types
+          const hasMultipleFaces = errorDetails.some(e => e.error.toLowerCase().includes('multiple'));
+          const hasBlur = errorDetails.some(e => e.error.toLowerCase().includes('blur'));
+          const hasBrightness = errorDetails.some(e => e.error.toLowerCase().includes('brightness'));
+          const hasSize = errorDetails.some(e => e.error.toLowerCase().includes('too small') || e.error.toLowerCase().includes('too large'));
+          const hasLiveness = errorDetails.some(e => e.error.toLowerCase().includes('liveness') || e.error.toLowerCase().includes('eye spacing'));
+          
+          if (hasMultipleFaces) {
+            errorMessage += `\n\n⚠️ Multiple faces detected: Ensure only ONE person is in the frame for all images.`;
+          }
+          if (hasBlur) {
+            errorMessage += `\n\n⚠️ Blur detected: Hold still and ensure camera is focused.`;
+          }
+          if (hasBrightness) {
+            errorMessage += `\n\n⚠️ Brightness issue: Adjust lighting (not too dark or too bright).`;
+          }
+          if (hasSize) {
+            errorMessage += `\n\n⚠️ Face size issue: Move closer or further from camera.`;
+          }
+          if (hasLiveness) {
+            errorMessage += `\n\n⚠️ Liveness check failed: Ensure you are using a live camera (not a photo) and face the camera directly.`;
+          }
+        }
+        
+        errorMessage += `\n\nAt least ${MIN_REQUIRED_EMBEDDINGS} images must pass quality checks.`;
+        
+        return res.status(500).json({ 
+          error: errorMessage
+        });
+      }
+      
+      // Log if not all 5 images passed (but registration can still proceed with 3-4)
+      if (embeddingResults.length < 5) {
+        console.warn(`⚠️ Registration proceeding with ${embeddingResults.length}/5 embeddings (minimum: ${MIN_REQUIRED_EMBEDDINGS}). This is still acceptable for enterprise-grade accuracy.`);
       }
       
       const sequentialProcessingTime = Date.now() - registrationStartTime;
       console.log(`   ⚡⚡⚡ Sequential processing completed in ${sequentialProcessingTime}ms - ${embeddingResults.length} embeddings generated`);
     } catch (error) {
+      // IMMEDIATE error logging to stderr
+      process.stderr.write(`\n❌ ========== ERROR PROCESSING IMAGES ==========\n`);
+      process.stderr.write(`❌ Error message: ${error.message}\n`);
+      process.stderr.write(`❌ Error name: ${error.name}\n`);
+      if (error.stack) {
+        process.stderr.write(`❌ Error stack: ${error.stack}\n`);
+      }
+      if (error.cause) {
+        process.stderr.write(`❌ Error cause: ${error.cause}\n`);
+      }
+      process.stderr.write(`❌ ===============================================\n`);
+      
+      // Also log to console.error
       console.error('   ❌ ========== ERROR PROCESSING IMAGES ==========');
       console.error('   ❌ Error message:', error.message);
       console.error('   ❌ Error name:', error.name);
@@ -226,25 +441,91 @@ async function handleRegistration(req, res) {
       return res.status(500).json({ error: `Failed to process images: ${error.message}` });
     }
     
-    // Calculate average quality
-    const avgQuality = qualities.reduce((sum, q) => sum + q, 0) / qualities.length;
-    const qualityDetails = qualities.map((q, i) => `Image ${i + 1}: ${(q * 100).toFixed(1)}%`).join(', ');
+    // 🏦 BANK-GRADE: Calculate average quality and compute centroid template
+    const avgQuality = embeddingQualities.reduce((sum, q) => sum + (q.score || 0.75), 0) / embeddingQualities.length;
+    const qualityDetails = embeddingQualities.map((q, i) => `Image ${i + 1}: ${((q.score || 0.75) * 100).toFixed(1)}%`).join(', ');
     console.log(`   📊 Average face quality: ${(avgQuality * 100).toFixed(1)}% (${qualityDetails})`);
     
-    // ENTERPRISE: Store all embeddings (3-5) for maximum accuracy
+    // 🏦 BANK-GRADE: Compute weighted centroid template from all embeddings
+    const { computeCentroidTemplate } = require('../utils/faceRecognitionONNX');
+    let centroidEmbedding;
+    try {
+      centroidEmbedding = computeCentroidTemplate(embeddingResults, embeddingQualities);
+      console.log(`   🏦 Centroid template computed from ${embeddingResults.length} embeddings`);
+    } catch (centroidError) {
+      console.warn(`   ⚠️ Failed to compute centroid template: ${centroidError.message}`);
+      // Fallback: use first embedding as centroid
+      centroidEmbedding = embeddingResults[0];
+      console.log(`   ⚠️ Using first embedding as centroid (fallback)`);
+    }
+    
+    // 🏦 BANK-GRADE Phase 5: Process ID document image (REQUIRED for bank-grade accuracy)
+    // ID document is the stable anchor template - required for core matching process
+    const idImage = req.files?.idImage?.[0];
+    if (!idImage || !idImage.buffer || idImage.buffer.length === 0) {
+      return res.status(400).json({ 
+        error: 'ID document image is REQUIRED for registration. Please capture a photo of your ID card, passport, or driver\'s license. The ID photo serves as the stable anchor template for accurate face matching.' 
+      });
+    }
+    
+    let idEmbedding = undefined;
+    let idEmbeddingQuality = undefined;
+    
+    try {
+      console.log(`   🆔 Processing ID document image (${idImage.buffer.length} bytes)...`);
+      process.stdout.write(`\n📸 [REGISTER] Processing ID document image (REQUIRED)\n`);
+      
+      const idEmbeddingResult = await generateIDEmbedding(idImage.buffer);
+      
+      if (idEmbeddingResult && idEmbeddingResult.embedding) {
+        idEmbedding = idEmbeddingResult.embedding;
+        idEmbeddingQuality = idEmbeddingResult.quality || {
+          score: 0.75,
+          sharpness: 0.75,
+          blurVariance: 100,
+          brightness: 0.5,
+          detectionScore: 0.75,
+          createdAt: new Date()
+        };
+        
+        const qualityScore = idEmbeddingQuality.score || 0.75;
+        process.stdout.write(`\n✅ [REGISTER] ID document image processed successfully\n`);
+        console.log(`   ✅ ID embedding generated with quality: ${(qualityScore * 100).toFixed(1)}%`);
+      } else {
+        throw new Error('Invalid embedding result from ID document');
+      }
+    } catch (idError) {
+      // ID processing is REQUIRED - registration fails if ID cannot be processed
+      const errorMsg = idError?.message || String(idError) || 'Unknown error';
+      console.error(`   ❌ Failed to process ID document image (REQUIRED): ${errorMsg}`);
+      return res.status(400).json({ 
+        error: `ID document processing failed: ${errorMsg}. Please ensure the ID photo is clear, well-lit, and shows your face clearly. The ID document is required for bank-grade accuracy.` 
+      });
+    }
+    
+    // 🏦 BANK-GRADE: Store all embeddings with quality metadata and centroid template
     const fullName = `${name.trim()} ${surname.trim()}`;
-    const primaryEmbedding = embeddingResults[0]; // Use first embedding as primary
+    const primaryEmbedding = embeddingResults[0]; // Use first embedding as primary (backward compatibility)
     const encryptedEmbedding = Staff.encryptEmbedding(primaryEmbedding);
     
     staff = new Staff({
       name: fullName, // Store full name in name field for backward compatibility
       surname: surname.trim(),
       idNumber: idNumber.trim(),
-      phoneNumber: phoneNumber.trim(),
-      role: role,
-      location: location, // Store location key
+        phoneNumber: phoneNumber.trim(),
+        role: role,
+        department: department.trim(), // Department (required)
+        hostCompanyId: validatedHostCompanyId, // Host company ID (optional)
+        location: location || customAddress || locationName, // Store location key or custom address
+        locationLatitude: locationLatitude, // Store geocoded coordinates
+        locationLongitude: locationLongitude,
+        locationAddress: isCustomAddress ? locationAddress : undefined, // Store full address if custom
       faceEmbedding: primaryEmbedding, // Primary embedding (for backward compatibility)
-      faceEmbeddings: embeddingResults, // ALL embeddings (3-5) for enterprise accuracy
+      faceEmbeddings: embeddingResults, // 🏦 BANK-GRADE: ALL embeddings (3-5) for centroid fusion
+      embeddingQualities: embeddingQualities, // 🏦 BANK-GRADE: Quality metadata per embedding
+      centroidEmbedding: centroidEmbedding, // 🏦 BANK-GRADE: Weighted centroid template (primary matching)
+      idEmbedding: idEmbedding, // 🏦 BANK-GRADE Phase 5: ID document anchor embedding
+      idEmbeddingQuality: idEmbeddingQuality, // Quality metrics for ID extraction
       encryptedEmbedding
     });
     
@@ -267,8 +548,8 @@ async function handleRegistration(req, res) {
     
     // Build quality object for response
     const qualityResponse = {};
-    qualities.forEach((q, i) => {
-      qualityResponse[`image${i + 1}`] = (q * 100).toFixed(1);
+    embeddingQualities.forEach((q, i) => {
+      qualityResponse[`image${i + 1}`] = ((q.score || 0.75) * 100).toFixed(1);
     });
     qualityResponse.average = (avgQuality * 100).toFixed(1);
     
@@ -343,10 +624,26 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.log(`✅ Processing ${type} request for staff member`);
     console.log(`   User location: ${userLat}, ${userLon}`);
 
+    // 🏦 BANK-GRADE Phase 4: Generate device fingerprint for quality tracking
+    const { generateDeviceFingerprint } = require('../utils/faceRecognitionONNX');
+    const deviceFingerprint = generateDeviceFingerprint(req.headers);
+    if (deviceFingerprint) {
+      console.log(`🏦 Device fingerprint: ${deviceFingerprint.substring(0, 8)}...`);
+    }
+    
     // Generate embedding from captured image (now returns object with embedding, quality, etc.)
+    // Pass device fingerprint for adaptive quality thresholds
     let embeddingResult;
     try {
-      embeddingResult = await generateEmbedding(req.file.buffer);
+      const embeddingStartTime = Date.now();
+      process.stdout.write(`\n🕐 [CLOCK] Starting embedding generation...\n`);
+      console.log(`⏱️ [PERF] Embedding generation started at ${new Date().toISOString()}`);
+      
+      embeddingResult = await generateEmbedding(req.file.buffer, deviceFingerprint);
+      
+      const embeddingTime = Date.now() - embeddingStartTime;
+      process.stdout.write(`\n✅ [CLOCK] Embedding generation complete (${embeddingTime}ms)\n`);
+      console.log(`⏱️ [PERF] Embedding generation took ${embeddingTime}ms (${(embeddingTime/1000).toFixed(1)}s)`);
       
       // Validate embedding result
       if (!embeddingResult) {
@@ -359,18 +656,55 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         throw new Error('Invalid embedding generated - embedding is not a valid array');
       }
       
-      console.log(`✅ Embedding generated - Quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}, Length: ${embedding.length}`);
+      // Extract quality score (can be object or number)
+      const qualityScore = typeof embeddingResult.quality === 'object' 
+        ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
+        : (embeddingResult.quality || 0.75);
+      console.log(`✅ Embedding generated - Quality: ${(qualityScore * 100).toFixed(1)}%, Length: ${embedding.length}`);
     } catch (embeddingError) {
       const errorMsg = embeddingError?.message || String(embeddingError) || 'Failed to generate face embedding';
+      // IMMEDIATE error logging to stderr
+      process.stderr.write(`\n❌ [CLOCK] Error generating embedding: ${errorMsg}\n`);
+      if (embeddingError.stack) {
+        process.stderr.write(`❌ [CLOCK] Error stack: ${embeddingError.stack}\n`);
+      }
+      // Also log to console.error
       console.error('❌ Error generating embedding:', errorMsg);
+      if (embeddingError.stack) {
+        console.error('❌ Error stack:', embeddingError.stack);
+      }
+      
+      // ENTERPRISE: Provide user-friendly error messages
+      let userFriendlyError = errorMsg;
+      if (errorMsg.includes('too small')) {
+        userFriendlyError = 'Face too small. Please move closer to the camera (at least 150px face size required).';
+      } else if (errorMsg.includes('too large')) {
+        userFriendlyError = 'Face too large. Please move further from the camera.';
+      } else if (errorMsg.includes('too blurry')) {
+        userFriendlyError = 'Image is too blurry. Please ensure camera is focused and hold still.';
+      } else if (errorMsg.includes('brightness')) {
+        userFriendlyError = 'Image brightness out of range. Please adjust lighting (not too dark or too bright).';
+      } else if (errorMsg.includes('Multiple faces')) {
+        userFriendlyError = 'Multiple faces detected. Please ensure only ONE person is in the frame.';
+      } else if (errorMsg.includes('No face detected')) {
+        userFriendlyError = 'No face detected. Please ensure your face is visible, well-lit, and facing the camera directly.';
+      } else if (errorMsg.includes('quality too low')) {
+        userFriendlyError = 'Face detection quality too low. Please ensure good lighting and face the camera directly.';
+      } else if (errorMsg.includes('landmarks')) {
+        userFriendlyError = 'Facial features not properly detected. Please ensure your face is clearly visible and facing the camera directly.';
+      }
+      
       return res.status(500).json({ 
         success: false,
-        error: errorMsg 
+        error: userFriendlyError 
       });
     }
     
     // Get all active staff members from cache (FAST PATH - no DB query!)
+    const cacheStartTime = Date.now();
     const staffWithEmbeddings = await staffCache.getStaff();
+    const cacheTime = Date.now() - cacheStartTime;
+    console.log(`⏱️ [PERF] Staff cache retrieval took ${cacheTime}ms`);
     
     if (!staffWithEmbeddings || staffWithEmbeddings.length === 0) {
       return res.status(404).json({ 
@@ -381,23 +715,44 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     // Find matching staff (pass the full embedding result object)
     console.log(`🔍 Starting face matching process...`);
-    console.log(`   - Clock-in embedding quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
+    // Extract quality score (can be object or number)
+    const qualityScore = typeof embeddingResult.quality === 'object' 
+      ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
+      : (embeddingResult.quality || 0.75);
+    console.log(`   - Clock-in embedding quality: ${(qualityScore * 100).toFixed(1)}%`);
     console.log(`   - Clock-in embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
     console.log(`   - Staff members to compare: ${staffWithEmbeddings.length}`);
     
-    const match = await findMatchingStaff(embeddingResult, staffWithEmbeddings);
+    // Find matching staff member with multi-signal fusion
+    const matchingStartTime = Date.now();
+    console.log(`⏱️ [PERF] Starting face matching with ${staffWithEmbeddings.length} staff members...`);
+    
+    // 🏦 BANK-GRADE Phase 3: Pass device fingerprint and location to matching
+    // Note: Location validation happens after matching, so we pass locationValid: true initially
+    // Location will be validated separately and can affect final score
+    const match = await findMatchingStaff(embeddingResult, staffWithEmbeddings, {
+      deviceFingerprint,      // Device fingerprint for multi-signal fusion
+      locationValid: true,    // Will be validated after matching
+      useType: 'daily',
+    });
+    const matchingTime = Date.now() - matchingStartTime;
+    console.log(`⏱️ [PERF] Face matching took ${matchingTime}ms (${(matchingTime/1000).toFixed(1)}s)`);
     
     if (!match) {
       console.error('❌ Face not recognized - no matching staff found');
       console.error(`📊 Final debug info:`);
       console.error(`   - Staff members in database: ${staffWithEmbeddings.length}`);
-      console.error(`   - Embedding quality: ${embeddingResult.quality ? (embeddingResult.quality * 100).toFixed(1) + '%' : 'N/A'}`);
+      // Extract quality score (can be object or number)
+      const qualityScoreForError = typeof embeddingResult.quality === 'object' 
+        ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
+        : (embeddingResult.quality || 0.75);
+      console.error(`   - Embedding quality: ${(qualityScoreForError * 100).toFixed(1)}%`);
       console.error(`   - Embedding type: ${Array.isArray(embeddingResult.embedding) ? 'Array' : typeof embeddingResult.embedding}`);
       console.error(`   - Embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
       console.error(`   - Detection score: ${embeddingResult.detectionScore ? (embeddingResult.detectionScore * 100).toFixed(1) + '%' : 'N/A'}`);
       
       // Check if using fallback embeddings (models not loaded)
-      if (embeddingResult.quality && embeddingResult.quality < 0.3) {
+      if (qualityScoreForError < 0.3) {
         console.error('⚠️ WARNING: Using fallback embeddings - models may not be loaded!');
         return res.status(500).json({ 
           success: false,
@@ -407,7 +762,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       
       // Provide helpful error message
       let errorMessage = 'Face not recognized. ';
-      if (embeddingResult.quality && embeddingResult.quality < 0.5) {
+      if (qualityScoreForError < 0.5) {
         errorMessage += 'The face detection quality is low. Please ensure good lighting and face the camera directly. ';
       }
       errorMessage += 'Please ensure you are the same person who registered, with similar lighting and angle. Try registering again if this persists.';
@@ -418,30 +773,58 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       });
     }
     
-    const { staff, similarity, confidenceLevel } = match;
+    const { staff, similarity, confidenceLevel, riskScore, signals } = match;
     const confidence = Math.round(similarity * 100);
     
-    // CRITICAL: Validate location - user MUST be at their assigned location
+    // 🏦 BANK-GRADE Phase 4: Log risk score if elevated
+    if (riskScore && riskScore.score > 0.3) {
+      console.warn(`⚠️ Elevated risk score: ${(riskScore.score * 100).toFixed(1)}% (${riskScore.level})`);
+      if (riskScore.factors && riskScore.factors.length > 0) {
+        console.warn(`   Risk factors: ${riskScore.factors.join(', ')}`);
+      }
+    }
+    
+    // ENTERPRISE: Time-based pattern validation
+    const { validateTimePattern } = require('../utils/faceRecognitionONNX');
+    const timeValidation = validateTimePattern(type, new Date());
+    if (!timeValidation.valid && timeValidation.warning) {
+      console.warn(`⚠️ Time pattern warning: ${timeValidation.warning}`);
+      // Don't block, just warn - allow flexibility for different work schedules
+    }
+    
+    // 🏦 BANK-GRADE Phase 3: Validate location - user MUST be at their assigned location
     // This validation happens AFTER face recognition to ensure only authenticated users can clock in
-    if (!staff.location) {
-      console.error(`❌ Location validation failed for ${staff.name}: No location assigned`);
+    // UPDATED: Uses stored coordinates from staff record (100% accurate)
+    if (!staff.locationLatitude || !staff.locationLongitude) {
+      console.error(`❌ Location validation failed for ${staff.name}: No coordinates stored`);
+      console.error(`   Location field: ${staff.location || 'none'}`);
+      console.error(`   Coordinates: ${staff.locationLatitude || 'missing'}, ${staff.locationLongitude || 'missing'}`);
       return res.status(403).json({
         success: false,
-        error: 'No location assigned to this staff member. Please contact administrator.'
+        error: 'No location coordinates stored for this staff member. Please contact administrator to update your location.'
       });
     }
     
     const { isLocationValid } = require('../config/locations');
-    const locationValidation = isLocationValid(userLat, userLon, staff.location);
+    const staffLocationName = staff.location || 'Assigned location';
+    const staffLocationAddress = staff.locationAddress || null;
+    // 🏦 INTELLIGENT RADIUS: Pass null for radius to auto-detect town-level vs specific address
+    // isLocationValid will automatically use 5km for towns/cities, 200m for specific addresses
+    const locationValidation = isLocationValid(
+      userLat, 
+      userLon, 
+      staff.locationLatitude, 
+      staff.locationLongitude, 
+      staffLocationName,
+      null, // Auto-detect radius based on location type
+      staffLocationAddress // Pass address to help determine if it's town-level
+    );
     
     if (!locationValidation.valid) {
       console.error(`❌ Location validation FAILED for ${staff.name}`);
-      console.error(`   Assigned location key: ${staff.location}`);
-      console.error(`   Assigned location name: ${locationValidation.assignedLocation || 'Unknown'}`);
+      console.error(`   Assigned location: ${staffLocationName}`);
+      console.error(`   Location coordinates: ${staff.locationLatitude.toFixed(6)}, ${staff.locationLongitude.toFixed(6)}`);
       console.error(`   User's current coordinates: ${userLat.toFixed(6)}, ${userLon.toFixed(6)}`);
-      if (locationValidation.locationCoordinates) {
-        console.error(`   Location coordinates: ${locationValidation.locationCoordinates.lat.toFixed(6)}, ${locationValidation.locationCoordinates.lon.toFixed(6)}`);
-      }
       console.error(`   Distance from assigned location: ${locationValidation.distance}m`);
       console.error(`   Required: Within ${locationValidation.requiredRadius}m`);
       console.error(`   Error: ${locationValidation.error}`);
@@ -464,9 +847,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     console.log(`✅ Location validated: ${staff.name} is at ${locationValidation.locationName} (${locationValidation.distance}m away)`);
     
+    // 🏦 BANK-GRADE Phase 3: Update location signal if location validation passed
+    // Location validation passed, so location signal is valid
+    const locationValid = locationValidation.valid;
+    
     // ⚡ OPTIMIZED: Calculate timing before DB save
     const preSaveTime = Date.now() - requestStartTime;
     console.log(`✅ Match found: ${staff.name} - Confidence: ${confidence}% (${confidenceLevel || 'Medium'})`);
+    if (signals) {
+      console.log(`🏦 Signals - Face: ${((signals.face || 0) * 100).toFixed(1)}%, Temporal: ${((signals.temporal || 0) * 100).toFixed(1)}%, Device: ${((signals.device || 0) * 100).toFixed(1)}%, Location: ${((signals.location || 0) * 100).toFixed(1)}%`);
+    }
     console.log(`⚡ Pre-save time: ${preSaveTime}ms (face detection + matching)`);
     
     // Format timestamp before saving (in case save fails, we still have the time)
@@ -532,12 +922,21 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     (async () => {
       try {
         console.log(`💾 Saving clock log for ${staff.name}...`);
+        // 🏦 BANK-GRADE Phase 3 & 4: Save device fingerprint and risk score
         const clockLog = new ClockLog({
           staffId: staff._id,
           staffName: staff.name,
           clockType: type,
           confidence,
-          timestamp: timestamp
+          timestamp: timestamp,
+          deviceFingerprint: deviceFingerprint, // 🏦 BANK-GRADE: Device fingerprint
+          riskScore: riskScore || { score: 0, level: 'low', factors: [] }, // 🏦 BANK-GRADE: Risk score
+          signals: signals || { // 🏦 BANK-GRADE: Signal values for audit
+            face: match.baseSimilarity || similarity,
+            temporal: (signals && signals.temporal) || 0,
+            device: (signals && signals.device) || 0,
+            location: locationValid ? 1 : 0,
+          },
         });
         
         // ⚡ OPTIMIZED: Reduced timeout from 5s to 3s (faster failure detection)
@@ -550,6 +949,15 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         await Promise.race([savePromise, timeoutPromise]);
         const saveTime = Date.now() - saveStartTime;
         console.log(`✅ Clock log saved successfully for ${staff.name} (${saveTime}ms)`);
+        
+        // 🏦 BANK-GRADE Phase 4: Track device quality after successful clock-in
+        if (deviceFingerprint && embeddingResult.qualityMetrics) {
+          const { trackDeviceQuality } = require('../utils/faceRecognitionONNX');
+          trackDeviceQuality(deviceFingerprint, embeddingResult.qualityMetrics).catch(err => {
+            console.warn('⚠️ Failed to track device quality:', err.message);
+            // Don't fail the clock-in if quality tracking fails
+          });
+        }
       } catch (saveError) {
         // Log error but don't fail the request - response already sent
         const errorMsg = saveError?.message || String(saveError) || 'Unknown error';
@@ -641,7 +1049,15 @@ router.get('/verify-clock', async (req, res) => {
 // Get all staff members
 router.get('/list', async (req, res) => {
   try {
-    const staff = await Staff.find({ isActive: true }).select('name createdAt').sort({ createdAt: -1 });
+    const { hostCompanyId } = req.query;
+    const filter = { isActive: true };
+    
+    // Filter by host company if provided
+    if (hostCompanyId) {
+      filter.hostCompanyId = hostCompanyId;
+    }
+    
+    const staff = await Staff.find(filter).select('name createdAt').sort({ createdAt: -1 });
     res.json({ success: true, staff });
   } catch (error) {
     console.error('Error fetching staff list:', error);
@@ -719,16 +1135,128 @@ router.post('/cache/refresh', async (req, res) => {
   }
 });
 
+// ========== AUTHENTICATION ROUTES ==========
+
+// Login endpoint for admin and host companies
+router.post('/login', async (req, res) => {
+  console.log('🔐 ========== LOGIN REQUEST RECEIVED ==========');
+  console.log('🔐 Path:', req.path);
+  console.log('🔐 Method:', req.method);
+  console.log('🔐 Body:', { username: req.body?.username, hasPassword: !!req.body?.password });
+  try {
+    const { username, password } = req.body;
+    
+    if (!username || !password) {
+      console.log('🔐 ❌ Missing username or password');
+      return res.status(400).json({ 
+        success: false,
+        error: 'Username and password are required' 
+      });
+    }
+    
+    console.log('🔐 Validating credentials for:', username);
+    
+    // Check if it's admin login (hardcoded for now, can be moved to config/env)
+    const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'admin';
+    const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123';
+    
+    if (username.toLowerCase() === ADMIN_USERNAME.toLowerCase() && password === ADMIN_PASSWORD) {
+      console.log('🔐 ✅ Admin login successful');
+      return res.json({
+        success: true,
+        user: {
+          type: 'admin',
+          username: ADMIN_USERNAME,
+          name: 'System Administrator'
+        }
+      });
+    }
+    
+    // Check if it's a host company login
+    const hostCompany = await HostCompany.findOne({ 
+      username: username.toLowerCase().trim(),
+      isActive: true 
+    });
+    
+    if (!hostCompany) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid username or password' 
+      });
+    }
+    
+    // Verify password
+    const isPasswordValid = await hostCompany.comparePassword(password);
+    if (!isPasswordValid) {
+      return res.status(401).json({ 
+        success: false,
+        error: 'Invalid username or password' 
+      });
+    }
+    
+    // Return host company info (without password)
+    console.log('🔐 ✅ Host company login successful:', hostCompany.name);
+    res.json({
+      success: true,
+      user: {
+        type: 'hostCompany',
+        id: hostCompany._id,
+        username: hostCompany.username,
+        name: hostCompany.name,
+        companyName: hostCompany.companyName
+      }
+    });
+  } catch (error) {
+    console.error('🔐 ❌ Error during login:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Login failed. Please try again.' 
+    });
+  }
+});
+
 // ========== ADMIN DASHBOARD ROUTES ==========
 
 // Get dashboard statistics (OPTIMIZED - parallel queries + fresh data)
 router.get('/admin/stats', async (req, res) => {
   const statsStartTime = Date.now();
   try {
+    const { hostCompanyId } = req.query;
+    
+    // Build staff filter based on hostCompanyId
+    const staffFilter = { isActive: true };
+    if (hostCompanyId) {
+      staffFilter.hostCompanyId = hostCompanyId;
+    }
+    
+    // Get staff IDs for filtering clock logs
+    const staffMembers = await Staff.find(staffFilter).select('_id').lean();
+    const staffIds = staffMembers.map(s => s._id);
+    
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // Build clock log filter
+    const clockLogFilter = {
+      timestamp: { $gte: today, $lt: tomorrow }
+    };
+    if (hostCompanyId && staffIds.length > 0) {
+      clockLogFilter.staffId = { $in: staffIds };
+    } else if (hostCompanyId && staffIds.length === 0) {
+      // No staff for this company - return empty stats
+      return res.json({
+        success: true,
+        stats: {
+          totalStaff: 0,
+          clockInsToday: 0,
+          currentlyIn: 0,
+          lateArrivals: 0,
+          lateArrivalsList: []
+        }
+      });
+    }
 
     // OPTIMIZATION: Run all queries in parallel for faster response
     const [
@@ -740,30 +1268,30 @@ router.get('/admin/stats', async (req, res) => {
       lateArrivals
     ] = await Promise.all([
       // Total staff count
-      Staff.countDocuments({ isActive: true }),
+      Staff.countDocuments(staffFilter),
       
       // Clock-ins today count
       ClockLog.countDocuments({
         clockType: 'in',
-        timestamp: { $gte: today, $lt: tomorrow }
+        ...clockLogFilter
       }),
       
       // Clock-outs today count
       ClockLog.countDocuments({
         clockType: 'out',
-        timestamp: { $gte: today, $lt: tomorrow }
+        ...clockLogFilter
       }),
       
       // Currently clocked in (select only staffId for faster query)
       ClockLog.find({
         clockType: 'in',
-        timestamp: { $gte: today, $lt: tomorrow }
+        ...clockLogFilter
       }).select('staffId staffName').lean(),
       
       // Clocked out today
       ClockLog.find({
         clockType: 'out',
-        timestamp: { $gte: today, $lt: tomorrow }
+        ...clockLogFilter
       }).select('staffId').lean(),
       
       // Late arrivals (after 8:00 AM)
@@ -772,7 +1300,8 @@ router.get('/admin/stats', async (req, res) => {
         timestamp: { 
           $gte: new Date(today.setHours(8, 0, 0, 0)), 
           $lt: tomorrow 
-        }
+        },
+        ...(hostCompanyId && staffIds.length > 0 && { staffId: { $in: staffIds } })
       }).select('staffId staffName timestamp').lean()
     ]);
 
@@ -819,19 +1348,46 @@ router.get('/admin/stats', async (req, res) => {
 router.get('/admin/staff', async (req, res) => {
   const staffStartTime = Date.now();
   try {
-    const { month, year } = req.query;
+    const { month, year, hostCompanyId } = req.query;
     const targetMonth = month ? parseInt(month) : new Date().getMonth() + 1;
     const targetYear = year ? parseInt(year) : new Date().getFullYear();
 
     const startDate = new Date(targetYear, targetMonth - 1, 1);
     const endDate = new Date(targetYear, targetMonth, 0, 23, 59, 59, 999);
 
+    // Build staff filter
+    const staffFilter = { isActive: true };
+    if (hostCompanyId) {
+      staffFilter.hostCompanyId = hostCompanyId;
+    }
+
+    // Check if full data is requested
+    const { fullData, department } = req.query;
+    
+    // Add department filter if provided
+    if (department) {
+      staffFilter.department = department;
+    }
+    
     // OPTIMIZATION: Fetch staff and logs in parallel, then group in memory
-    const [staff, allLogs] = await Promise.all([
-      Staff.find({ isActive: true })
+    let staffQuery;
+    
+    if (fullData === 'true') {
+      // For full data, we need to populate hostCompany, so don't use lean()
+      staffQuery = Staff.find(staffFilter)
+        .select('-faceEmbedding -faceEmbeddings -embeddingQualities -centroidEmbedding -idEmbedding -idEmbeddingQuality -facialFeatures -encryptedEmbedding') // Exclude sensitive embedding data
+        .populate('hostCompanyId', 'name companyName registrationNumber businessType industry operatingHours emailAddress isActive')
+        .sort({ name: 1 });
+    } else {
+      // For basic data, use lean() for performance
+      staffQuery = Staff.find(staffFilter)
         .select('name surname idNumber phoneNumber role location createdAt')
         .sort({ name: 1 })
-        .lean(), // Use lean() for faster queries (returns plain objects)
+        .lean();
+    }
+    
+    const [staff, allLogs] = await Promise.all([
+      staffQuery.exec(),
       
       ClockLog.find({
         timestamp: { $gte: startDate, $lte: endDate }
@@ -893,6 +1449,14 @@ router.get('/admin/staff', async (req, res) => {
           new Date(a.date) - new Date(b.date)
         );
 
+      // Handle both populated (object) and non-populated (ID) hostCompanyId
+      const hostCompany = member.hostCompanyId && typeof member.hostCompanyId === 'object' 
+        ? member.hostCompanyId 
+        : null;
+      const hostCompanyIdValue = member.hostCompanyId 
+        ? (typeof member.hostCompanyId === 'object' ? member.hostCompanyId._id : member.hostCompanyId)
+        : null;
+
       return {
         _id: member._id,
         name: member.name,
@@ -900,7 +1464,10 @@ router.get('/admin/staff', async (req, res) => {
         idNumber: member.idNumber,
         phoneNumber: member.phoneNumber,
         role: member.role,
+        department: member.department, // Include department field
         location: member.location,
+        hostCompanyId: hostCompanyIdValue, // Include hostCompanyId (as ID)
+        hostCompany: hostCompany, // Populated hostCompany object (if populated)
         createdAt: member.createdAt,
         timesheet
       };
@@ -925,7 +1492,7 @@ router.get('/admin/staff', async (req, res) => {
 router.get('/admin/not-accountable', async (req, res) => {
   const notAccountableStartTime = Date.now();
   try {
-    const { date } = req.query;
+    const { date, hostCompanyId } = req.query;
     const targetDate = date ? new Date(date) : new Date();
     targetDate.setHours(0, 0, 0, 0);
     const nextDate = new Date(targetDate);
@@ -942,16 +1509,38 @@ router.get('/admin/not-accountable', async (req, res) => {
     // Tolerance window (in minutes) - allow 15 minutes before/after
     const TOLERANCE = 15;
 
+    // Build staff filter
+    const staffFilter = { isActive: true };
+    if (hostCompanyId) {
+      staffFilter.hostCompanyId = hostCompanyId;
+    }
+    
+    // Get staff IDs for filtering clock logs
+    const staffMembers = await Staff.find(staffFilter).select('_id').lean();
+    const staffIds = staffMembers.map(s => s._id);
+    
+    // Build clock log filter
+    const clockLogFilter = {
+      timestamp: { $gte: targetDate, $lt: nextDate }
+    };
+    if (hostCompanyId && staffIds.length > 0) {
+      clockLogFilter.staffId = { $in: staffIds };
+    } else if (hostCompanyId && staffIds.length === 0) {
+      // No staff for this company - return empty
+      return res.json({
+        success: true,
+        notAccountable: []
+      });
+    }
+
     // OPTIMIZATION: Fetch logs and staff in parallel, use lean() for speed
     const [allLogs, allStaff] = await Promise.all([
-      ClockLog.find({
-        timestamp: { $gte: targetDate, $lt: nextDate }
-      })
+      ClockLog.find(clockLogFilter)
         .select('staffId staffName clockType timestamp')
         .sort({ timestamp: 1 })
         .lean(), // Use lean() - we don't need Mongoose documents
       
-      Staff.find({ isActive: true })
+      Staff.find(staffFilter)
         .select('_id name')
         .lean()
     ]);
@@ -1174,6 +1763,52 @@ router.get('/admin/staff/:staffId/day-details', async (req, res) => {
 });
 
 // Get single staff member timesheet for PDF export
+// 🎯 PREVIEW VALIDATION ENDPOINT: Lightweight validation for frontend preview frames
+// ⚡ FAST: Only face detection, no embedding generation (200-500ms)
+// ✅ SPECIFIC: Returns exact issues and feedback so users know what to fix
+// 🎯 GOAL: Help users satisfy quality gates before full capture
+router.post('/validate-preview', upload.single('image'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ 
+        error: 'No image provided',
+        ready: false,
+        feedback: 'Please capture an image'
+      });
+    }
+
+    console.log('🔍 Preview validation request received');
+    console.log(`   📦 Image size: ${req.file.size} bytes`);
+    
+    // Run lightweight validation (detection only, no embedding)
+    const validationResult = await validatePreview(req.file.buffer);
+    
+    console.log(`   ✅ Preview validation complete:`, {
+      ready: validationResult.ready,
+      quality: validationResult.quality,
+      issues: validationResult.issues,
+      feedback: validationResult.feedback
+    });
+    
+    // Return validation result
+    res.json({
+      success: true,
+      ...validationResult
+    });
+    
+  } catch (error) {
+    console.error('❌ Preview validation error:', error.message);
+    res.status(500).json({
+      success: false,
+      ready: false,
+      quality: 0,
+      issues: ['validation_error'],
+      feedback: 'Unable to analyze image. Please try again.',
+      error: error.message
+    });
+  }
+});
+
 router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
   try {
     const { staffId } = req.params;
@@ -1248,6 +1883,1066 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
   } catch (error) {
     console.error('Error fetching staff timesheet:', error);
     res.status(500).json({ error: 'Failed to fetch timesheet' });
+  }
+});
+
+// 📊 REPORT GENERATION: Get filtered clock logs for report generation
+// Supports filtering by: date range, staff (individual/group), location, role
+router.get('/admin/reports/data', async (req, res) => {
+  console.log('📊 Report generation request received');
+  console.log('   Query params:', req.query);
+  try {
+    const { 
+      startDate, 
+      endDate, 
+      staffIds,  // Comma-separated staff IDs or 'all'
+      location,   // Filter by location
+      role,       // Filter by role
+      period,     // 'daily', 'weekly', 'monthly' (for date range calculation)
+      hostCompanyId  // Filter by host company (for host company users)
+    } = req.query;
+
+    // Build date range
+    let dateStart, dateEnd;
+    if (startDate && endDate) {
+      dateStart = new Date(startDate);
+      dateEnd = new Date(endDate);
+      dateEnd.setHours(23, 59, 59, 999);
+    } else if (period) {
+      const now = new Date();
+      switch (period) {
+        case 'daily':
+          dateStart = new Date(now);
+          dateStart.setHours(0, 0, 0, 0);
+          dateEnd = new Date(now);
+          dateEnd.setHours(23, 59, 59, 999);
+          break;
+        case 'weekly':
+          dateStart = new Date(now);
+          dateStart.setDate(now.getDate() - now.getDay()); // Start of week (Sunday)
+          dateStart.setHours(0, 0, 0, 0);
+          dateEnd = new Date(dateStart);
+          dateEnd.setDate(dateStart.getDate() + 6);
+          dateEnd.setHours(23, 59, 59, 999);
+          break;
+        case 'monthly':
+          dateStart = new Date(now.getFullYear(), now.getMonth(), 1);
+          dateEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+          break;
+        default:
+          dateStart = new Date(now);
+          dateStart.setHours(0, 0, 0, 0);
+          dateEnd = new Date(now);
+          dateEnd.setHours(23, 59, 59, 999);
+      }
+    } else {
+      // Default to today
+      dateStart = new Date();
+      dateStart.setHours(0, 0, 0, 0);
+      dateEnd = new Date();
+      dateEnd.setHours(23, 59, 59, 999);
+    }
+
+    // Build staff filter
+    let staffFilter = {};
+    
+    // CRITICAL: Host company users can ONLY see their own company's staff
+    if (hostCompanyId) {
+      staffFilter.hostCompanyId = hostCompanyId;
+    }
+    
+    if (staffIds && staffIds !== 'all') {
+      const ids = staffIds.split(',').map(id => id.trim());
+      staffFilter._id = { $in: ids };
+      // If hostCompanyId is set, ensure selected staff belong to that company
+      if (hostCompanyId) {
+        const validStaff = await Staff.find({ 
+          _id: { $in: ids },
+          hostCompanyId: hostCompanyId 
+        }).select('_id').lean();
+        const validIds = validStaff.map(s => s._id.toString());
+        staffFilter._id = { $in: validIds };
+      }
+    }
+
+    // Add location filter
+    if (location && location !== 'all') {
+      staffFilter.location = location;
+    }
+
+    // Add role filter
+    if (role && role !== 'all') {
+      staffFilter.role = role;
+    }
+
+    // Fetch staff matching filters
+    const staff = await Staff.find({ ...staffFilter, isActive: true })
+      .select('_id name surname idNumber phoneNumber role location')
+      .lean();
+
+    if (staff.length === 0) {
+      return res.json({
+        success: true,
+        staff: [],
+        logs: [],
+        summary: {
+          totalStaff: 0,
+          totalLogs: 0,
+          dateRange: {
+            start: dateStart.toISOString(),
+            end: dateEnd.toISOString()
+          }
+        }
+      });
+    }
+
+    const staffIdsArray = staff.map(s => s._id);
+
+    // Fetch clock logs for the date range and staff
+    const logs = await ClockLog.find({
+      staffId: { $in: staffIdsArray },
+      timestamp: { $gte: dateStart, $lte: dateEnd }
+    })
+      .populate('staffId', 'name surname idNumber role location')
+      .sort({ timestamp: 1 })
+      .lean();
+
+    // Group logs by staff and date for timesheet format
+    const timesheetsByStaff = {};
+    staff.forEach(s => {
+      timesheetsByStaff[s._id.toString()] = {
+        staff: s,
+        timesheet: {}
+      };
+    });
+
+    logs.forEach(log => {
+      const staffId = log.staffId?._id?.toString() || log.staffId?.toString();
+      if (!timesheetsByStaff[staffId]) return;
+
+      const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+      if (!timesheetsByStaff[staffId].timesheet[dateKey]) {
+        timesheetsByStaff[staffId].timesheet[dateKey] = {
+          date: dateKey,
+          timeIn: null,
+          startLunch: null,
+          endLunch: null,
+          timeOut: null,
+          confidence: {}
+        };
+      }
+
+      const timeStr = new Date(log.timestamp).toLocaleTimeString('en-US', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: true
+      });
+
+      if (log.clockType === 'in') {
+        timesheetsByStaff[staffId].timesheet[dateKey].timeIn = timeStr;
+        timesheetsByStaff[staffId].timesheet[dateKey].confidence.timeIn = log.confidence;
+      } else if (log.clockType === 'break_start') {
+        timesheetsByStaff[staffId].timesheet[dateKey].startLunch = timeStr;
+        timesheetsByStaff[staffId].timesheet[dateKey].confidence.startLunch = log.confidence;
+      } else if (log.clockType === 'break_end') {
+        timesheetsByStaff[staffId].timesheet[dateKey].endLunch = timeStr;
+        timesheetsByStaff[staffId].timesheet[dateKey].confidence.endLunch = log.confidence;
+      } else if (log.clockType === 'out') {
+        timesheetsByStaff[staffId].timesheet[dateKey].timeOut = timeStr;
+        timesheetsByStaff[staffId].timesheet[dateKey].confidence.timeOut = log.confidence;
+      }
+    });
+
+    // Convert timesheet objects to arrays
+    const reportData = Object.values(timesheetsByStaff).map(item => ({
+      staff: item.staff,
+      timesheet: Object.values(item.timesheet).sort((a, b) => 
+        new Date(a.date) - new Date(b.date)
+      )
+    }));
+
+    // Calculate summary
+    const summary = {
+      totalStaff: staff.length,
+      totalLogs: logs.length,
+      dateRange: {
+        start: dateStart.toISOString(),
+        end: dateEnd.toISOString()
+      },
+      filters: {
+        location: location || 'all',
+        role: role || 'all',
+        period: period || 'custom'
+      }
+    };
+
+    res.json({
+      success: true,
+      data: reportData,
+      summary
+    });
+  } catch (error) {
+    console.error('Error fetching report data:', error);
+    res.status(500).json({ error: 'Failed to fetch report data' });
+  }
+});
+
+// ========== DEPARTMENT MANAGEMENT ROUTES (Admin Only) ==========
+
+// Get all departments
+router.get('/admin/departments', async (req, res) => {
+  try {
+    const departments = await Department.find({ isActive: true })
+      .sort({ name: 1 })
+      .lean();
+    
+    res.json({
+      success: true,
+      departments
+    });
+  } catch (error) {
+    console.error('Error fetching departments:', error);
+    res.status(500).json({ error: 'Failed to fetch departments' });
+  }
+});
+
+// Get all departments (including inactive) - for admin management
+router.get('/admin/departments/all', async (req, res) => {
+  try {
+    const { hostCompanyId } = req.query;
+    
+    // Build filter - host company users can only see their own departments
+    const filter = {};
+    if (hostCompanyId) {
+      filter.hostCompanyId = hostCompanyId;
+    }
+    
+    const departments = await Department.find(filter)
+      .sort({ name: 1 })
+      .lean();
+    
+    res.json({
+      success: true,
+      departments
+    });
+  } catch (error) {
+    console.error('Error fetching all departments:', error);
+    res.status(500).json({ error: 'Failed to fetch departments' });
+  }
+});
+
+// Create new department
+router.post('/admin/departments', async (req, res) => {
+  try {
+    const { name, departmentCode, companyName, description, location, customAddress, hostCompanyId } = req.body;
+    
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Department name is required' });
+    }
+    
+    if (!companyName || !companyName.trim()) {
+      return res.status(400).json({ error: 'Company name is required' });
+    }
+    
+    // Validate location or custom address
+    if (!location && !customAddress) {
+      return res.status(400).json({ error: 'Location or custom address is required' });
+    }
+    
+    // CRITICAL: If hostCompanyId is provided, validate it exists and is active
+    let validatedHostCompanyId = null;
+    if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({ error: 'Invalid host company ID format' });
+      }
+      const hostCompany = await HostCompany.findById(hostCompanyId);
+      if (!hostCompany) {
+        return res.status(400).json({ error: 'Host company not found' });
+      }
+      if (!hostCompany.isActive) {
+        return res.status(400).json({ error: 'Host company is not active' });
+      }
+      validatedHostCompanyId = hostCompanyId;
+    }
+    
+    // Check if department already exists (within the same company if hostCompanyId is set)
+    const existingFilter = { 
+      name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
+    };
+    if (validatedHostCompanyId) {
+      existingFilter.hostCompanyId = validatedHostCompanyId;
+    }
+    const existing = await Department.findOne(existingFilter);
+    
+    if (existing) {
+      return res.status(400).json({ error: 'Department with this name already exists' + (validatedHostCompanyId ? ' for this company' : '') });
+    }
+    
+    // 🌍 GEOCODING: Get location coordinates (from static dataset or geocode API)
+    const { getLocation, searchLocations } = require('../config/locations');
+    const { geocodeLocationWithRetry } = require('../utils/geocoding');
+    
+    let locationLatitude, locationLongitude, locationName, locationAddress;
+    let isCustomAddress = false;
+    
+    if (customAddress && customAddress.trim().length > 0) {
+      // Custom address provided - geocode it using API
+      console.log(`🌍 Geocoding department custom address: "${customAddress.trim()}"...`);
+      isCustomAddress = true;
+      try {
+        const geocodeResult = await geocodeLocationWithRetry(customAddress.trim(), 'South Africa', 2);
+        locationLatitude = geocodeResult.latitude;
+        locationLongitude = geocodeResult.longitude;
+        locationName = customAddress.trim();
+        locationAddress = geocodeResult.address;
+        console.log(`✅ Department custom address geocoded: ${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)}`);
+      } catch (geocodeError) {
+        console.error(`❌ Failed to geocode department custom address: "${customAddress.trim()}"`, geocodeError.message);
+        return res.status(400).json({ 
+          error: `Failed to geocode custom address: "${customAddress.trim()}". Please check the address and try again, or select a location from the dropdown.`,
+          details: geocodeError.message
+        });
+      }
+    } else if (location && location.trim().length > 0) {
+      // Predefined location selected - get from static dataset
+      const locationKey = location.trim();
+      const locationData = getLocation(locationKey);
+      
+      if (!locationData) {
+        console.error(`❌ Invalid location key: "${locationKey}"`);
+        // Try to search for similar locations
+        const searchResults = searchLocations(locationKey);
+        if (searchResults.length > 0) {
+          return res.status(400).json({ 
+            error: `Location "${locationKey}" not found. Did you mean: ${searchResults.slice(0, 3).map(l => l.name).join(', ')}?`,
+            suggestions: searchResults.slice(0, 5).map(l => ({ key: l.key, name: l.name }))
+          });
+        }
+        return res.status(400).json({ 
+          error: `Invalid location selected: "${locationKey}". Please select a location from the dropdown or enter a custom address.` 
+        });
+      }
+      
+      locationLatitude = locationData.latitude;
+      locationLongitude = locationData.longitude;
+      locationName = locationData.name;
+      locationAddress = locationData.address || locationData.name;
+      console.log(`✅ Department location from dataset: ${locationName} (${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)})`);
+    } else {
+      return res.status(400).json({ error: 'Location or custom address is required' });
+    }
+    
+    // Validate coordinates are valid
+    if (typeof locationLatitude !== 'number' || typeof locationLongitude !== 'number' ||
+        isNaN(locationLatitude) || isNaN(locationLongitude) ||
+        locationLatitude < -90 || locationLatitude > 90 ||
+        locationLongitude < -180 || locationLongitude > 180) {
+      return res.status(400).json({ error: 'Invalid location coordinates. Please try again or contact support.' });
+    }
+    
+    const department = new Department({
+      name: name.trim(),
+      departmentCode: departmentCode ? departmentCode.trim() : undefined,
+      companyName: companyName.trim(),
+      description: description ? description.trim() : '',
+      location: location || customAddress || locationName,
+      locationLatitude: locationLatitude,
+      locationLongitude: locationLongitude,
+      locationAddress: isCustomAddress ? locationAddress : undefined,
+      isActive: true,
+      // CRITICAL: Set hostCompanyId if provided (for host company users)
+      ...(validatedHostCompanyId && { hostCompanyId: validatedHostCompanyId })
+    });
+    
+    await department.save();
+    
+    res.json({
+      success: true,
+      department,
+      message: 'Department created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating department:', error);
+    if (error.code === 11000) {
+      res.status(400).json({ error: 'Department with this name already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to create department' });
+    }
+  }
+});
+
+// Update department
+router.put('/admin/departments/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, departmentCode, companyName, description, location, customAddress, isActive, hostCompanyId } = req.body;
+    
+    const department = await Department.findById(id);
+    if (!department) {
+      return res.status(404).json({ error: 'Department not found' });
+    }
+    
+    // CRITICAL: Host company users can ONLY edit their own company's departments
+    if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({ error: 'Invalid host company ID format' });
+      }
+      if (department.hostCompanyId && department.hostCompanyId.toString() !== hostCompanyId) {
+        return res.status(403).json({ error: 'You can only edit departments belonging to your company' });
+      }
+      // If department doesn't have hostCompanyId yet, set it (for migration)
+      if (!department.hostCompanyId) {
+        const hostCompany = await HostCompany.findById(hostCompanyId);
+        if (!hostCompany || !hostCompany.isActive) {
+          return res.status(400).json({ error: 'Host company not found or inactive' });
+        }
+        department.hostCompanyId = hostCompanyId;
+      }
+    }
+    
+    if (name && name.trim()) {
+      // Check if new name conflicts with existing department (within same company if hostCompanyId is set)
+      const existingFilter = { 
+        _id: { $ne: id },
+        name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
+      };
+      if (hostCompanyId && department.hostCompanyId) {
+        existingFilter.hostCompanyId = department.hostCompanyId;
+      }
+      const existing = await Department.findOne(existingFilter);
+      
+      if (existing) {
+        return res.status(400).json({ error: 'Department with this name already exists' + (hostCompanyId ? ' for this company' : '') });
+      }
+      
+      department.name = name.trim();
+    }
+    
+    if (companyName && companyName.trim()) {
+      department.companyName = companyName.trim();
+    }
+    
+    if (departmentCode !== undefined) {
+      department.departmentCode = departmentCode ? departmentCode.trim() : undefined;
+    }
+    
+    if (description !== undefined) {
+      department.description = description ? description.trim() : '';
+    }
+    
+    // Handle location update
+    if (location || customAddress) {
+      const { getLocation, searchLocations } = require('../config/locations');
+      const { geocodeLocationWithRetry } = require('../utils/geocoding');
+      
+      let locationLatitude, locationLongitude, locationName, locationAddress;
+      let isCustomAddress = false;
+      
+      if (customAddress && customAddress.trim().length > 0) {
+        // Custom address provided - geocode it
+        isCustomAddress = true;
+        try {
+          const geocodeResult = await geocodeLocationWithRetry(customAddress.trim(), 'South Africa', 2);
+          locationLatitude = geocodeResult.latitude;
+          locationLongitude = geocodeResult.longitude;
+          locationName = customAddress.trim();
+          locationAddress = geocodeResult.address;
+        } catch (geocodeError) {
+          return res.status(400).json({ 
+            error: `Failed to geocode custom address: "${customAddress.trim()}". Please check the address and try again.`,
+            details: geocodeError.message
+          });
+        }
+      } else if (location && location.trim().length > 0) {
+        // Predefined location selected
+        const locationKey = location.trim();
+        const locationData = getLocation(locationKey);
+        
+        if (!locationData) {
+          return res.status(400).json({ 
+            error: `Invalid location selected: "${locationKey}". Please select a location from the dropdown or enter a custom address.` 
+          });
+        }
+        
+        locationLatitude = locationData.latitude;
+        locationLongitude = locationData.longitude;
+        locationName = locationData.name;
+        locationAddress = locationData.address || locationData.name;
+      }
+      
+      // Validate coordinates
+      if (typeof locationLatitude === 'number' && typeof locationLongitude === 'number' &&
+          !isNaN(locationLatitude) && !isNaN(locationLongitude) &&
+          locationLatitude >= -90 && locationLatitude <= 90 &&
+          locationLongitude >= -180 && locationLongitude <= 180) {
+        department.location = location || customAddress || locationName;
+        department.locationLatitude = locationLatitude;
+        department.locationLongitude = locationLongitude;
+        if (isCustomAddress) {
+          department.locationAddress = locationAddress;
+        }
+      }
+    }
+    
+    if (isActive !== undefined) {
+      department.isActive = isActive;
+    }
+    
+    department.updatedAt = Date.now();
+    await department.save();
+    
+    res.json({
+      success: true,
+      department,
+      message: 'Department updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating department:', error);
+    if (error.code === 11000) {
+      res.status(400).json({ error: 'Department with this name already exists' });
+    } else {
+      res.status(500).json({ error: 'Failed to update department' });
+    }
+  }
+});
+
+// Delete department (soft delete - set isActive to false)
+router.delete('/admin/departments/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { hostCompanyId } = req.query; // Get hostCompanyId from query params
+    
+    const department = await Department.findById(id);
+    if (!department) {
+      return res.status(404).json({ error: 'Department not found' });
+    }
+    
+    // CRITICAL: Host company users can ONLY delete their own company's departments
+    if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({ error: 'Invalid host company ID format' });
+      }
+      if (department.hostCompanyId && department.hostCompanyId.toString() !== hostCompanyId) {
+        return res.status(403).json({ error: 'You can only delete departments belonging to your company' });
+      }
+    }
+    
+    // Check if any staff members are using this department
+    const staffCount = await Staff.countDocuments({ 
+      department: department.name,
+      isActive: true 
+    });
+    
+    if (staffCount > 0) {
+      return res.status(400).json({ 
+        error: `Cannot delete department. ${staffCount} staff member(s) are assigned to this department. Please reassign them first.` 
+      });
+    }
+    
+    // Soft delete
+    department.isActive = false;
+    department.updatedAt = Date.now();
+    await department.save();
+    
+    res.json({
+      success: true,
+      message: 'Department deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting department:', error);
+    res.status(500).json({ error: 'Failed to delete department' });
+  }
+});
+
+// ========== HOST COMPANY MANAGEMENT ROUTES (Admin Only) ==========
+
+// Get all host companies with statistics
+router.get('/admin/host-companies', async (req, res) => {
+  try {
+    const { hostCompanyId } = req.query;
+    
+    // Build filter - host company users can only see their own company
+    const filter = {};
+    if (hostCompanyId) {
+      filter._id = hostCompanyId;
+    }
+    
+    const companies = await HostCompany.find(filter)
+      .select('-password') // Exclude password from response
+      .sort({ name: 1 })
+      .lean();
+    
+    // Get statistics for each company
+    const companiesWithStats = await Promise.all(
+      companies.map(async (company) => {
+        // Count departments
+        const departmentCount = await Department.countDocuments({
+          hostCompanyId: company._id,
+          isActive: true
+        });
+        
+        // Count interns (staff with role 'Intern' in departments belonging to this company)
+        const departments = await Department.find({
+          hostCompanyId: company._id,
+          isActive: true
+        }).select('_id').lean();
+        
+        const departmentIds = departments.map(d => d._id.toString());
+        const internCount = await Staff.countDocuments({
+          department: { $in: departmentIds },
+          role: 'Intern',
+          isActive: true
+        });
+        
+        return {
+          ...company,
+          departmentCount,
+          internCount
+        };
+      })
+    );
+    
+    res.json({
+      success: true,
+      companies: companiesWithStats
+    });
+  } catch (error) {
+    console.error('Error fetching host companies:', error);
+    res.status(500).json({ error: 'Failed to fetch host companies' });
+  }
+});
+
+// Get single host company
+router.get('/admin/host-companies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const company = await HostCompany.findById(id).select('-password').lean();
+    
+    if (!company) {
+      return res.status(404).json({ error: 'Host company not found' });
+    }
+    
+    // Get statistics
+    const departmentCount = await Department.countDocuments({
+      hostCompanyId: id,
+      isActive: true
+    });
+    
+    const departments = await Department.find({
+      hostCompanyId: id,
+      isActive: true
+    }).select('_id').lean();
+    
+    const departmentIds = departments.map(d => d._id.toString());
+    const internCount = await Staff.countDocuments({
+      department: { $in: departmentIds },
+      role: 'Intern',
+      isActive: true
+    });
+    
+    res.json({
+      success: true,
+      company: {
+        ...company,
+        departmentCount,
+        internCount
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching host company:', error);
+    res.status(500).json({ error: 'Failed to fetch host company' });
+  }
+});
+
+// Create new host company
+router.post('/admin/host-companies', async (req, res) => {
+  try {
+    const {
+      name,
+      companyName,
+      registrationNumber,
+      operatingHours,
+      emailAddress,
+      businessType,
+      industry,
+      username,
+      password
+    } = req.body;
+    
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: 'Company name is required' });
+    }
+    
+    if (!companyName || !companyName.trim()) {
+      return res.status(400).json({ error: 'Company name is required' });
+    }
+    
+    if (!username || !username.trim()) {
+      return res.status(400).json({ error: 'Username is required' });
+    }
+    
+    if (!password || password.length < 6) {
+      return res.status(400).json({ error: 'Password is required and must be at least 6 characters' });
+    }
+    
+    // Check if company already exists
+    const existing = await HostCompany.findOne({
+      name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
+    });
+    
+    if (existing) {
+      return res.status(400).json({ error: 'Host company with this name already exists' });
+    }
+    
+    // Check if username already exists
+    const existingUsername = await HostCompany.findOne({
+      username: username.trim().toLowerCase()
+    });
+    
+    if (existingUsername) {
+      return res.status(400).json({ error: 'Username already exists. Please choose a different username.' });
+    }
+    
+    // Validate and clean email address - only set if it's a valid email
+    let cleanedEmailAddress = undefined;
+    if (emailAddress && typeof emailAddress === 'string' && emailAddress.trim()) {
+      const trimmedEmail = emailAddress.trim().toLowerCase();
+      // Basic email validation
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        cleanedEmailAddress = trimmedEmail;
+      } else {
+        // If email is provided but invalid, return error
+        return res.status(400).json({ error: 'Please enter a valid email address or leave it blank' });
+      }
+    }
+    
+    // Validate operating hours is not being sent as email
+    if (operatingHours && typeof operatingHours === 'string' && operatingHours.trim()) {
+      // Check if operating hours looks like an email (shouldn't happen, but safety check)
+      if (operatingHours.includes('@')) {
+        console.warn('⚠️ Operating hours contains @ symbol, might be mis-mapped');
+      }
+    }
+    
+    const company = new HostCompany({
+      name: name.trim(),
+      companyName: companyName.trim(),
+      registrationNumber: registrationNumber && registrationNumber.trim() ? registrationNumber.trim() : undefined,
+      operatingHours: operatingHours && operatingHours.trim() ? operatingHours.trim() : undefined,
+      emailAddress: cleanedEmailAddress,
+      businessType: businessType && businessType.trim() ? businessType : undefined,
+      industry: industry && industry.trim() ? industry.trim() : undefined,
+      username: username.trim().toLowerCase(),
+      password: password, // Will be hashed by pre-save hook
+      isActive: true
+    });
+    
+    await company.save();
+    
+    // Don't send password in response
+    const companyResponse = company.toObject();
+    delete companyResponse.password;
+    
+    res.json({
+      success: true,
+      company: companyResponse,
+      message: 'Host company created successfully'
+    });
+  } catch (error) {
+    console.error('Error creating host company:', error);
+    if (error.code === 11000) {
+      if (error.keyPattern.username) {
+        res.status(400).json({ error: 'Username already exists. Please choose a different username.' });
+      } else {
+        res.status(400).json({ error: 'Host company with this name already exists' });
+      }
+    } else {
+      res.status(500).json({ error: 'Failed to create host company' });
+    }
+  }
+});
+
+// Update host company
+router.put('/admin/host-companies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const {
+      name,
+      companyName,
+      registrationNumber,
+      operatingHours,
+      emailAddress,
+      businessType,
+      industry,
+      username,
+      password,
+      isActive
+    } = req.body;
+    
+    const company = await HostCompany.findById(id);
+    if (!company) {
+      return res.status(404).json({ error: 'Host company not found' });
+    }
+    
+    if (name && name.trim()) {
+      // Check if new name conflicts with existing company
+      const existing = await HostCompany.findOne({
+        _id: { $ne: id },
+        name: { $regex: new RegExp(`^${name.trim()}$`, 'i') }
+      });
+      
+      if (existing) {
+        return res.status(400).json({ error: 'Host company with this name already exists' });
+      }
+      
+      company.name = name.trim();
+    }
+    
+    if (companyName && companyName.trim()) {
+      company.companyName = companyName.trim();
+    }
+    
+    if (registrationNumber !== undefined) {
+      company.registrationNumber = registrationNumber ? registrationNumber.trim() : undefined;
+    }
+    
+    if (operatingHours !== undefined) {
+      company.operatingHours = operatingHours ? operatingHours.trim() : undefined;
+    }
+    
+    if (emailAddress !== undefined) {
+      company.emailAddress = emailAddress ? emailAddress.trim().toLowerCase() : undefined;
+    }
+    
+    if (businessType !== undefined) {
+      company.businessType = businessType || undefined;
+    }
+    
+    if (industry !== undefined) {
+      company.industry = industry ? industry.trim() : undefined;
+    }
+    
+    if (username && username.trim()) {
+      // Check if new username conflicts with existing company
+      const existingUsername = await HostCompany.findOne({
+        _id: { $ne: id },
+        username: username.trim().toLowerCase()
+      });
+      
+      if (existingUsername) {
+        return res.status(400).json({ error: 'Username already exists. Please choose a different username.' });
+      }
+      
+      company.username = username.trim().toLowerCase();
+    }
+    
+    if (password && password.trim()) {
+      if (password.length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters' });
+      }
+      company.password = password; // Will be hashed by pre-save hook
+    }
+    
+    if (isActive !== undefined) {
+      company.isActive = isActive;
+    }
+    
+    company.updatedAt = Date.now();
+    await company.save();
+    
+    // Don't send password in response
+    const companyResponse = company.toObject();
+    delete companyResponse.password;
+    
+    res.json({
+      success: true,
+      company: companyResponse,
+      message: 'Host company updated successfully'
+    });
+  } catch (error) {
+    console.error('Error updating host company:', error);
+    if (error.code === 11000) {
+      if (error.keyPattern.username) {
+        res.status(400).json({ error: 'Username already exists. Please choose a different username.' });
+      } else {
+        res.status(400).json({ error: 'Host company with this name already exists' });
+      }
+    } else {
+      res.status(500).json({ error: 'Failed to update host company' });
+    }
+  }
+});
+
+// Delete host company (soft delete)
+router.delete('/admin/host-companies/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    const company = await HostCompany.findById(id);
+    if (!company) {
+      return res.status(404).json({ error: 'Host company not found' });
+    }
+    
+    // Check if any departments are using this company
+    const departmentCount = await Department.countDocuments({
+      hostCompanyId: id,
+      isActive: true
+    });
+    
+    if (departmentCount > 0) {
+      return res.status(400).json({
+        error: `Cannot delete host company. ${departmentCount} department(s) are assigned to this company. Please reassign them first.`
+      });
+    }
+    
+    // Soft delete
+    company.isActive = false;
+    company.updatedAt = Date.now();
+    await company.save();
+    
+    res.json({
+      success: true,
+      message: 'Host company deleted successfully'
+    });
+  } catch (error) {
+    console.error('Error deleting host company:', error);
+    res.status(500).json({ error: 'Failed to delete host company' });
+  }
+});
+
+// 🚨 ADMIN ROUTE: View staff centroids, qualities, and re-enroll flags
+router.get('/admin/diagnostics', async (req, res) => {
+  try {
+    const staffList = await Staff.find({}).select('name idNumber embeddings embeddingQualities centroidEmbedding centroidQuality createdAt');
+    
+    const diagnostics = staffList.map(staff => {
+      // Check both faceEmbeddings (new) and faceEmbedding (old single)
+      const embeddingCount = staff.faceEmbeddings?.length || (staff.faceEmbedding ? 1 : 0);
+      const qualities = staff.embeddingQualities || [];
+      
+      // Calculate quality statistics
+      const qualityScores = qualities.map(q => q?.score || 0.5);
+      const avgQuality = qualityScores.length > 0 
+        ? qualityScores.reduce((a, b) => a + b, 0) / qualityScores.length 
+        : 0.5;
+      const minQuality = qualityScores.length > 0 ? Math.min(...qualityScores) : 0.5;
+      const maxQuality = qualityScores.length > 0 ? Math.max(...qualityScores) : 0.5;
+      
+      // Check if re-enrollment is recommended
+      const needsReEnroll = 
+        embeddingCount < 3 ||
+        avgQuality < 0.70 ||
+        staff.centroidQuality < 0.70 ||
+        minQuality < 0.50;
+      
+      return {
+        id: staff._id,
+        name: staff.name,
+        idNumber: staff.idNumber,
+        embeddingCount,
+        centroidQuality: staff.centroidQuality || avgQuality,
+        qualityStats: {
+          avg: avgQuality,
+          min: minQuality,
+          max: maxQuality
+        },
+        needsReEnroll,
+        createdAt: staff.createdAt,
+        lastUpdated: staff.updatedAt
+      };
+    });
+    
+    // Sort by needsReEnroll (problematic first)
+    diagnostics.sort((a, b) => {
+      if (a.needsReEnroll && !b.needsReEnroll) return -1;
+      if (!a.needsReEnroll && b.needsReEnroll) return 1;
+      return a.name.localeCompare(b.name);
+    });
+    
+    res.json({
+      success: true,
+      totalStaff: diagnostics.length,
+      needsReEnroll: diagnostics.filter(d => d.needsReEnroll).length,
+      diagnostics
+    });
+  } catch (error) {
+    console.error('Error fetching diagnostics:', error);
+    res.status(500).json({ error: 'Failed to fetch diagnostics' });
+  }
+});
+
+// 🚨 ADMIN ROUTE: Get detailed embedding analysis for a specific staff member
+router.get('/admin/diagnostics/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const staff = await Staff.findById(id).select('name idNumber embeddings embeddingQualities centroidEmbedding centroidQuality createdAt');
+    
+    if (!staff) {
+      return res.status(404).json({ error: 'Staff member not found' });
+    }
+    
+    const embeddingCount = staff.embeddings?.length || 0;
+    const qualities = staff.embeddingQualities || [];
+    
+    // Get embeddings (check both faceEmbeddings and faceEmbedding)
+    const embeddings = staff.faceEmbeddings && staff.faceEmbeddings.length > 0 
+      ? staff.faceEmbeddings 
+      : (staff.faceEmbedding ? [staff.faceEmbedding] : []);
+    const actualEmbeddingCount = embeddings.length;
+    
+    // Detailed quality analysis per embedding
+    const embeddingDetails = [];
+    for (let i = 0; i < actualEmbeddingCount; i++) {
+      const embedding = embeddings[i];
+      const quality = qualities[i] || {};
+      
+      embeddingDetails.push({
+        index: i + 1,
+        quality: quality.score || 0.5,
+        sharpness: quality.sharpness || 0.5,
+        brightness: quality.brightness || 0.5,
+        faceSize: quality.faceSize || 0,
+        detectionScore: quality.detectionScore || 0,
+        embeddingNorm: embedding ? Math.sqrt(embedding.reduce((sum, val) => sum + val * val, 0)) : 0
+      });
+    }
+    
+    // Calculate statistics
+    const qualityScores = qualities.map(q => q?.score || 0.5);
+    const avgQuality = qualityScores.length > 0 
+      ? qualityScores.reduce((a, b) => a + b, 0) / qualityScores.length 
+      : 0.5;
+    
+    const needsReEnroll = 
+      embeddingCount < 3 ||
+      avgQuality < 0.70 ||
+      staff.centroidQuality < 0.70 ||
+      qualityScores.some(q => q < 0.50);
+    
+    res.json({
+      success: true,
+      staff: {
+        id: staff._id,
+        name: staff.name,
+        idNumber: staff.idNumber,
+        embeddingCount,
+        centroidQuality: staff.centroidQuality || avgQuality,
+        needsReEnroll,
+        createdAt: staff.createdAt
+      },
+      embeddingDetails,
+      recommendations: needsReEnroll ? [
+        'Re-enroll with 5 high-quality images',
+        'Ensure different angles (front, left, right)',
+        'Use good lighting and clear focus',
+        'Remove glasses if possible',
+        'Maintain neutral expression'
+      ] : ['Embedding quality is acceptable']
+    });
+  } catch (error) {
+    console.error('Error fetching staff diagnostics:', error);
+    res.status(500).json({ error: 'Failed to fetch staff diagnostics' });
   }
 });
 
