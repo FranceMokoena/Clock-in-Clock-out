@@ -39,6 +39,8 @@ const { loadImage } = require('canvas');
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const http = require('http');
 
 let detectionModel = null;
 let recognitionModel = null;
@@ -211,6 +213,163 @@ const CONFIG = {
 };
 
 /**
+ * Runtime model download helper - downloads models if missing
+ */
+async function downloadModelFile(url, filepath) {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    const filename = path.basename(filepath);
+    
+    console.log(`📥 Downloading: ${filename}`);
+    
+    const file = fs.createWriteStream(filepath);
+    
+    protocol
+      .get(url, (response) => {
+        // Handle redirects
+        if (response.statusCode === 301 || response.statusCode === 302 || 
+            response.statusCode === 307 || response.statusCode === 308) {
+          file.close();
+          fs.unlink(filepath, () => {});
+          return resolve(downloadModelFile(response.headers.location, filepath));
+        }
+
+        if (response.statusCode !== 200) {
+          file.close();
+          fs.unlink(filepath, () => {});
+          return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+        }
+
+        response.pipe(file);
+
+        file.on('finish', () => {
+          file.close();
+          const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
+          console.log(`✅ Downloaded: ${filename} (${sizeMB} MB)`);
+          resolve();
+        });
+      })
+      .on('error', (err) => {
+        file.close();
+        fs.unlink(filepath, () => {});
+        reject(err);
+      });
+  });
+}
+
+/**
+ * Attempt to download missing models at runtime
+ */
+async function downloadMissingModels(modelsPath) {
+  // Ensure models directory exists
+  if (!fs.existsSync(modelsPath)) {
+    fs.mkdirSync(modelsPath, { recursive: true });
+    console.log(`📁 Created models directory: ${modelsPath}`);
+  }
+
+  const requiredModels = [
+    {
+      filename: 'scrfd_10g_gnkps_fp32.onnx',
+      sources: [
+        'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
+        'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_10g_gnkps_fp32.onnx',
+        'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
+      ],
+      required: true
+    },
+    {
+      filename: 'scrfd_500m_bnkps.onnx',
+      sources: [
+        'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
+        'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
+        'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
+      ],
+      required: false
+    },
+    {
+      filename: 'w600k_r50.onnx',
+      sources: [
+        'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/w600k_r50.onnx',
+        'https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_r50.onnx',
+        'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/w600k_r50.onnx',
+      ],
+      required: true
+    }
+  ];
+
+  let downloadedCount = 0;
+  const filepath = path.join(modelsPath, 'scrfd_10g_gnkps_fp32.onnx');
+  const filepath500m = path.join(modelsPath, 'scrfd_500m_bnkps.onnx');
+  const recPath = path.join(modelsPath, 'w600k_r50.onnx');
+
+  // Check what's missing
+  const needsDetection = !fs.existsSync(filepath) && !fs.existsSync(filepath500m);
+  const needsRecognition = !fs.existsSync(recPath);
+
+  if (!needsDetection && !needsRecognition) {
+    return true; // All required models exist
+  }
+
+  console.log('🔄 Attempting to download missing models at runtime...');
+
+  // Download detection model (prefer 10G, fallback to 500M)
+  if (needsDetection) {
+    let downloaded = false;
+    for (const source of requiredModels[0].sources) {
+      try {
+        await downloadModelFile(source, filepath);
+        downloaded = true;
+        downloadedCount++;
+        break;
+      } catch (error) {
+        console.warn(`   ⚠️  Failed from source: ${error.message}`);
+      }
+    }
+    
+    // If 10G failed, try 500M
+    if (!downloaded) {
+      for (const source of requiredModels[1].sources) {
+        try {
+          await downloadModelFile(source, filepath500m);
+          downloaded = true;
+          downloadedCount++;
+          break;
+        } catch (error) {
+          console.warn(`   ⚠️  Failed from source: ${error.message}`);
+        }
+      }
+    }
+  }
+
+  // Download recognition model
+  if (needsRecognition) {
+    let downloaded = false;
+    for (const source of requiredModels[2].sources) {
+      try {
+        await downloadModelFile(source, recPath);
+        downloaded = true;
+        downloadedCount++;
+        break;
+      } catch (error) {
+        console.warn(`   ⚠️  Failed from source: ${error.message}`);
+      }
+    }
+  }
+
+  // Verify required models exist
+  const hasDetection = fs.existsSync(filepath) || fs.existsSync(filepath500m);
+  const hasRecognition = fs.existsSync(recPath);
+
+  if (hasDetection && hasRecognition) {
+    console.log('✅ Runtime model download completed successfully');
+    return true;
+  } else {
+    console.warn('⚠️  Some models failed to download. Required models may still be missing.');
+    return false;
+  }
+}
+
+/**
  * Load ONNX models (SCRFD + ArcFace)
  */
 async function loadModels() {
@@ -227,22 +386,48 @@ async function loadModels() {
     modelsLoadError = null;
 
     try {
+      // Check if models exist, if not, attempt runtime download
+      let detectionModelPath = path.join(modelsPath, 'scrfd_10g_gnkps_fp32.onnx');
+      let hasDetection = fs.existsSync(detectionModelPath);
+      
+      if (!hasDetection) {
+        detectionModelPath = path.join(modelsPath, 'scrfd_500m_bnkps.onnx');
+        hasDetection = fs.existsSync(detectionModelPath);
+      }
+      
+      let recognitionModelPath = path.join(modelsPath, 'w600k_r50.onnx');
+      const altRecognitionPath = path.join(modelsPath, 'glint360k_r50.onnx');
+      let hasRecognition = fs.existsSync(recognitionModelPath) || fs.existsSync(altRecognitionPath);
+
+      // If models are missing, attempt runtime download
+      if (!hasDetection || !hasRecognition) {
+        console.log('⚠️  Models not found, attempting runtime download...');
+        await downloadMissingModels(modelsPath);
+        
+        // Re-check after download attempt
+        detectionModelPath = path.join(modelsPath, 'scrfd_10g_gnkps_fp32.onnx');
+        hasDetection = fs.existsSync(detectionModelPath);
+        if (!hasDetection) {
+          detectionModelPath = path.join(modelsPath, 'scrfd_500m_bnkps.onnx');
+          hasDetection = fs.existsSync(detectionModelPath);
+        }
+        
+        recognitionModelPath = path.join(modelsPath, 'w600k_r50.onnx');
+        hasRecognition = fs.existsSync(recognitionModelPath) || fs.existsSync(altRecognitionPath);
+      }
+
       // Load SCRFD detection model
       // Try 10G model first (better accuracy), fallback to 500M
-      let detectionModelPath = path.join(modelsPath, 'scrfd_10g_gnkps_fp32.onnx');
-      if (!fs.existsSync(detectionModelPath)) {
-        // Fallback to 500M model
-        detectionModelPath = path.join(modelsPath, 'scrfd_500m_bnkps.onnx');
-        if (!fs.existsSync(detectionModelPath)) {
-          const errorMsg = `\n❌ Detection model not found.\n\n` +
-            `Expected one of:\n` +
-            `  - scrfd_10g_gnkps_fp32.onnx (preferred)\n` +
-            `  - scrfd_500m_bnkps.onnx (fallback)\n\n` +
-            `💡 Solutions:\n` +
-            `   1. Place detection model in: ${modelsPath}\n` +
-            `   2. Run: npm run download-models\n`;
-          throw new Error(errorMsg);
-        }
+      if (!hasDetection) {
+        const errorMsg = `\n❌ Detection model not found.\n\n` +
+          `Expected one of:\n` +
+          `  - scrfd_10g_gnkps_fp32.onnx (preferred)\n` +
+          `  - scrfd_500m_bnkps.onnx (fallback)\n\n` +
+          `💡 Solutions:\n` +
+          `   1. Place detection model in: ${modelsPath}\n` +
+          `   2. Run: npm run download-models\n` +
+          `   3. Runtime download was attempted but failed\n`;
+        throw new Error(errorMsg);
       }
 
       console.log('📦 Loading SCRFD face detection model...');
@@ -255,31 +440,23 @@ async function loadModels() {
       console.log('✅ SCRFD detection model loaded');
 
       // Load ArcFace recognition model
-      const recognitionModelPath = path.join(modelsPath, 'w600k_r50.onnx');
-      if (!fs.existsSync(recognitionModelPath)) {
-        // Try alternative model
-        const altPath = path.join(modelsPath, 'glint360k_r50.onnx');
-        if (fs.existsSync(altPath)) {
-          console.log('📦 Loading ArcFace recognition model (glint360k)...');
-          recognitionModel = await ort.InferenceSession.create(altPath, {
-            executionProviders: ['cpu'],
-          });
-          console.log('   Recognition model inputs:', recognitionModel.inputNames);
-          console.log('   Recognition model outputs:', recognitionModel.outputNames);
-        } else {
-          const errorMsg = `\n❌ Recognition model not found.\n\n` +
-            `Expected one of:\n` +
-            `  - ${recognitionModelPath}\n` +
-            `  - ${altPath}\n\n` +
-            `💡 Solutions:\n` +
-            `   1. Run: npm run download-models\n` +
-            `   2. If download fails, see ALTERNATIVE_MODEL_SOURCES.md\n` +
-            `   3. Download models manually from:\n` +
-            `      - Hugging Face: https://huggingface.co/models?search=arcface+onnx\n` +
-            `      - Place in: ${modelsPath}\n`;
-          throw new Error(errorMsg);
-        }
-      } else {
+      if (!hasRecognition) {
+        const errorMsg = `\n❌ Recognition model not found.\n\n` +
+          `Expected one of:\n` +
+          `  - ${recognitionModelPath}\n` +
+          `  - ${altRecognitionPath}\n\n` +
+          `💡 Solutions:\n` +
+          `   1. Run: npm run download-models\n` +
+          `   2. If download fails, see ALTERNATIVE_MODEL_SOURCES.md\n` +
+          `   3. Download models manually from:\n` +
+          `      - Hugging Face: https://huggingface.co/models?search=arcface+onnx\n` +
+          `      - Place in: ${modelsPath}\n` +
+          `   4. Runtime download was attempted but failed\n`;
+        throw new Error(errorMsg);
+      }
+
+      // Try w600k first, fallback to glint360k
+      if (fs.existsSync(recognitionModelPath)) {
         console.log('📦 Loading ArcFace recognition model (w600k)...');
         recognitionModel = await ort.InferenceSession.create(recognitionModelPath, {
           executionProviders: ['cpu'],
@@ -288,6 +465,13 @@ async function loadModels() {
         console.log('   📋 Input names:', JSON.stringify(recognitionModel.inputNames));
         console.log('   📋 Output names:', JSON.stringify(recognitionModel.outputNames));
         console.log('   📋 Input metadata:', JSON.stringify(recognitionModel.inputMetadata));
+      } else if (fs.existsSync(altRecognitionPath)) {
+        console.log('📦 Loading ArcFace recognition model (glint360k)...');
+        recognitionModel = await ort.InferenceSession.create(altRecognitionPath, {
+          executionProviders: ['cpu'],
+        });
+        console.log('   Recognition model inputs:', recognitionModel.inputNames);
+        console.log('   Recognition model outputs:', recognitionModel.outputNames);
       }
       console.log('✅ ArcFace recognition model loaded');
 
