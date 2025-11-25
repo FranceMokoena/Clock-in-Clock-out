@@ -179,40 +179,28 @@ process.on('unhandledRejection', (err) => {
 });
 
 async function startServer() {
-  console.log('🚀 Preparing face recognition services...');
-  try {
-    await loadModels();
-    console.log('✅ Face recognition models ready');
-  } catch (error) {
-    console.error('⚠️  WARNING: Face recognition models failed to load:', error.message);
-    console.log('📥 Attempting to download models at runtime...');
-    
-    // Try to download models at runtime
-    try {
-      const { downloadModels } = require('./download-onnx-models');
-      const downloadSuccess = await downloadModels();
-      
-      if (downloadSuccess) {
-        console.log('✅ Models downloaded successfully! Retrying model load...');
-        await loadModels();
-        console.log('✅ Face recognition models ready');
-      } else {
-        console.error('⚠️  Model download failed. The server will start, but face recognition features will not work.');
-        console.error('💡 Solutions:');
-        console.error('   1. Ensure models are in: models/onnx/');
-        console.error('   2. Run: npm run download-models');
-        console.error('   3. Check Render logs for download errors');
-      }
-    } catch (downloadError) {
-      console.error('⚠️  Runtime model download failed:', downloadError.message);
-      console.error('⚠️  The server will start, but face recognition features will not work.');
-      console.error('💡 Solutions:');
-      console.error('   1. Ensure models are in: models/onnx/');
-      console.error('   2. Run: npm run download-models');
-      console.error('   3. Or commit models to git (if they exist locally)');
-      console.error('   4. Check Render logs for download errors');
-      // Don't throw - let server start anyway (models will fail gracefully in routes)
-    }
+  // LAZY LOADING: Don't load models at startup to save memory
+  // Models will be loaded on first request (lazy loading)
+  console.log('🚀 Starting server with lazy model loading...');
+  console.log('💡 Face recognition models will load on first use to save memory');
+  
+  // Only verify models exist, don't load them yet
+  const fs = require('fs');
+  const path = require('path');
+  const modelsPath = path.join(__dirname, 'models', 'onnx');
+  const detectionModel = path.join(modelsPath, 'scrfd_10g_gnkps_fp32.onnx');
+  const detectionModelFallback = path.join(modelsPath, 'scrfd_500m_bnkps.onnx');
+  const recognitionModel = path.join(modelsPath, 'w600k_r50.onnx');
+  
+  const hasDetection = fs.existsSync(detectionModel) || fs.existsSync(detectionModelFallback);
+  const hasRecognition = fs.existsSync(recognitionModel);
+  
+  if (!hasDetection || !hasRecognition) {
+    console.warn('⚠️  WARNING: Some models are missing. They will be downloaded on first use.');
+    console.warn('   Missing detection:', !hasDetection);
+    console.warn('   Missing recognition:', !hasRecognition);
+  } else {
+    console.log('✅ Model files found (will load on first request)');
   }
 
   console.log('📦 Warming staff cache...');
@@ -229,7 +217,7 @@ async function startServer() {
     if (process.env.RENDER_EXTERNAL_URL) {
       console.log(`🌐 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
     }
-    console.log(`\n✅ Server ready! Make sure Windows Firewall allows connections on port ${PORT}`);
+    console.log(`\n✅ Server ready! Models will load automatically on first face recognition request.`);
   });
 }
 
