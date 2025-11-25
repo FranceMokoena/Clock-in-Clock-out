@@ -1446,13 +1446,120 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   
   // Get results - SCRFD outputs: box_8, score_8, lmk5pt_8, box_16, score_16, lmk5pt_16, box_32, score_32, lmk5pt_32
   // Use the highest resolution output (box_32, score_32, lmk5pt_32) for best accuracy
-  const boxOutput = results.box_32 || results.box_16 || results.box_8;
-  const scoreOutput = results.score_32 || results.score_16 || results.score_8;
-  const landmarkOutput = results.lmk5pt_32 || results.lmk5pt_16 || results.lmk5pt_8;
+  // Handle both named outputs (box_32, score_32, etc.) and numeric outputs (448, 451, etc.)
+  let boxOutput = results.box_32 || results.box_16 || results.box_8;
+  let scoreOutput = results.score_32 || results.score_16 || results.score_8;
+  let landmarkOutput = results.lmk5pt_32 || results.lmk5pt_16 || results.lmk5pt_8;
+  
+  // If outputs are numeric (e.g., "448", "451", etc.), map them based on SCRFD output order and shapes
+  // SCRFD outputs are ordered by scale: [scale8_box, scale8_score, scale8_landmarks, scale16_box, scale16_score, scale16_landmarks, scale32_box, scale32_score, scale32_landmarks]
+  // Box outputs have shape [batch, num_detections, 4] (4 values per detection)
+  // Score outputs have shape [batch, num_detections] (1 value per detection)
+  // Landmark outputs have shape [batch, num_detections, 10] (5 keypoints × 2 coordinates)
+  if (!boxOutput || !scoreOutput) {
+    const outputKeys = Object.keys(results);
+    const outputNames = detectionModel ? detectionModel.outputNames : [];
+    
+    // Helper function to identify output type by shape
+    const identifyOutputType = (tensor) => {
+      if (!tensor || !tensor.dims) return null;
+      const dims = tensor.dims;
+      // Box: [batch, num_detections, 4] or [num_detections, 4]
+      if (dims.length >= 2 && dims[dims.length - 1] === 4) return 'box';
+      // Landmarks: [batch, num_detections, 10] or [num_detections, 10] (5 keypoints × 2 coordinates)
+      if (dims.length >= 2 && dims[dims.length - 1] === 10) return 'landmarks';
+      // Score: [batch, num_detections] or [num_detections] - single value per detection
+      // Score outputs typically have shape like [1, num_detections] or [num_detections]
+      // and the last dimension is NOT 4 (box) or 10 (landmarks)
+      if (dims.length >= 1) {
+        const lastDim = dims[dims.length - 1];
+        // Score should be a reasonable number of detections (not too large)
+        // and not match box (4) or landmarks (10) dimensions
+        if (lastDim > 0 && lastDim < 100000 && lastDim !== 4 && lastDim !== 10) {
+          return 'score';
+        }
+      }
+      return null;
+    };
+    
+    // If we have numeric outputs, try to identify them by shape first, then fall back to order
+    if (outputNames.length >= 9) {
+      // First, try to identify outputs by shape (most reliable)
+      const identifiedOutputs = { box: null, score: null, landmarks: null };
+      const scale32Indices = [6, 7, 8]; // Scale 32 (highest resolution)
+      const scale16Indices = [3, 4, 5]; // Scale 16
+      const scale8Indices = [0, 1, 2];  // Scale 8
+      
+      // Try scale 32 first (highest resolution)
+      for (const idx of scale32Indices) {
+        if (idx < outputNames.length && results[outputNames[idx]]) {
+          const type = identifyOutputType(results[outputNames[idx]]);
+          if (type && !identifiedOutputs[type]) {
+            identifiedOutputs[type] = outputNames[idx];
+          }
+        }
+      }
+      
+      // If we found box and score, use them
+      if (identifiedOutputs.box && identifiedOutputs.score) {
+        boxOutput = results[identifiedOutputs.box];
+        scoreOutput = results[identifiedOutputs.score];
+        landmarkOutput = identifiedOutputs.landmarks ? results[identifiedOutputs.landmarks] : null;
+        console.log(`   🔧 Mapped numeric outputs by shape (scale 32): box=${identifiedOutputs.box}, score=${identifiedOutputs.score}, landmarks=${identifiedOutputs.landmarks || 'none'}`);
+      } else {
+        // Fall back to order-based mapping for scale 32
+        const scale32BoxKey = outputNames[6];
+        const scale32ScoreKey = outputNames[7];
+        const scale32LandmarkKey = outputNames[8];
+        
+        if (scale32BoxKey && scale32ScoreKey && results[scale32BoxKey] && results[scale32ScoreKey]) {
+          boxOutput = results[scale32BoxKey];
+          scoreOutput = results[scale32ScoreKey];
+          landmarkOutput = results[scale32LandmarkKey] || null;
+          console.log(`   🔧 Mapped numeric outputs by order (scale 32): box=${scale32BoxKey}, score=${scale32ScoreKey}, landmarks=${scale32LandmarkKey || 'none'}`);
+        } else {
+          // Try scale 16
+          const scale16BoxKey = outputNames[3];
+          const scale16ScoreKey = outputNames[4];
+          const scale16LandmarkKey = outputNames[5];
+          
+          if (scale16BoxKey && scale16ScoreKey && results[scale16BoxKey] && results[scale16ScoreKey]) {
+            boxOutput = results[scale16BoxKey];
+            scoreOutput = results[scale16ScoreKey];
+            landmarkOutput = results[scale16LandmarkKey] || null;
+            console.log(`   🔧 Mapped numeric outputs (scale 16): box=${scale16BoxKey}, score=${scale16ScoreKey}, landmarks=${scale16LandmarkKey || 'none'}`);
+          } else {
+            // Try scale 8
+            const scale8BoxKey = outputNames[0];
+            const scale8ScoreKey = outputNames[1];
+            const scale8LandmarkKey = outputNames[2];
+            
+            if (scale8BoxKey && scale8ScoreKey && results[scale8BoxKey] && results[scale8ScoreKey]) {
+              boxOutput = results[scale8BoxKey];
+              scoreOutput = results[scale8ScoreKey];
+              landmarkOutput = results[scale8LandmarkKey] || null;
+              console.log(`   🔧 Mapped numeric outputs (scale 8): box=${scale8BoxKey}, score=${scale8ScoreKey}, landmarks=${scale8LandmarkKey || 'none'}`);
+            }
+          }
+        }
+      }
+    }
+  }
   
   if (!boxOutput || !scoreOutput) {
     console.error('   ❌ Invalid SCRFD output format');
     console.error(`   📋 Available outputs: ${Object.keys(results).join(', ')}`);
+    if (detectionModel && detectionModel.outputNames) {
+      console.error(`   📋 Model output names: ${detectionModel.outputNames.join(', ')}`);
+      // Log output shapes for debugging
+      console.error(`   📊 Output shapes:`);
+      for (let i = 0; i < detectionModel.outputNames.length; i++) {
+        const key = detectionModel.outputNames[i];
+        if (results[key] && results[key].dims) {
+          console.error(`      ${key}: [${results[key].dims.join(', ')}]`);
+        }
+      }
+    }
     throw new Error(`Invalid SCRFD output format. Available: ${Object.keys(results).join(', ')}`);
   }
   
