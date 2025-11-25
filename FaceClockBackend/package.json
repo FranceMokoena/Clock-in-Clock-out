@@ -7,7 +7,7 @@
     "dev": "nodemon server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "download-models": "node download-onnx-models.js",
-    "postinstall": "node download-onnx-models.js || (python3 download-models-python.py 2>/dev/null || python download-models-python.py 2>/dev/null || echo 'Model download failed - server will attempt runtime download')"
+    "postinstall": "echo '🔧 Running postinstall script...' && node download-onnx-models.js || (echo '⚠️ Node.js download failed, trying Python...' && (python3 download-models-python.py 2>&1 || python download-models-python.py 2>&1 || echo '⚠️ Python download also failed - server will attempt runtime download'))"
   },
   "keywords": [],
   "author": "",

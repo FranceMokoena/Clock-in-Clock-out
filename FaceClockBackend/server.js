@@ -185,13 +185,34 @@ async function startServer() {
     console.log('✅ Face recognition models ready');
   } catch (error) {
     console.error('⚠️  WARNING: Face recognition models failed to load:', error.message);
-    console.error('⚠️  The server will start, but face recognition features will not work.');
-    console.error('💡 Solutions:');
-    console.error('   1. Ensure models are in: models/onnx/');
-    console.error('   2. Run: npm run download-models');
-    console.error('   3. Or commit models to git (if they exist locally)');
-    console.error('   4. Check Render logs for download errors');
-    // Don't throw - let server start anyway (models will fail gracefully in routes)
+    console.log('📥 Attempting to download models at runtime...');
+    
+    // Try to download models at runtime
+    try {
+      const { downloadModels } = require('./download-onnx-models');
+      const downloadSuccess = await downloadModels();
+      
+      if (downloadSuccess) {
+        console.log('✅ Models downloaded successfully! Retrying model load...');
+        await loadModels();
+        console.log('✅ Face recognition models ready');
+      } else {
+        console.error('⚠️  Model download failed. The server will start, but face recognition features will not work.');
+        console.error('💡 Solutions:');
+        console.error('   1. Ensure models are in: models/onnx/');
+        console.error('   2. Run: npm run download-models');
+        console.error('   3. Check Render logs for download errors');
+      }
+    } catch (downloadError) {
+      console.error('⚠️  Runtime model download failed:', downloadError.message);
+      console.error('⚠️  The server will start, but face recognition features will not work.');
+      console.error('💡 Solutions:');
+      console.error('   1. Ensure models are in: models/onnx/');
+      console.error('   2. Run: npm run download-models');
+      console.error('   3. Or commit models to git (if they exist locally)');
+      console.error('   4. Check Render logs for download errors');
+      // Don't throw - let server start anyway (models will fail gracefully in routes)
+    }
   }
 
   console.log('📦 Warming staff cache...');

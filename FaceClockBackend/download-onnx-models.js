@@ -77,7 +77,7 @@ const modelFiles = [
   }
 ];
 
-function downloadFile(url, filepath) {
+function downloadFile(url, filepath, timeout = 300000) { // 5 minute timeout
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     const filename = path.basename(filepath);
@@ -88,48 +88,68 @@ function downloadFile(url, filepath) {
     const file = fs.createWriteStream(filepath);
     let downloadedBytes = 0;
     let totalBytes = 0;
+    let timeoutId;
 
-    protocol
-      .get(url, (response) => {
-        // Handle redirects
-        if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
-          const redirectUrl = response.headers.location;
-          file.close();
-          fs.unlink(filepath, () => {});
-          console.log(`   Redirecting to: ${redirectUrl}`);
-          return resolve(downloadFile(redirectUrl, filepath));
-        }
-
-        if (response.statusCode !== 200) {
-          file.close();
-          fs.unlink(filepath, () => {});
-          return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
-        }
-
-        totalBytes = parseInt(response.headers['content-length'] || '0', 10);
-        
-        response.on('data', (chunk) => {
-          downloadedBytes += chunk.length;
-          if (totalBytes > 0) {
-            const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
-            process.stdout.write(`\r   Progress: ${percent}% (${(downloadedBytes / 1024 / 1024).toFixed(2)} MB)`);
-          }
-        });
-
-        response.pipe(file);
-
-        file.on('finish', () => {
-          file.close();
-          const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
-          console.log(`\n✅ Downloaded: ${filename} (${sizeMB} MB)`);
-          resolve();
-        });
-      })
-      .on('error', (err) => {
+    const req = protocol.get(url, (response) => {
+      // Handle redirects
+      if (response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307 || response.statusCode === 308) {
         file.close();
         fs.unlink(filepath, () => {});
-        reject(err);
+        const redirectUrl = response.headers.location;
+        console.log(`   Redirecting to: ${redirectUrl}`);
+        clearTimeout(timeoutId);
+        return resolve(downloadFile(redirectUrl, filepath, timeout));
+      }
+
+      if (response.statusCode !== 200) {
+        file.close();
+        fs.unlink(filepath, () => {});
+        clearTimeout(timeoutId);
+        return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+      }
+
+      totalBytes = parseInt(response.headers['content-length'] || '0', 10);
+      
+      // Set timeout for download
+      timeoutId = setTimeout(() => {
+        req.destroy();
+        file.close();
+        fs.unlink(filepath, () => {});
+        reject(new Error(`Download timeout after ${timeout / 1000} seconds`));
+      }, timeout);
+      
+      response.on('data', (chunk) => {
+        downloadedBytes += chunk.length;
+        if (totalBytes > 0) {
+          const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
+          process.stdout.write(`\r   Progress: ${percent}% (${(downloadedBytes / 1024 / 1024).toFixed(2)} MB)`);
+        }
       });
+
+      response.pipe(file);
+
+      file.on('finish', () => {
+        clearTimeout(timeoutId);
+        file.close();
+        const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
+        console.log(`\n✅ Downloaded: ${filename} (${sizeMB} MB)`);
+        resolve();
+      });
+    });
+
+    req.on('error', (err) => {
+      clearTimeout(timeoutId);
+      file.close();
+      fs.unlink(filepath, () => {});
+      reject(err);
+    });
+
+    req.setTimeout(timeout, () => {
+      req.destroy();
+      file.close();
+      fs.unlink(filepath, () => {});
+      reject(new Error(`Request timeout after ${timeout / 1000} seconds`));
+    });
   });
 }
 
@@ -144,7 +164,9 @@ async function downloadModels() {
     }
 
     console.log('📦 Starting ONNX model download...');
-    console.log(`📁 Target directory: ${modelsDir}\n`);
+    console.log(`📁 Target directory: ${modelsDir}`);
+    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`📅 Time: ${new Date().toISOString()}\n`);
 
     let successCount = 0;
     let failCount = 0;
@@ -166,20 +188,25 @@ async function downloadModels() {
         }
       }
 
-      // Try each source
-      let downloaded = false;
-      for (let i = 0; i < model.sources.length; i++) {
-        const url = model.sources[i];
-        try {
-          await downloadFile(url, filepath);
-          successCount++;
-          downloaded = true;
-          break; // Success, move to next model
-        } catch (error) {
-          console.warn(`\n   ⚠️  Failed from source ${i + 1}: ${error.message}`);
-          // Try next source
-        }
-      }
+            // Try each source
+            let downloaded = false;
+            for (let i = 0; i < model.sources.length; i++) {
+              const url = model.sources[i];
+              try {
+                console.log(`\n   🔄 Attempting source ${i + 1}/${model.sources.length}...`);
+                await downloadFile(url, filepath);
+                successCount++;
+                downloaded = true;
+                console.log(`   ✅ Successfully downloaded from source ${i + 1}`);
+                break; // Success, move to next model
+              } catch (error) {
+                console.warn(`\n   ⚠️  Failed from source ${i + 1}: ${error.message}`);
+                if (i === model.sources.length - 1) {
+                  console.error(`   ❌ All sources failed for ${model.filename}`);
+                }
+                // Try next source
+              }
+            }
 
       if (!downloaded) {
         console.error(`\n❌ Error downloading ${model.filename} from all sources`);
