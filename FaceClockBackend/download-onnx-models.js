@@ -12,69 +12,21 @@ const https = require('https');
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
+const { execSync } = require('child_process');
 
 const modelsDir = path.join(__dirname, 'models', 'onnx');
+const tempDir = path.join(__dirname, 'temp_models');
 
-// ONNX models required for face recognition
-// Note: These models need to be converted from PyTorch/MXNet to ONNX format
-// For now, we'll use alternative pre-converted models or provide conversion instructions
-const modelFiles = [
-  {
-    filename: 'scrfd_10g_gnkps_fp32.onnx',
-    description: 'SCRFD face detection model (10G - Preferred)',
-    sources: [
-      // Use raw GitHub content (more reliable than releases)
-      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
-      // GitHub releases
-      'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_10g_gnkps_fp32.onnx',
-      // jsdelivr CDN
-      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
-    ],
-    note: 'Preferred detection model - better accuracy',
-    required: true
-  },
-  {
-    filename: 'scrfd_500m_bnkps.onnx',
-    description: 'SCRFD face detection model (500M - Fallback)',
-    sources: [
-      // Use raw GitHub content
-      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
-      // GitHub releases
-      'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
-      // jsdelivr CDN
-      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
-    ],
-    note: 'Fallback detection model - smaller size',
-    required: false
-  },
-  {
-    filename: 'w600k_r50.onnx',
-    description: 'ArcFace recognition model (W600K - Primary)',
-    sources: [
-      // Use raw GitHub content (more reliable)
-      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/w600k_r50.onnx',
-      // GitHub releases
-      'https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_r50.onnx',
-      // jsdelivr CDN
-      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/w600k_r50.onnx',
-    ],
-    note: 'Primary recognition model',
-    required: true
-  },
-  {
-    filename: 'glint360k_r50.onnx',
-    description: 'ArcFace recognition model (Glint360K - Alternative)',
-    sources: [
-      // Use raw GitHub content
-      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/glint360k_r50.onnx',
-      // GitHub releases
-      'https://github.com/deepinsight/insightface/releases/download/v0.7/glint360k_r50.onnx',
-      // jsdelivr CDN
-      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/glint360k_r50.onnx',
-    ],
-    note: 'Alternative recognition model - more accurate, optional',
-    required: false
-  }
+// CORRECT SOURCE: Models are in buffalo_l.zip from GitHub releases
+// URL: https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
+const BUFFALO_L_ZIP_URL = 'https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip';
+
+// Required ONNX files that should be extracted from the ZIP
+const requiredModelFiles = [
+  { filename: 'scrfd_10g_gnkps_fp32.onnx', required: true },
+  { filename: 'scrfd_500m_bnkps.onnx', required: false },
+  { filename: 'w600k_r50.onnx', required: true },
+  { filename: 'glint360k_r50.onnx', required: false }
 ];
 
 function downloadFile(url, filepath, timeout = 300000) { // 5 minute timeout
@@ -153,6 +105,36 @@ function downloadFile(url, filepath, timeout = 300000) { // 5 minute timeout
   });
 }
 
+function extractZip(zipPath, extractTo) {
+  // Try to use unzip command (available on Linux/Mac)
+  // Fallback to Python zipfile if unzip not available
+  try {
+    console.log('📦 Extracting ZIP file...');
+    execSync(`unzip -q -o "${zipPath}" -d "${extractTo}"`, { stdio: 'inherit' });
+    return true;
+  } catch (error) {
+    console.log('⚠️  unzip command failed, trying Python...');
+    try {
+      // Use Python to extract ZIP
+      const pythonScript = `
+import zipfile
+import sys
+zipfile.ZipFile('${zipPath}').extractall('${extractTo}')
+`;
+      execSync(`python3 -c "${pythonScript}"`, { stdio: 'inherit' });
+      return true;
+    } catch (pyError) {
+      try {
+        execSync(`python -c "${pythonScript}"`, { stdio: 'inherit' });
+        return true;
+      } catch (py2Error) {
+        console.error('❌ Failed to extract ZIP:', py2Error.message);
+        return false;
+      }
+    }
+  }
+}
+
 async function downloadModels() {
   try {
     // Create models directory
@@ -168,105 +150,121 @@ async function downloadModels() {
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`📅 Time: ${new Date().toISOString()}\n`);
 
-    let successCount = 0;
-    let failCount = 0;
-    const failedFiles = [];
-
-    for (const model of modelFiles) {
+    // Check if required models already exist
+    const requiredModels = requiredModelFiles.filter(m => m.required);
+    let allRequiredExist = true;
+    for (const model of requiredModels) {
       const filepath = path.join(modelsDir, model.filename);
-
-      // Check if file already exists
-      if (fs.existsSync(filepath)) {
-        const stats = fs.statSync(filepath);
-        if (stats.size > 1024) { // At least 1KB
-          console.log(`⏭️  Skipping (already exists): ${model.filename} (${(stats.size / 1024 / 1024).toFixed(2)} MB)`);
-          successCount++;
-          continue;
-        } else {
-          console.log(`⚠️  File exists but is too small, re-downloading: ${model.filename}`);
-          fs.unlinkSync(filepath);
-        }
-      }
-
-            // Try each source
-            let downloaded = false;
-            for (let i = 0; i < model.sources.length; i++) {
-              const url = model.sources[i];
-              try {
-                console.log(`\n   🔄 Attempting source ${i + 1}/${model.sources.length}...`);
-                await downloadFile(url, filepath);
-                successCount++;
-                downloaded = true;
-                console.log(`   ✅ Successfully downloaded from source ${i + 1}`);
-                break; // Success, move to next model
-              } catch (error) {
-                console.warn(`\n   ⚠️  Failed from source ${i + 1}: ${error.message}`);
-                if (i === model.sources.length - 1) {
-                  console.error(`   ❌ All sources failed for ${model.filename}`);
-                }
-                // Try next source
-              }
-            }
-
-      if (!downloaded) {
-        console.error(`\n❌ Error downloading ${model.filename} from all sources`);
-        failCount++;
-        failedFiles.push(model.filename);
+      if (!fs.existsSync(filepath) || fs.statSync(filepath).size < 1024) {
+        allRequiredExist = false;
+        break;
       }
     }
 
-    // Check required vs optional models
-    const requiredModels = modelFiles.filter(m => m.required !== false);
+    if (allRequiredExist) {
+      console.log('✅ All required models already exist, skipping download');
+      return true;
+    }
+
+    // Create temp directory for ZIP extraction
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
+    }
+
+    const zipPath = path.join(tempDir, 'buffalo_l.zip');
+    const extractDir = path.join(tempDir, 'buffalo_l');
+
+    // Download the ZIP file
+    console.log('📥 Downloading buffalo_l.zip from GitHub releases...');
+    console.log(`   URL: ${BUFFALO_L_ZIP_URL}`);
+    try {
+      await downloadFile(BUFFALO_L_ZIP_URL, zipPath, 600000); // 10 minute timeout for large file
+    } catch (error) {
+      console.error(`❌ Failed to download ZIP: ${error.message}`);
+      // Cleanup
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      return false;
+    }
+
+    // Extract ZIP file
+    if (!extractZip(zipPath, tempDir)) {
+      console.error('❌ Failed to extract ZIP file');
+      // Cleanup
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      return false;
+    }
+
+    // Copy ONNX files from extracted directory to models directory
+    console.log('\n📋 Copying ONNX files...');
+    let copiedCount = 0;
+    let failedFiles = [];
+
+    for (const model of requiredModelFiles) {
+      // Look for the file in the extracted directory (could be in root or subdirectory)
+      const possiblePaths = [
+        path.join(extractDir, model.filename),
+        path.join(extractDir, 'buffalo_l', model.filename),
+        path.join(extractDir, 'models', model.filename),
+      ];
+
+      let found = false;
+      for (const srcPath of possiblePaths) {
+        if (fs.existsSync(srcPath)) {
+          const dstPath = path.join(modelsDir, model.filename);
+          fs.copyFileSync(srcPath, dstPath);
+          const sizeMB = (fs.statSync(dstPath).size / 1024 / 1024).toFixed(2);
+          console.log(`   ✅ Copied: ${model.filename} (${sizeMB} MB)`);
+          copiedCount++;
+          found = true;
+          break;
+        }
+      }
+
+      if (!found) {
+        console.warn(`   ⚠️  Not found in ZIP: ${model.filename}`);
+        if (model.required) {
+          failedFiles.push(model.filename);
+        }
+      }
+    }
+
+    // Cleanup temp files
+    console.log('\n🧹 Cleaning up temporary files...');
+    try {
+      if (fs.existsSync(extractDir)) {
+        fs.rmSync(extractDir, { recursive: true, force: true });
+      }
+      if (fs.existsSync(zipPath)) {
+        fs.unlinkSync(zipPath);
+      }
+      if (fs.existsSync(tempDir)) {
+        fs.rmdirSync(tempDir);
+      }
+    } catch (cleanupError) {
+      console.warn(`⚠️  Cleanup warning: ${cleanupError.message}`);
+    }
+
+    // Verify required models
     const requiredSuccess = requiredModels.filter(m => 
       fs.existsSync(path.join(modelsDir, m.filename)) && 
       fs.statSync(path.join(modelsDir, m.filename)).size > 1024
     ).length;
 
-    console.log(`\n📊 Download summary: ${successCount} succeeded, ${failCount} failed`);
-    console.log(`📋 Required models: ${requiredSuccess}/${requiredModels.length} downloaded`);
+    console.log(`\n📊 Download summary: ${copiedCount} files copied`);
+    console.log(`📋 Required models: ${requiredSuccess}/${requiredModels.length} available`);
 
     if (requiredSuccess === requiredModels.length) {
       console.log('✅ All REQUIRED ONNX models downloaded successfully!');
       console.log(`📁 Models saved to: ${modelsDir}`);
-      
-      if (successCount < modelFiles.length) {
-        console.log(`⚠️  Note: ${modelFiles.length - successCount} optional model(s) failed to download`);
-        console.log(`   This is OK - your app will work with the required models`);
-      }
-
-      // Verify required files exist
-      let allRequiredExist = true;
-      for (const model of requiredModels) {
-        const filepath = path.join(modelsDir, model.filename);
-        if (!fs.existsSync(filepath) || fs.statSync(filepath).size < 1024) {
-          console.error(`❌ Verification failed: ${model.filename} is missing or too small`);
-          allRequiredExist = false;
-        } else {
-          const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
-          console.log(`   ✅ ${model.filename} (${sizeMB} MB)`);
-        }
-      }
-
-      if (allRequiredExist) {
-        console.log('✅ All required model files verified successfully!');
-        return true; // Success - required models are present
-      }
-    } else if (successCount > 0) {
-      console.log('⚠️  Some required models failed to download.');
-      console.log(`   Failed files: ${failedFiles.join(', ')}`);
-      console.log('   Server will attempt to use fallback methods.');
+      return true;
     } else {
-      console.log('❌ All model downloads failed.');
-      console.log(`   Failed files: ${failedFiles.join(', ')}`);
-      console.log('\n💡 The server will start but face recognition may not work.');
-      console.log('   Check Render build logs for download errors.');
-      console.log('   See MODEL_DOWNLOAD_GUIDE.md for manual download options.');
+      console.log('⚠️  Some required models are missing.');
+      console.log(`   Missing files: ${failedFiles.join(', ')}`);
+      return false;
     }
-
-    // Return true if at least required models are present
-    return requiredSuccess === requiredModels.length;
   } catch (error) {
     console.error('❌ Error in downloadModels:', error.message);
+    console.error(error.stack);
     return false;
   }
 }

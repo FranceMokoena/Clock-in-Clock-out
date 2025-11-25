@@ -213,9 +213,10 @@ const CONFIG = {
 };
 
 /**
- * Runtime model download helper - downloads models if missing
+ * Runtime model download helper - downloads ZIP and extracts models
+ * NOTE: This downloads a 275MB ZIP file, which may be slow at runtime
  */
-async function downloadModelFile(url, filepath) {
+async function downloadModelFile(url, filepath, timeout = 600000) {
   return new Promise((resolve, reject) => {
     const protocol = url.startsWith('https') ? https : http;
     const filename = path.basename(filepath);
@@ -223,42 +224,89 @@ async function downloadModelFile(url, filepath) {
     console.log(`📥 Downloading: ${filename}`);
     
     const file = fs.createWriteStream(filepath);
+    let downloadedBytes = 0;
+    let totalBytes = 0;
     
-    protocol
-      .get(url, (response) => {
-        // Handle redirects
-        if (response.statusCode === 301 || response.statusCode === 302 || 
-            response.statusCode === 307 || response.statusCode === 308) {
-          file.close();
-          fs.unlink(filepath, () => {});
-          return resolve(downloadModelFile(response.headers.location, filepath));
-        }
-
-        if (response.statusCode !== 200) {
-          file.close();
-          fs.unlink(filepath, () => {});
-          return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
-        }
-
-        response.pipe(file);
-
-        file.on('finish', () => {
-          file.close();
-          const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
-          console.log(`✅ Downloaded: ${filename} (${sizeMB} MB)`);
-          resolve();
-        });
-      })
-      .on('error', (err) => {
+    const req = protocol.get(url, (response) => {
+      // Handle redirects
+      if (response.statusCode === 301 || response.statusCode === 302 || 
+          response.statusCode === 307 || response.statusCode === 308) {
         file.close();
         fs.unlink(filepath, () => {});
-        reject(err);
+        return resolve(downloadModelFile(response.headers.location, filepath, timeout));
+      }
+
+      if (response.statusCode !== 200) {
+        file.close();
+        fs.unlink(filepath, () => {});
+        return reject(new Error(`HTTP ${response.statusCode}: ${response.statusMessage}`));
+      }
+
+      totalBytes = parseInt(response.headers['content-length'] || '0', 10);
+      
+      response.on('data', (chunk) => {
+        downloadedBytes += chunk.length;
+        if (totalBytes > 0) {
+          const percent = ((downloadedBytes / totalBytes) * 100).toFixed(1);
+          process.stdout.write(`\r   Progress: ${percent}% (${(downloadedBytes / 1024 / 1024).toFixed(2)} MB)`);
+        }
       });
+
+      response.pipe(file);
+
+      file.on('finish', () => {
+        file.close();
+        const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
+        console.log(`\n✅ Downloaded: ${filename} (${sizeMB} MB)`);
+        resolve();
+      });
+    });
+
+    req.on('error', (err) => {
+      file.close();
+      fs.unlink(filepath, () => {});
+      reject(err);
+    });
+
+    req.setTimeout(timeout, () => {
+      req.destroy();
+      file.close();
+      fs.unlink(filepath, () => {});
+      reject(new Error(`Download timeout after ${timeout / 1000} seconds`));
+    });
   });
 }
 
 /**
+ * Extract ZIP file using system unzip or Python
+ */
+function extractZipFile(zipPath, extractTo) {
+  const { execSync } = require('child_process');
+  try {
+    console.log('📦 Extracting ZIP file...');
+    execSync(`unzip -q -o "${zipPath}" -d "${extractTo}"`, { stdio: 'inherit' });
+    return true;
+  } catch (error) {
+    console.log('⚠️  unzip command failed, trying Python...');
+    try {
+      const pythonScript = `import zipfile; zipfile.ZipFile('${zipPath}').extractall('${extractTo}')`;
+      execSync(`python3 -c "${pythonScript}"`, { stdio: 'inherit' });
+      return true;
+    } catch (pyError) {
+      try {
+        execSync(`python -c "${pythonScript}"`, { stdio: 'inherit' });
+        return true;
+      } catch (py2Error) {
+        console.error('❌ Failed to extract ZIP:', py2Error.message);
+        return false;
+      }
+    }
+  }
+}
+
+/**
  * Attempt to download missing models at runtime
+ * Downloads buffalo_l.zip (275MB) and extracts required ONNX files
  */
 async function downloadMissingModels(modelsPath) {
   // Ensure models directory exists
@@ -267,42 +315,16 @@ async function downloadMissingModels(modelsPath) {
     console.log(`📁 Created models directory: ${modelsPath}`);
   }
 
-  const requiredModels = [
-    {
-      filename: 'scrfd_10g_gnkps_fp32.onnx',
-      sources: [
-        'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
-        'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_10g_gnkps_fp32.onnx',
-        'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
-      ],
-      required: true
-    },
-    {
-      filename: 'scrfd_500m_bnkps.onnx',
-      sources: [
-        'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
-        'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
-        'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
-      ],
-      required: false
-    },
-    {
-      filename: 'w600k_r50.onnx',
-      sources: [
-        'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/w600k_r50.onnx',
-        'https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_r50.onnx',
-        'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/w600k_r50.onnx',
-      ],
-      required: true
-    }
-  ];
+  const BUFFALO_L_ZIP_URL = 'https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip';
+  const tempDir = path.join(__dirname, '../temp_models_runtime');
+  const zipPath = path.join(tempDir, 'buffalo_l.zip');
+  const extractDir = path.join(tempDir, 'buffalo_l');
 
-  let downloadedCount = 0;
+  // Check what's missing
   const filepath = path.join(modelsPath, 'scrfd_10g_gnkps_fp32.onnx');
   const filepath500m = path.join(modelsPath, 'scrfd_500m_bnkps.onnx');
   const recPath = path.join(modelsPath, 'w600k_r50.onnx');
-
-  // Check what's missing
+  
   const needsDetection = !fs.existsSync(filepath) && !fs.existsSync(filepath500m);
   const needsRecognition = !fs.existsSync(recPath);
 
@@ -311,60 +333,89 @@ async function downloadMissingModels(modelsPath) {
   }
 
   console.log('🔄 Attempting to download missing models at runtime...');
+  console.log('⚠️  This will download a 275MB ZIP file, which may take several minutes...');
 
-  // Download detection model (prefer 10G, fallback to 500M)
-  if (needsDetection) {
-    let downloaded = false;
-    for (const source of requiredModels[0].sources) {
-      try {
-        await downloadModelFile(source, filepath);
-        downloaded = true;
-        downloadedCount++;
-        break;
-      } catch (error) {
-        console.warn(`   ⚠️  Failed from source: ${error.message}`);
-      }
+  try {
+    // Create temp directory
+    if (!fs.existsSync(tempDir)) {
+      fs.mkdirSync(tempDir, { recursive: true });
     }
-    
-    // If 10G failed, try 500M
-    if (!downloaded) {
-      for (const source of requiredModels[1].sources) {
-        try {
-          await downloadModelFile(source, filepath500m);
-          downloaded = true;
-          downloadedCount++;
+
+    // Download ZIP
+    await downloadModelFile(BUFFALO_L_ZIP_URL, zipPath, 600000); // 10 minute timeout
+
+    // Extract ZIP
+    if (!extractZipFile(zipPath, tempDir)) {
+      console.error('❌ Failed to extract ZIP file');
+      return false;
+    }
+
+    // Copy required ONNX files
+    const filesToCopy = [
+      { src: 'scrfd_10g_gnkps_fp32.onnx', dst: filepath, required: needsDetection },
+      { src: 'scrfd_500m_bnkps.onnx', dst: filepath500m, required: false },
+      { src: 'w600k_r50.onnx', dst: recPath, required: needsRecognition }
+    ];
+
+    let copiedCount = 0;
+    for (const file of filesToCopy) {
+      if (!file.required) continue; // Only copy required files at runtime
+      
+      const possiblePaths = [
+        path.join(extractDir, file.src),
+        path.join(extractDir, 'buffalo_l', file.src),
+        path.join(extractDir, 'models', file.src),
+      ];
+
+      let found = false;
+      for (const srcPath of possiblePaths) {
+        if (fs.existsSync(srcPath)) {
+          fs.copyFileSync(srcPath, file.dst);
+          console.log(`   ✅ Copied: ${file.src}`);
+          copiedCount++;
+          found = true;
           break;
-        } catch (error) {
-          console.warn(`   ⚠️  Failed from source: ${error.message}`);
         }
       }
-    }
-  }
-
-  // Download recognition model
-  if (needsRecognition) {
-    let downloaded = false;
-    for (const source of requiredModels[2].sources) {
-      try {
-        await downloadModelFile(source, recPath);
-        downloaded = true;
-        downloadedCount++;
-        break;
-      } catch (error) {
-        console.warn(`   ⚠️  Failed from source: ${error.message}`);
+      if (!found) {
+        console.warn(`   ⚠️  Not found in ZIP: ${file.src}`);
       }
     }
-  }
 
-  // Verify required models exist
-  const hasDetection = fs.existsSync(filepath) || fs.existsSync(filepath500m);
-  const hasRecognition = fs.existsSync(recPath);
+    // Cleanup
+    try {
+      if (fs.existsSync(extractDir)) {
+        fs.rmSync(extractDir, { recursive: true, force: true });
+      }
+      if (fs.existsSync(zipPath)) {
+        fs.unlinkSync(zipPath);
+      }
+      if (fs.existsSync(tempDir)) {
+        fs.rmdirSync(tempDir);
+      }
+    } catch (cleanupError) {
+      console.warn(`⚠️  Cleanup warning: ${cleanupError.message}`);
+    }
 
-  if (hasDetection && hasRecognition) {
-    console.log('✅ Runtime model download completed successfully');
-    return true;
-  } else {
-    console.warn('⚠️  Some models failed to download. Required models may still be missing.');
+    // Verify
+    const hasDetection = fs.existsSync(filepath) || fs.existsSync(filepath500m);
+    const hasRecognition = fs.existsSync(recPath);
+
+    if (hasDetection && hasRecognition) {
+      console.log('✅ Runtime model download completed successfully');
+      return true;
+    } else {
+      console.warn('⚠️  Some models failed to download. Required models may still be missing.');
+      return false;
+    }
+  } catch (error) {
+    console.error(`❌ Runtime download failed: ${error.message}`);
+    // Cleanup on error
+    try {
+      if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
+      if (fs.existsSync(extractDir)) fs.rmSync(extractDir, { recursive: true, force: true });
+      if (fs.existsSync(tempDir)) fs.rmdirSync(tempDir);
+    } catch (e) {}
     return false;
   }
 }
