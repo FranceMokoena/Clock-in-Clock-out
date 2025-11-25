@@ -1583,32 +1583,78 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   const boxDims = boxOutput.dims;
   const scoreDims = scoreOutput.dims;
   
-  // Determine number of detections from shape (usually last dimension)
-  const numDetections = boxDims.length >= 2 ? boxDims[boxDims.length - 2] : Math.floor(boxes.length / 4);
-  const numScores = scoreDims.length >= 1 ? scoreDims[scoreDims.length - 1] : scores.length;
+  // SCRFD outputs are 2D arrays: [num_anchors, features]
+  // Boxes: [num_anchors, 4 or 10] - 4 for box coords, 10 if including landmarks
+  // Scores: [num_anchors, 1 or num_classes] - usually [num_anchors] or [num_anchors, 1]
   
-  // Use the minimum to avoid out-of-bounds
-  const maxDetections = Math.min(numDetections, numScores, Math.floor(boxes.length / 4));
+  // Handle 2D arrays correctly
+  let numAnchors, boxFeatures, scoreFeatures;
   
-  console.log(`   📊 Parsing up to ${maxDetections} potential detections from SCRFD output`);
+  if (boxDims.length === 2) {
+    // Shape is [num_anchors, features]
+    numAnchors = boxDims[0];
+    boxFeatures = boxDims[1];
+  } else if (boxDims.length === 1) {
+    // Flattened array - assume 4 values per box
+    numAnchors = Math.floor(boxDims[0] / 4);
+    boxFeatures = 4;
+  } else {
+    // Unknown format, try to infer
+    numAnchors = boxDims[boxDims.length - 2] || Math.floor(boxes.length / 4);
+    boxFeatures = boxDims[boxDims.length - 1] || 4;
+  }
+  
+  if (scoreDims.length === 2) {
+    // Shape is [num_anchors, features] - take first feature (usually the score)
+    scoreFeatures = scoreDims[1];
+  } else {
+    scoreFeatures = 1;
+  }
+  
+  // Use the minimum number of anchors from boxes and scores
+  const maxDetections = Math.min(numAnchors, scoreDims.length >= 1 ? scoreDims[0] : scores.length);
+  
+  console.log(`   📊 Parsing up to ${maxDetections} potential detections (${numAnchors} anchors, ${boxFeatures} box features, ${scoreFeatures} score features)`);
+  
+  // Extract scores correctly from 2D array
+  // If scores are 2D [num_anchors, features], we need to extract the first feature (score)
+  const extractedScores = [];
+  if (scoreDims.length === 2 && scoreFeatures > 1) {
+    // 2D array: extract first column (score)
+    for (let i = 0; i < maxDetections; i++) {
+      extractedScores.push(scores[i * scoreFeatures]);
+    }
+  } else {
+    // 1D array or already flattened
+    extractedScores.push(...Array.from(scores).slice(0, maxDetections));
+  }
   
   // 🐛 DEBUG: Log top scores to diagnose detection issues
-  const topScores = Array.from(scores).sort((a, b) => b - a).slice(0, 10);
+  const topScores = Array.from(extractedScores).sort((a, b) => b - a).slice(0, 10);
   console.log(`   🔍 Top 10 detection scores: ${topScores.map(s => (s * 100).toFixed(1)).join('%, ')}%`);
   console.log(`   🔍 Detection threshold: ${(CONFIG.MIN_DETECTION_SCORE * 100).toFixed(1)}%`);
   
-  // Determine box format by checking first few boxes
-  // If values are very small (< 10), they might be normalized or in a different format
+  // Determine box format by checking first box
+  // SCRFD boxes are typically [x1, y1, x2, y2] in pixel coordinates OR normalized
   let boxFormat = 'unknown';
-  if (boxes.length >= 4) {
-    const firstBoxValues = [boxes[0], boxes[1], boxes[2], boxes[3]];
+  if (boxes.length >= boxFeatures) {
+    // Get first box values (first boxFeatures values)
+    const firstBoxValues = [];
+    for (let i = 0; i < Math.min(4, boxFeatures); i++) {
+      firstBoxValues.push(boxes[i]);
+    }
     const maxVal = Math.max(...firstBoxValues.map(Math.abs));
-    if (maxVal < 1.0) {
-      boxFormat = 'normalized_corners'; // Values are 0-1, likely [x1, y1, x2, y2] normalized
-    } else if (maxVal < 640) {
-      boxFormat = 'pixel_corners'; // Values are 0-640, likely [x1, y1, x2, y2] in pixels
+    const minVal = Math.min(...firstBoxValues);
+    
+    if (maxVal < 1.0 && minVal >= -1.0) {
+      // Values are in -1 to 1 range, likely normalized or offset-normalized
+      boxFormat = 'normalized_corners';
+    } else if (maxVal < 640 && minVal >= 0) {
+      // Values are 0-640, likely pixel coordinates
+      boxFormat = 'pixel_corners';
     } else {
-      boxFormat = 'center_size'; // Values might be center+size format
+      // Values might be center+size format or other
+      boxFormat = 'center_size';
     }
     console.log(`   🔍 Detected box format: ${boxFormat} (first box values: [${firstBoxValues.map(v => v.toFixed(3)).join(', ')}])`);
   }
@@ -1617,8 +1663,7 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   // First, collect all detections that pass the score threshold
   const validDetections = [];
   for (let i = 0; i < maxDetections; i++) {
-    const scoreIdx = i;
-    const score = scores[scoreIdx];
+    const score = extractedScores[i];
     
     // Filter by score FIRST to avoid processing invalid detections
     if (score < CONFIG.MIN_DETECTION_SCORE) {
@@ -1637,31 +1682,52 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   for (const detection of validDetections) {
     const i = detection.index;
     const score = detection.score;
-    const boxIdx = i * 4;
-    const landmarkIdx = landmarks ? i * 10 : null; // 5 keypoints * 2 (x, y) = 10 values
+    
+    // Calculate indices for 2D array access
+    // Boxes are stored as [num_anchors, features] - access as boxes[i * boxFeatures + j]
+    const boxBaseIdx = i * boxFeatures;
+    const landmarkBaseIdx = landmarks ? i * (landmarks.length / maxDetections) : null;
+    
+    // Extract box coordinates (first 4 values)
+    // SCRFD typically outputs [x1, y1, x2, y2] or [center_x, center_y, width, height]
+    const boxVal0 = boxes[boxBaseIdx];
+    const boxVal1 = boxes[boxBaseIdx + 1];
+    const boxVal2 = boxes[boxBaseIdx + 2];
+    const boxVal3 = boxes[boxBaseIdx + 3];
     
     // Parse box based on detected format
     let x1_detection, y1_detection, x2_detection, y2_detection;
     
     if (boxFormat === 'normalized_corners') {
-      // Boxes are already in normalized corner format [x1, y1, x2, y2] (0-1 range)
+      // Boxes are in normalized corner format [x1, y1, x2, y2] (0-1 or -1 to 1 range)
+      // Handle negative values (offset-normalized format)
       // Convert to pixel coordinates in 640x640 detection space
-      x1_detection = boxes[boxIdx] * 640;
-      y1_detection = boxes[boxIdx + 1] * 640;
-      x2_detection = boxes[boxIdx + 2] * 640;
-      y2_detection = boxes[boxIdx + 3] * 640;
+      // If values are negative, they might be offset-normalized (center at 0, range -0.5 to 0.5)
+      if (boxVal0 < 0 || boxVal1 < 0) {
+        // Offset-normalized: add 0.5 to center, then scale
+        x1_detection = (boxVal0 + 0.5) * 640;
+        y1_detection = (boxVal1 + 0.5) * 640;
+        x2_detection = (boxVal2 + 0.5) * 640;
+        y2_detection = (boxVal3 + 0.5) * 640;
+      } else {
+        // Standard normalized (0-1)
+        x1_detection = boxVal0 * 640;
+        y1_detection = boxVal1 * 640;
+        x2_detection = boxVal2 * 640;
+        y2_detection = boxVal3 * 640;
+      }
     } else if (boxFormat === 'pixel_corners') {
       // Boxes are in pixel corner format [x1, y1, x2, y2]
-      x1_detection = boxes[boxIdx];
-      y1_detection = boxes[boxIdx + 1];
-      x2_detection = boxes[boxIdx + 2];
-      y2_detection = boxes[boxIdx + 3];
+      x1_detection = boxVal0;
+      y1_detection = boxVal1;
+      x2_detection = boxVal2;
+      y2_detection = boxVal3;
     } else {
       // Default: assume center+size format [center_x, center_y, width, height]
-      const center_x = boxes[boxIdx];
-      const center_y = boxes[boxIdx + 1];
-      const width_detection = boxes[boxIdx + 2];
-      const height_detection = boxes[boxIdx + 3];
+      const center_x = boxVal0;
+      const center_y = boxVal1;
+      const width_detection = boxVal2;
+      const height_detection = boxVal3;
       
       // Convert center format to corner format: [x1, y1, x2, y2]
       x1_detection = center_x - width_detection / 2;
@@ -1715,66 +1781,99 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     
     // Extract landmarks if available - convert from detection space to canonical, then normalize
     let faceLandmarks = null;
-    if (landmarks && landmarkIdx !== null && landmarkIdx < landmarks.length - 9) {
-      // Landmarks are in detection space (640x640) - convert to canonical, then normalize
-      // If boxes are normalized, landmarks might also be normalized
-      let leftEyeX_detection = landmarks[landmarkIdx];
-      let leftEyeY_detection = landmarks[landmarkIdx + 1];
-      let rightEyeX_detection = landmarks[landmarkIdx + 2];
-      let rightEyeY_detection = landmarks[landmarkIdx + 3];
-      let noseX_detection = landmarks[landmarkIdx + 4];
-      let noseY_detection = landmarks[landmarkIdx + 5];
-      let leftMouthX_detection = landmarks[landmarkIdx + 6];
-      let leftMouthY_detection = landmarks[landmarkIdx + 7];
-      let rightMouthX_detection = landmarks[landmarkIdx + 8];
-      let rightMouthY_detection = landmarks[landmarkIdx + 9];
-      
-      // If boxes are normalized, landmarks are likely also normalized
-      if (boxFormat === 'normalized_corners') {
-        // Convert normalized landmarks to pixel coordinates in 640x640 detection space
-        leftEyeX_detection *= 640;
-        leftEyeY_detection *= 640;
-        rightEyeX_detection *= 640;
-        rightEyeY_detection *= 640;
-        noseX_detection *= 640;
-        noseY_detection *= 640;
-        leftMouthX_detection *= 640;
-        leftMouthY_detection *= 640;
-        rightMouthX_detection *= 640;
-        rightMouthY_detection *= 640;
+    if (landmarks && landmarkBaseIdx !== null) {
+      // Landmarks might be in the box array (if boxFeatures >= 10) or separate array
+      // SCRFD typically has landmarks starting at index 4 in the box array
+      let landmarkStartIdx;
+      if (boxFeatures >= 10) {
+        // Landmarks are in the box array starting at index 4
+        landmarkStartIdx = boxBaseIdx + 4;
+      } else if (landmarkOutput) {
+        // Landmarks are in separate array
+        const landmarkDims = landmarkOutput.dims;
+        const landmarkFeatures = landmarkDims.length >= 2 ? landmarkDims[1] : 10;
+        landmarkStartIdx = i * landmarkFeatures;
+      } else {
+        landmarkStartIdx = null;
       }
       
-      // Convert to canonical coordinates (add crop offset, then divide by scale)
-      const leftEyeX_canonical = Math.max(0, Math.min(canonicalWidth, (leftEyeX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
-      const leftEyeY_canonical = Math.max(0, Math.min(canonicalHeight, (leftEyeY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
-      const rightEyeX_canonical = Math.max(0, Math.min(canonicalWidth, (rightEyeX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
-      const rightEyeY_canonical = Math.max(0, Math.min(canonicalHeight, (rightEyeY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
-      const noseX_canonical = Math.max(0, Math.min(canonicalWidth, (noseX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
-      const noseY_canonical = Math.max(0, Math.min(canonicalHeight, (noseY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
-      const leftMouthX_canonical = Math.max(0, Math.min(canonicalWidth, (leftMouthX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
-      const leftMouthY_canonical = Math.max(0, Math.min(canonicalHeight, (leftMouthY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
-      const rightMouthX_canonical = Math.max(0, Math.min(canonicalWidth, (rightMouthX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
-      const rightMouthY_canonical = Math.max(0, Math.min(canonicalHeight, (rightMouthY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
-      
-      // Normalize to [0, 1]
-      const leftEyeX = leftEyeX_canonical / canonicalWidth;
-      const leftEyeY = leftEyeY_canonical / canonicalHeight;
-      const rightEyeX = rightEyeX_canonical / canonicalWidth;
-      const rightEyeY = rightEyeY_canonical / canonicalHeight;
-      const noseX = noseX_canonical / canonicalWidth;
-      const noseY = noseY_canonical / canonicalHeight;
-      const leftMouthX = leftMouthX_canonical / canonicalWidth;
-      const leftMouthY = leftMouthY_canonical / canonicalHeight;
-      const rightMouthX = rightMouthX_canonical / canonicalWidth;
-      const rightMouthY = rightMouthY_canonical / canonicalHeight;
-      
-      faceLandmarks = {
-        leftEye: { x: leftEyeX, y: leftEyeY },
-        rightEye: { x: rightEyeX, y: rightEyeY },
-        nose: { x: noseX, y: noseY },
-        leftMouth: { x: leftMouthX, y: leftMouthY },
-        rightMouth: { x: rightMouthX, y: rightMouthY },
-      };
+      if (landmarkStartIdx !== null && landmarkStartIdx + 9 < Math.max(boxes.length, landmarks.length)) {
+        // Extract landmarks (5 keypoints × 2 coordinates = 10 values)
+        // Use boxes array if boxFeatures >= 10, otherwise use landmarks array
+        const landmarkArray = boxFeatures >= 10 ? boxes : landmarks;
+        let leftEyeX_detection = landmarkArray[landmarkStartIdx];
+        let leftEyeY_detection = landmarkArray[landmarkStartIdx + 1];
+        let rightEyeX_detection = landmarkArray[landmarkStartIdx + 2];
+        let rightEyeY_detection = landmarkArray[landmarkStartIdx + 3];
+        let noseX_detection = landmarkArray[landmarkStartIdx + 4];
+        let noseY_detection = landmarkArray[landmarkStartIdx + 5];
+        let leftMouthX_detection = landmarkArray[landmarkStartIdx + 6];
+        let leftMouthY_detection = landmarkArray[landmarkStartIdx + 7];
+        let rightMouthX_detection = landmarkArray[landmarkStartIdx + 8];
+        let rightMouthY_detection = landmarkArray[landmarkStartIdx + 9];
+        
+        // If boxes are normalized, landmarks are likely also normalized
+        if (boxFormat === 'normalized_corners') {
+          // Handle offset-normalized format
+          if (leftEyeX_detection < 0 || leftEyeY_detection < 0) {
+            // Offset-normalized: add 0.5 to center, then scale
+            leftEyeX_detection = (leftEyeX_detection + 0.5) * 640;
+            leftEyeY_detection = (leftEyeY_detection + 0.5) * 640;
+            rightEyeX_detection = (rightEyeX_detection + 0.5) * 640;
+            rightEyeY_detection = (rightEyeY_detection + 0.5) * 640;
+            noseX_detection = (noseX_detection + 0.5) * 640;
+            noseY_detection = (noseY_detection + 0.5) * 640;
+            leftMouthX_detection = (leftMouthX_detection + 0.5) * 640;
+            leftMouthY_detection = (leftMouthY_detection + 0.5) * 640;
+            rightMouthX_detection = (rightMouthX_detection + 0.5) * 640;
+            rightMouthY_detection = (rightMouthY_detection + 0.5) * 640;
+          } else {
+            // Standard normalized (0-1)
+            leftEyeX_detection *= 640;
+            leftEyeY_detection *= 640;
+            rightEyeX_detection *= 640;
+            rightEyeY_detection *= 640;
+            noseX_detection *= 640;
+            noseY_detection *= 640;
+            leftMouthX_detection *= 640;
+            leftMouthY_detection *= 640;
+            rightMouthX_detection *= 640;
+            rightMouthY_detection *= 640;
+          }
+        
+        // Convert to canonical coordinates (add crop offset, then divide by scale)
+        const leftEyeX_canonical = Math.max(0, Math.min(canonicalWidth, (leftEyeX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
+        const leftEyeY_canonical = Math.max(0, Math.min(canonicalHeight, (leftEyeY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
+        const rightEyeX_canonical = Math.max(0, Math.min(canonicalWidth, (rightEyeX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
+        const rightEyeY_canonical = Math.max(0, Math.min(canonicalHeight, (rightEyeY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
+        const noseX_canonical = Math.max(0, Math.min(canonicalWidth, (noseX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
+        const noseY_canonical = Math.max(0, Math.min(canonicalHeight, (noseY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
+        const leftMouthX_canonical = Math.max(0, Math.min(canonicalWidth, (leftMouthX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
+        const leftMouthY_canonical = Math.max(0, Math.min(canonicalHeight, (leftMouthY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
+        const rightMouthX_canonical = Math.max(0, Math.min(canonicalWidth, (rightMouthX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
+        const rightMouthY_canonical = Math.max(0, Math.min(canonicalHeight, (rightMouthY_detection + preprocessed.cropOffsetY) / preprocessed.scale));
+        
+        // Normalize to [0, 1]
+        const leftEyeX = leftEyeX_canonical / canonicalWidth;
+        const leftEyeY = leftEyeY_canonical / canonicalHeight;
+        const rightEyeX = rightEyeX_canonical / canonicalWidth;
+        const rightEyeY = rightEyeY_canonical / canonicalHeight;
+        const noseX = noseX_canonical / canonicalWidth;
+        const noseY = noseY_canonical / canonicalHeight;
+        const leftMouthX = leftMouthX_canonical / canonicalWidth;
+        const leftMouthY = leftMouthY_canonical / canonicalHeight;
+        const rightMouthX = rightMouthX_canonical / canonicalWidth;
+        const rightMouthY = rightMouthY_canonical / canonicalHeight;
+        
+        faceLandmarks = {
+          leftEye: { x: leftEyeX, y: leftEyeY },
+          rightEye: { x: rightEyeX, y: rightEyeY },
+          nose: { x: noseX, y: noseY },
+          leftMouth: { x: leftMouthX, y: leftMouthY },
+          rightMouth: { x: rightMouthX, y: rightMouthY },
+        };
+      }
+    }
     }
     
     // Validate face size using normalized coordinates (convert back to pixels for validation)
