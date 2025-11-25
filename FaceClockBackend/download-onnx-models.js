@@ -23,45 +23,57 @@ const modelFiles = [
     filename: 'scrfd_10g_gnkps_fp32.onnx',
     description: 'SCRFD face detection model (10G - Preferred)',
     sources: [
-      // GitHub releases (most reliable)
+      // Use raw GitHub content (more reliable than releases)
+      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
+      // GitHub releases
       'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_10g_gnkps_fp32.onnx',
       // jsdelivr CDN
       'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
     ],
-    note: 'Preferred detection model - better accuracy'
+    note: 'Preferred detection model - better accuracy',
+    required: true
   },
   {
     filename: 'scrfd_500m_bnkps.onnx',
     description: 'SCRFD face detection model (500M - Fallback)',
     sources: [
+      // Use raw GitHub content
+      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
       // GitHub releases
       'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
-      // jsdelivr CDN (more reliable for public repos)
+      // jsdelivr CDN
       'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
     ],
-    note: 'Fallback detection model - smaller size'
+    note: 'Fallback detection model - smaller size',
+    required: false
   },
   {
     filename: 'w600k_r50.onnx',
     description: 'ArcFace recognition model (W600K - Primary)',
     sources: [
-      // GitHub releases (most reliable)
+      // Use raw GitHub content (more reliable)
+      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/w600k_r50.onnx',
+      // GitHub releases
       'https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_r50.onnx',
       // jsdelivr CDN
       'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/w600k_r50.onnx',
     ],
-    note: 'Primary recognition model'
+    note: 'Primary recognition model',
+    required: true
   },
   {
     filename: 'glint360k_r50.onnx',
     description: 'ArcFace recognition model (Glint360K - Alternative)',
     sources: [
+      // Use raw GitHub content
+      'https://raw.githubusercontent.com/deepinsight/insightface/master/model_zoo/buffalo_l/glint360k_r50.onnx',
       // GitHub releases
       'https://github.com/deepinsight/insightface/releases/download/v0.7/glint360k_r50.onnx',
       // jsdelivr CDN
       'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/glint360k_r50.onnx',
     ],
-    note: 'Alternative recognition model - more accurate, optional'
+    note: 'Alternative recognition model - more accurate, optional',
+    required: false
   }
 ];
 
@@ -176,44 +188,56 @@ async function downloadModels() {
       }
     }
 
+    // Check required vs optional models
+    const requiredModels = modelFiles.filter(m => m.required !== false);
+    const requiredSuccess = requiredModels.filter(m => 
+      fs.existsSync(path.join(modelsDir, m.filename)) && 
+      fs.statSync(path.join(modelsDir, m.filename)).size > 1024
+    ).length;
+
     console.log(`\n📊 Download summary: ${successCount} succeeded, ${failCount} failed`);
+    console.log(`📋 Required models: ${requiredSuccess}/${requiredModels.length} downloaded`);
 
-    if (successCount === modelFiles.length) {
-      console.log('✅ All ONNX models downloaded successfully!');
+    if (requiredSuccess === requiredModels.length) {
+      console.log('✅ All REQUIRED ONNX models downloaded successfully!');
       console.log(`📁 Models saved to: ${modelsDir}`);
+      
+      if (successCount < modelFiles.length) {
+        console.log(`⚠️  Note: ${modelFiles.length - successCount} optional model(s) failed to download`);
+        console.log(`   This is OK - your app will work with the required models`);
+      }
 
-      // Verify all files exist
-      let allExist = true;
-      for (const model of modelFiles) {
+      // Verify required files exist
+      let allRequiredExist = true;
+      for (const model of requiredModels) {
         const filepath = path.join(modelsDir, model.filename);
         if (!fs.existsSync(filepath) || fs.statSync(filepath).size < 1024) {
           console.error(`❌ Verification failed: ${model.filename} is missing or too small`);
-          allExist = false;
+          allRequiredExist = false;
+        } else {
+          const sizeMB = (fs.statSync(filepath).size / 1024 / 1024).toFixed(2);
+          console.log(`   ✅ ${model.filename} (${sizeMB} MB)`);
         }
       }
 
-      if (allExist) {
-        console.log('✅ All model files verified successfully!');
+      if (allRequiredExist) {
+        console.log('✅ All required model files verified successfully!');
+        return true; // Success - required models are present
       }
     } else if (successCount > 0) {
-      console.log('⚠️  Some models failed to download.');
+      console.log('⚠️  Some required models failed to download.');
       console.log(`   Failed files: ${failedFiles.join(', ')}`);
-      console.log('   You may need to download them manually or use alternative sources.');
+      console.log('   Server will attempt to use fallback methods.');
     } else {
       console.log('❌ All model downloads failed.');
       console.log(`   Failed files: ${failedFiles.join(', ')}`);
-      console.log('\n💡 Manual download options:');
-      console.log('   1. Hugging Face (recommended):');
-      console.log('      - Visit: https://huggingface.co/models?search=scrfd+onnx');
-      console.log('      - Visit: https://huggingface.co/models?search=arcface+onnx');
-      console.log('   2. GitHub: https://github.com/deepinsight/insightface/releases');
-      console.log('   3. Download models manually to:', modelsDir);
-      console.log('   4. See ALTERNATIVE_MODEL_SOURCES.md for more options');
-      console.log('\n⚠️  Note: ONNX models may need to be converted from PyTorch/MXNet');
-      console.log('   The models are not always available as direct ONNX downloads.');
+      console.log('\n💡 The server will start but face recognition may not work.');
+      console.log('   Check Render build logs for download errors.');
+      console.log('   See MODEL_DOWNLOAD_GUIDE.md for manual download options.');
     }
 
-    return successCount === modelFiles.length;
+    // Return true if at least required models are present
+    return requiredSuccess === requiredModels.length;
   } catch (error) {
     console.error('❌ Error in downloadModels:', error.message);
     return false;

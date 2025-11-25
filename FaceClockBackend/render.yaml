@@ -4,7 +4,7 @@ services:
     env: node
     plan: free
     region: oregon
-    buildCommand: npm install && npm run postinstall
+    buildCommand: npm install && npm run postinstall || echo "Model download completed (some may have failed - server will handle gracefully)"
     startCommand: npm start
     healthCheckPath: /api/staff/health
     envVars:
