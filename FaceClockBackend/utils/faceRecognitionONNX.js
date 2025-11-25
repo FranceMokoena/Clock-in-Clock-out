@@ -1710,7 +1710,8 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   console.log(`   🔍 Detection threshold: ${(CONFIG.MIN_DETECTION_SCORE * 100).toFixed(1)}%`);
   
   // Determine box format by checking first box
-  // SCRFD boxes are typically [x1, y1, x2, y2] in pixel coordinates OR normalized
+  // SCRFD typically outputs boxes in center-size format: [center_x, center_y, width, height]
+  // Values can be normalized (0-1), offset-normalized (-0.5 to 0.5), or pixel coordinates
   let boxFormat = 'unknown';
   if (boxes.length >= boxFeatures) {
     // Get first box values (first boxFeatures values)
@@ -1721,12 +1722,16 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     const maxVal = Math.max(...firstBoxValues.map(Math.abs));
     const minVal = Math.min(...firstBoxValues);
     
+    // SCRFD typically outputs boxes in center-size format: [center_x, center_y, width, height]
+    // For normalized values in -1 to 1 range, default to center-size format
+    // (SCRFD models from InsightFace typically use center-size, not corner format)
     if (maxVal < 1.0 && minVal >= -1.0) {
-      // Values are in -1 to 1 range, likely normalized or offset-normalized
-      boxFormat = 'normalized_corners';
+      // Default to center-size format for SCRFD (most common)
+      boxFormat = 'normalized_center_size';
     } else if (maxVal < 640 && minVal >= 0) {
       // Values are 0-640, likely pixel coordinates
-      boxFormat = 'pixel_corners';
+      // Default to center-size format for SCRFD
+      boxFormat = 'pixel_center_size';
     } else {
       // Values might be center+size format or other
       boxFormat = 'center_size';
@@ -1773,7 +1778,27 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     // Parse box based on detected format
     let x1_detection, y1_detection, x2_detection, y2_detection;
     
-    if (boxFormat === 'normalized_corners') {
+    if (boxFormat === 'normalized_center_size') {
+      // SCRFD outputs boxes in corner format [x1, y2, x2, y1] with offset-normalized values
+      // Based on logs: [-0.195, -0.312, 0.363, -0.361] → [195.1, 88.8, 552.4, 120.5]
+      // This shows: x1=boxVal0, y1=boxVal3, x2=boxVal2, y2=boxVal1 (y coordinates swapped!)
+      // Values are offset-normalized (center at 0, range -0.5 to 0.5)
+      
+      // Check if values are offset-normalized (have negative values)
+      if (boxVal0 < 0 || boxVal1 < 0 || boxVal2 < 0 || boxVal3 < 0) {
+        // Offset-normalized corner format: [x1, y2, x2, y1]
+        x1_detection = (boxVal0 + 0.5) * 640;  // x1 from index 0
+        y2_detection = (boxVal1 + 0.5) * 640;  // y2 from index 1
+        x2_detection = (boxVal2 + 0.5) * 640;  // x2 from index 2
+        y1_detection = (boxVal3 + 0.5) * 640;  // y1 from index 3 (swapped!)
+      } else {
+        // Standard normalized (0-1) corner format: [x1, y2, x2, y1]
+        x1_detection = boxVal0 * 640;
+        y2_detection = boxVal1 * 640;
+        x2_detection = boxVal2 * 640;
+        y1_detection = boxVal3 * 640;
+      }
+    } else if (boxFormat === 'normalized_corners') {
       // Boxes are in normalized corner format [x1, y1, x2, y2] (0-1 or -1 to 1 range)
       // Handle negative values (offset-normalized format)
       // Convert to pixel coordinates in 640x640 detection space
@@ -1791,6 +1816,18 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
         x2_detection = boxVal2 * 640;
         y2_detection = boxVal3 * 640;
       }
+    } else if (boxFormat === 'pixel_center_size') {
+      // Boxes are in pixel center-size format [center_x, center_y, width, height]
+      const center_x = boxVal0;
+      const center_y = boxVal1;
+      const width_detection = Math.abs(boxVal2);
+      const height_detection = Math.abs(boxVal3);
+      
+      // Convert center format to corner format: [x1, y1, x2, y2]
+      x1_detection = center_x - width_detection / 2;
+      y1_detection = center_y - height_detection / 2;
+      x2_detection = center_x + width_detection / 2;
+      y2_detection = center_y + height_detection / 2;
     } else if (boxFormat === 'pixel_corners') {
       // Boxes are in pixel corner format [x1, y1, x2, y2]
       x1_detection = boxVal0;
@@ -1801,8 +1838,8 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
       // Default: assume center+size format [center_x, center_y, width, height]
       const center_x = boxVal0;
       const center_y = boxVal1;
-      const width_detection = boxVal2;
-      const height_detection = boxVal3;
+      const width_detection = Math.abs(boxVal2);
+      const height_detection = Math.abs(boxVal3);
       
       // Convert center format to corner format: [x1, y1, x2, y2]
       x1_detection = center_x - width_detection / 2;
