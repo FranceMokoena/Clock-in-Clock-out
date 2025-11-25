@@ -21,12 +21,26 @@ const tempDir = path.join(__dirname, 'temp_models');
 // URL: https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip
 const BUFFALO_L_ZIP_URL = 'https://github.com/deepinsight/insightface/releases/download/v0.7/buffalo_l.zip';
 
-// Required ONNX files that should be extracted from the ZIP
+// Required ONNX files - mapping from ZIP filenames to expected filenames
 const requiredModelFiles = [
-  { filename: 'scrfd_10g_gnkps_fp32.onnx', required: true },
-  { filename: 'scrfd_500m_bnkps.onnx', required: false },
-  { filename: 'w600k_r50.onnx', required: true },
-  { filename: 'glint360k_r50.onnx', required: false }
+  { 
+    zipFilename: 'det_10g.onnx',           // Actual filename in ZIP
+    expectedFilename: 'scrfd_10g_gnkps_fp32.onnx',  // What the code expects
+    required: true,
+    description: 'SCRFD detection model (10G)'
+  },
+  { 
+    zipFilename: '2d106det.onnx',          // Actual filename in ZIP
+    expectedFilename: 'scrfd_500m_bnkps.onnx',     // What the code expects (fallback)
+    required: false,
+    description: 'SCRFD detection model (500M fallback)'
+  },
+  { 
+    zipFilename: 'w600k_r50.onnx',        // Actual filename in ZIP
+    expectedFilename: 'w600k_r50.onnx',  // Same name
+    required: true,
+    description: 'ArcFace recognition model'
+  }
 ];
 
 function downloadFile(url, filepath, timeout = 300000) { // 5 minute timeout
@@ -150,11 +164,11 @@ async function downloadModels() {
     console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
     console.log(`📅 Time: ${new Date().toISOString()}\n`);
 
-    // Check if required models already exist
+    // Check if required models already exist (check expected filenames)
     const requiredModels = requiredModelFiles.filter(m => m.required);
     let allRequiredExist = true;
     for (const model of requiredModels) {
-      const filepath = path.join(modelsDir, model.filename);
+      const filepath = path.join(modelsDir, model.expectedFilename);
       if (!fs.existsSync(filepath) || fs.statSync(filepath).size < 1024) {
         allRequiredExist = false;
         break;
@@ -258,19 +272,21 @@ async function downloadModels() {
     }
 
     for (const model of requiredModelFiles) {
-      // Search recursively in the extracted directory
-      const foundPath = findFileRecursive(tempDir, model.filename);
+      // Search for the ZIP filename in the extracted directory
+      const foundPath = findFileRecursive(tempDir, model.zipFilename);
       
       if (foundPath) {
-        const dstPath = path.join(modelsDir, model.filename);
+        // Copy to the expected filename (may be different from ZIP filename)
+        const dstPath = path.join(modelsDir, model.expectedFilename);
         fs.copyFileSync(foundPath, dstPath);
         const sizeMB = (fs.statSync(dstPath).size / 1024 / 1024).toFixed(2);
-        console.log(`   ✅ Copied: ${model.filename} (${sizeMB} MB) from ${path.relative(tempDir, foundPath)}`);
+        console.log(`   ✅ Copied: ${model.zipFilename} → ${model.expectedFilename} (${sizeMB} MB)`);
+        console.log(`      ${model.description}`);
         copiedCount++;
       } else {
-        console.warn(`   ⚠️  Not found in ZIP: ${model.filename}`);
+        console.warn(`   ⚠️  Not found in ZIP: ${model.zipFilename} (${model.description})`);
         if (model.required) {
-          failedFiles.push(model.filename);
+          failedFiles.push(model.expectedFilename);
         }
       }
     }
@@ -291,10 +307,10 @@ async function downloadModels() {
       console.warn(`⚠️  Cleanup warning: ${cleanupError.message}`);
     }
 
-    // Verify required models
+    // Verify required models (check expected filenames)
     const requiredSuccess = requiredModels.filter(m => 
-      fs.existsSync(path.join(modelsDir, m.filename)) && 
-      fs.statSync(path.join(modelsDir, m.filename)).size > 1024
+      fs.existsSync(path.join(modelsDir, m.expectedFilename)) && 
+      fs.statSync(path.join(modelsDir, m.expectedFilename)).size > 1024
     ).length;
 
     console.log(`\n📊 Download summary: ${copiedCount} files copied`);

@@ -350,35 +350,45 @@ async function downloadMissingModels(modelsPath) {
       return false;
     }
 
-    // Copy required ONNX files
+    // Copy required ONNX files - map ZIP filenames to expected filenames
     const filesToCopy = [
-      { src: 'scrfd_10g_gnkps_fp32.onnx', dst: filepath, required: needsDetection },
-      { src: 'scrfd_500m_bnkps.onnx', dst: filepath500m, required: false },
-      { src: 'w600k_r50.onnx', dst: recPath, required: needsRecognition }
+      { zipFilename: 'det_10g.onnx', expectedFilename: 'scrfd_10g_gnkps_fp32.onnx', dst: filepath, required: needsDetection },
+      { zipFilename: '2d106det.onnx', expectedFilename: 'scrfd_500m_bnkps.onnx', dst: filepath500m, required: false },
+      { zipFilename: 'w600k_r50.onnx', expectedFilename: 'w600k_r50.onnx', dst: recPath, required: needsRecognition }
     ];
+
+    // Function to find file recursively
+    function findFileRecursive(dir, filename) {
+      try {
+        const items = fs.readdirSync(dir, { withFileTypes: true });
+        for (const item of items) {
+          const fullPath = path.join(dir, item.name);
+          if (item.isDirectory()) {
+            const found = findFileRecursive(fullPath, filename);
+            if (found) return found;
+          } else if (item.name === filename) {
+            return fullPath;
+          }
+        }
+      } catch (error) {
+        // Ignore errors
+      }
+      return null;
+    }
 
     let copiedCount = 0;
     for (const file of filesToCopy) {
       if (!file.required) continue; // Only copy required files at runtime
       
-      const possiblePaths = [
-        path.join(extractDir, file.src),
-        path.join(extractDir, 'buffalo_l', file.src),
-        path.join(extractDir, 'models', file.src),
-      ];
-
-      let found = false;
-      for (const srcPath of possiblePaths) {
-        if (fs.existsSync(srcPath)) {
-          fs.copyFileSync(srcPath, file.dst);
-          console.log(`   ✅ Copied: ${file.src}`);
-          copiedCount++;
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        console.warn(`   ⚠️  Not found in ZIP: ${file.src}`);
+      // Search recursively for the ZIP filename
+      const foundPath = findFileRecursive(tempDir, file.zipFilename);
+      
+      if (foundPath) {
+        fs.copyFileSync(foundPath, file.dst);
+        console.log(`   ✅ Copied: ${file.zipFilename} → ${file.expectedFilename}`);
+        copiedCount++;
+      } else {
+        console.warn(`   ⚠️  Not found in ZIP: ${file.zipFilename}`);
       }
     }
 
