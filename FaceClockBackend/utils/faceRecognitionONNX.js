@@ -494,6 +494,9 @@ async function loadModels() {
       console.log('📦 Loading SCRFD face detection model...');
       detectionModel = await ort.InferenceSession.create(detectionModelPath, {
         executionProviders: ['cpu'], // Use 'cuda' for GPU if available
+        graphOptimizationLevel: 'all', // Optimize graph to reduce memory
+        enableMemPattern: false, // Disable memory pattern to reduce overhead
+        enableCpuMemArena: false, // Disable CPU memory arena to reduce memory usage
       });
       // Log input/output names for debugging
       console.log('   📋 Detection model inputs:', JSON.stringify(detectionModel.inputNames));
@@ -517,10 +520,20 @@ async function loadModels() {
       }
 
       // Try w600k first, fallback to glint360k
+      // MEMORY OPTIMIZATION: Use session options to reduce memory usage
       if (fs.existsSync(recognitionModelPath)) {
         console.log('📦 Loading ArcFace recognition model (w600k)...');
+        console.log('   ⚠️  Large model (166MB) - optimizing memory usage...');
         recognitionModel = await ort.InferenceSession.create(recognitionModelPath, {
           executionProviders: ['cpu'],
+          graphOptimizationLevel: 'all', // Optimize graph to reduce memory
+          enableMemPattern: false, // Disable memory pattern to reduce overhead
+          enableCpuMemArena: false, // Disable CPU memory arena to reduce memory usage
+          sessionOptions: {
+            // Additional memory optimizations
+            inter_op_num_threads: 1, // Use single thread to reduce memory
+            intra_op_num_threads: 1, // Use single thread to reduce memory
+          },
         });
         console.log('   ✅ Recognition model loaded');
         console.log('   📋 Input names:', JSON.stringify(recognitionModel.inputNames));
@@ -528,8 +541,16 @@ async function loadModels() {
         console.log('   📋 Input metadata:', JSON.stringify(recognitionModel.inputMetadata));
       } else if (fs.existsSync(altRecognitionPath)) {
         console.log('📦 Loading ArcFace recognition model (glint360k)...');
+        console.log('   ⚠️  Large model - optimizing memory usage...');
         recognitionModel = await ort.InferenceSession.create(altRecognitionPath, {
           executionProviders: ['cpu'],
+          graphOptimizationLevel: 'all',
+          enableMemPattern: false,
+          enableCpuMemArena: false,
+          sessionOptions: {
+            inter_op_num_threads: 1,
+            intra_op_num_threads: 1,
+          },
         });
         console.log('   Recognition model inputs:', recognitionModel.inputNames);
         console.log('   Recognition model outputs:', recognitionModel.outputNames);
