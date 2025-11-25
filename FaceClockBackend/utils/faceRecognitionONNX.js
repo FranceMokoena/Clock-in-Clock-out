@@ -1618,35 +1618,48 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   
   // Extract scores correctly from 2D array
   // SCRFD outputs scores as [num_anchors, num_scales] or [num_anchors, 1]
-  // For multi-scale outputs, we typically take the maximum score across scales
+  // For SCRFD models, the face score is typically at index 0 of the features array
+  // Scores may be raw logits (need sigmoid) or already probabilities (0-1 range)
+  
+  // Helper function to apply sigmoid if values look like logits
+  const sigmoid = (x) => 1 / (1 + Math.exp(-x));
+  
+  // Check if scores look like logits (have negative values or values > 1)
+  let needsSigmoid = false;
+  if (scoreDims.length === 2 && scoreFeatures > 1 && scores.length > 0) {
+    const sampleScore = scores[0];
+    // If we see negative values or values > 1, likely logits
+    if (sampleScore < 0 || sampleScore > 1) {
+      needsSigmoid = true;
+    }
+  }
+  
   const extractedScores = [];
   if (scoreDims.length === 2 && scoreFeatures > 1) {
     // 2D array: [num_anchors, features]
-    // For SCRFD, scores might be across multiple scales - take the maximum
-    // OR the score might be at a specific index (usually 0 or the last one)
+    // For SCRFD, the face score is typically at index 0
+    // The other features might be for different scales or classes
     for (let i = 0; i < maxDetections; i++) {
       const baseIdx = i * scoreFeatures;
-      // Try multiple strategies:
-      // 1. Take maximum across all features (for multi-scale)
-      // 2. Take first feature (most common)
-      // 3. Take last feature
-      let score;
-      if (scoreFeatures === 10) {
-        // For 10 features, try taking the max (common in multi-scale detection)
-        const featureScores = [];
-        for (let j = 0; j < scoreFeatures; j++) {
-          featureScores.push(scores[baseIdx + j]);
-        }
-        score = Math.max(...featureScores);
-      } else {
-        // For fewer features, take the first one (most common)
-        score = scores[baseIdx];
-      }
+      // Take the score at index 0 (most common for SCRFD face detection)
+      let rawScore = scores[baseIdx];
+      
+      // Apply sigmoid if needed (for logits)
+      let score = needsSigmoid ? sigmoid(rawScore) : rawScore;
+      
+      // Ensure score is in valid range [0, 1]
+      score = Math.max(0, Math.min(1, score));
+      
       extractedScores.push(score);
     }
   } else {
     // 1D array or already flattened
-    extractedScores.push(...Array.from(scores).slice(0, maxDetections));
+    for (let i = 0; i < maxDetections; i++) {
+      let rawScore = scores[i];
+      let score = needsSigmoid ? sigmoid(rawScore) : rawScore;
+      score = Math.max(0, Math.min(1, score));
+      extractedScores.push(score);
+    }
   }
   
   // Debug: Log some raw score values to understand the format
@@ -1657,7 +1670,10 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     for (let j = 0; j < Math.min(scoreFeatures, 10); j++) {
       sampleFeatures.push(scores[sampleBase + j].toFixed(4));
     }
-    console.log(`   🔍 Sample score features for anchor 0: [${sampleFeatures.join(', ')}] (using max: ${extractedScores[0].toFixed(4)})`);
+    const rawScore0 = scores[sampleBase];
+    const processedScore0 = extractedScores[0];
+    console.log(`   🔍 Sample score features for anchor 0: [${sampleFeatures.join(', ')}]`);
+    console.log(`   🔍 Using index 0: raw=${rawScore0.toFixed(4)}, ${needsSigmoid ? 'sigmoid=' : 'direct='}${processedScore0.toFixed(4)} (${(processedScore0 * 100).toFixed(1)}%)`);
   }
   
   // 🐛 DEBUG: Log top scores to diagnose detection issues
