@@ -171,7 +171,7 @@ const CONFIG = {
       sameDevice: 0.70,  // Minimum absolute threshold (same as daily for safety)
     },
   },
-  
+   
   // 🏦 BANK-GRADE: Centroid fusion weights
   CENTROID_FUSION_WEIGHT: 0.7,  // 70% weight for centroid similarity
   MAX_FUSION_WEIGHT: 0.3,       // 30% weight for max similarity
@@ -1637,12 +1637,26 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   const extractedScores = [];
   if (scoreDims.length === 2 && scoreFeatures > 1) {
     // 2D array: [num_anchors, features]
-    // For SCRFD, the face score is typically at index 0
-    // The other features might be for different scales or classes
+    // For SCRFD with 10 features, the face score might be at different indices
+    // Strategy: Take the maximum of positive values (negative = background/no-face)
+    // This handles multi-scale outputs where the face score appears at different indices
     for (let i = 0; i < maxDetections; i++) {
       const baseIdx = i * scoreFeatures;
-      // Take the score at index 0 (most common for SCRFD face detection)
-      let rawScore = scores[baseIdx];
+      
+      // Collect all feature scores for this anchor
+      const featureScores = [];
+      for (let j = 0; j < scoreFeatures; j++) {
+        featureScores.push(scores[baseIdx + j]);
+      }
+      
+      // Find the maximum positive value (face score should be positive)
+      // Negative values typically indicate background/no-face
+      let rawScore = Math.max(...featureScores.filter(s => s > 0));
+      
+      // If no positive values, use the maximum overall (fallback)
+      if (!isFinite(rawScore) || rawScore <= 0) {
+        rawScore = Math.max(...featureScores);
+      }
       
       // Apply sigmoid if needed (for logits)
       let score = needsSigmoid ? sigmoid(rawScore) : rawScore;
@@ -1670,10 +1684,24 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     for (let j = 0; j < Math.min(scoreFeatures, 10); j++) {
       sampleFeatures.push(scores[sampleBase + j].toFixed(4));
     }
-    const rawScore0 = scores[sampleBase];
+    
+    // Find which index had the max positive value
+    const positiveScores = [];
+    let maxIdx = 0;
+    let maxVal = scores[sampleBase];
+    for (let j = 0; j < scoreFeatures; j++) {
+      const val = scores[sampleBase + j];
+      if (val > 0) positiveScores.push({idx: j, val: val});
+      if (val > maxVal) {
+        maxVal = val;
+        maxIdx = j;
+      }
+    }
+    const maxPositive = positiveScores.length > 0 ? Math.max(...positiveScores.map(p => p.val)) : maxVal;
     const processedScore0 = extractedScores[0];
+    
     console.log(`   🔍 Sample score features for anchor 0: [${sampleFeatures.join(', ')}]`);
-    console.log(`   🔍 Using index 0: raw=${rawScore0.toFixed(4)}, ${needsSigmoid ? 'sigmoid=' : 'direct='}${processedScore0.toFixed(4)} (${(processedScore0 * 100).toFixed(1)}%)`);
+    console.log(`   🔍 Using max positive (idx ${maxIdx}): raw=${maxVal.toFixed(4)}, ${needsSigmoid ? 'sigmoid=' : 'direct='}${processedScore0.toFixed(4)} (${(processedScore0 * 100).toFixed(1)}%)`);
   }
   
   // 🐛 DEBUG: Log top scores to diagnose detection issues
