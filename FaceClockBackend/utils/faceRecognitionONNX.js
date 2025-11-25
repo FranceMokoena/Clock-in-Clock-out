@@ -1567,40 +1567,108 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   const boxes = boxOutput.data;
   const landmarks = landmarkOutput ? landmarkOutput.data : null;
 
-  // Parse SCRFD output - format is [num_detections, 15] where each detection has:
-  // [x1, y1, x2, y2, score, landmark_x1, landmark_y1, landmark_x2, landmark_y2, ...]
-  // Use box_32 (highest resolution) for best accuracy
-  const numDetections = Math.floor(boxes.length / 4); // Each box has 4 values (x1, y1, x2, y2)
-  const numScores = scores.length;
+  // Log tensor shapes for debugging
+  console.log(`   📊 Box output shape: [${boxOutput.dims.join(', ')}]`);
+  console.log(`   📊 Score output shape: [${scoreOutput.dims.join(', ')}]`);
+  if (landmarkOutput) {
+    console.log(`   📊 Landmark output shape: [${landmarkOutput.dims.join(', ')}]`);
+  }
+
+  // Parse SCRFD output - format depends on model version
+  // SCRFD typically outputs: boxes [batch, num_anchors, 4], scores [batch, num_anchors]
+  // Box format is usually [x1, y1, x2, y2] in pixel coordinates OR [center_x, center_y, width, height]
+  // We need to determine the format based on the values
   
-  console.log(`   📊 Parsing ${numDetections} potential detections from SCRFD output`);
+  // Get dimensions from tensor shape
+  const boxDims = boxOutput.dims;
+  const scoreDims = scoreOutput.dims;
+  
+  // Determine number of detections from shape (usually last dimension)
+  const numDetections = boxDims.length >= 2 ? boxDims[boxDims.length - 2] : Math.floor(boxes.length / 4);
+  const numScores = scoreDims.length >= 1 ? scoreDims[scoreDims.length - 1] : scores.length;
+  
+  // Use the minimum to avoid out-of-bounds
+  const maxDetections = Math.min(numDetections, numScores, Math.floor(boxes.length / 4));
+  
+  console.log(`   📊 Parsing up to ${maxDetections} potential detections from SCRFD output`);
   
   // 🐛 DEBUG: Log top scores to diagnose detection issues
   const topScores = Array.from(scores).sort((a, b) => b - a).slice(0, 10);
   console.log(`   🔍 Top 10 detection scores: ${topScores.map(s => (s * 100).toFixed(1)).join('%, ')}%`);
   console.log(`   🔍 Detection threshold: ${(CONFIG.MIN_DETECTION_SCORE * 100).toFixed(1)}%`);
   
+  // Determine box format by checking first few boxes
+  // If values are very small (< 10), they might be normalized or in a different format
+  let boxFormat = 'unknown';
+  if (boxes.length >= 4) {
+    const firstBoxValues = [boxes[0], boxes[1], boxes[2], boxes[3]];
+    const maxVal = Math.max(...firstBoxValues.map(Math.abs));
+    if (maxVal < 1.0) {
+      boxFormat = 'normalized_corners'; // Values are 0-1, likely [x1, y1, x2, y2] normalized
+    } else if (maxVal < 640) {
+      boxFormat = 'pixel_corners'; // Values are 0-640, likely [x1, y1, x2, y2] in pixels
+    } else {
+      boxFormat = 'center_size'; // Values might be center+size format
+    }
+    console.log(`   🔍 Detected box format: ${boxFormat} (first box values: [${firstBoxValues.map(v => v.toFixed(3)).join(', ')}])`);
+  }
+  
   // 🏦 BANK-GRADE: Parse detections and convert to normalized coordinates (0-1)
-  // Boxes are in pixel coordinates of canonical image - convert to normalized (0-1)
-  for (let i = 0; i < numDetections && i < numScores; i++) {
-    const boxIdx = i * 4;
+  // First, collect all detections that pass the score threshold
+  const validDetections = [];
+  for (let i = 0; i < maxDetections; i++) {
     const scoreIdx = i;
+    const score = scores[scoreIdx];
+    
+    // Filter by score FIRST to avoid processing invalid detections
+    if (score < CONFIG.MIN_DETECTION_SCORE) {
+      continue;
+    }
+    
+    validDetections.push({
+      index: i,
+      score: score
+    });
+  }
+  
+  console.log(`   📊 Found ${validDetections.length} detections above threshold (${(CONFIG.MIN_DETECTION_SCORE * 100).toFixed(1)}%)`);
+  
+  // Now parse only the valid detections
+  for (const detection of validDetections) {
+    const i = detection.index;
+    const score = detection.score;
+    const boxIdx = i * 4;
     const landmarkIdx = landmarks ? i * 10 : null; // 5 keypoints * 2 (x, y) = 10 values
     
-    // SCRFD outputs boxes in pixel coordinates of DETECTION image (640x640 square)
-    // 🏦 BANK-GRADE: Convert from detection space (640x640) to canonical space, then normalize (0-1)
-    // 🐛 FIX: SCRFD outputs boxes as [center_x, center_y, width, height] NOT [x1, y1, x2, y2]
-    // We need to convert center format to corner format
-    const center_x = boxes[boxIdx];      // Center X in 640x640 detection space
-    const center_y = boxes[boxIdx + 1];  // Center Y
-    const width_detection = boxes[boxIdx + 2];  // Width
-    const height_detection = boxes[boxIdx + 3]; // Height
+    // Parse box based on detected format
+    let x1_detection, y1_detection, x2_detection, y2_detection;
     
-    // Convert center format to corner format: [x1, y1, x2, y2]
-    let x1_detection = center_x - width_detection / 2;
-    let y1_detection = center_y - height_detection / 2;
-    let x2_detection = center_x + width_detection / 2;
-    let y2_detection = center_y + height_detection / 2;
+    if (boxFormat === 'normalized_corners') {
+      // Boxes are already in normalized corner format [x1, y1, x2, y2] (0-1 range)
+      // Convert to pixel coordinates in 640x640 detection space
+      x1_detection = boxes[boxIdx] * 640;
+      y1_detection = boxes[boxIdx + 1] * 640;
+      x2_detection = boxes[boxIdx + 2] * 640;
+      y2_detection = boxes[boxIdx + 3] * 640;
+    } else if (boxFormat === 'pixel_corners') {
+      // Boxes are in pixel corner format [x1, y1, x2, y2]
+      x1_detection = boxes[boxIdx];
+      y1_detection = boxes[boxIdx + 1];
+      x2_detection = boxes[boxIdx + 2];
+      y2_detection = boxes[boxIdx + 3];
+    } else {
+      // Default: assume center+size format [center_x, center_y, width, height]
+      const center_x = boxes[boxIdx];
+      const center_y = boxes[boxIdx + 1];
+      const width_detection = boxes[boxIdx + 2];
+      const height_detection = boxes[boxIdx + 3];
+      
+      // Convert center format to corner format: [x1, y1, x2, y2]
+      x1_detection = center_x - width_detection / 2;
+      y1_detection = center_y - height_detection / 2;
+      x2_detection = center_x + width_detection / 2;
+      y2_detection = center_y + height_detection / 2;
+    }
     
     // Ensure coordinates are within bounds and ordered correctly
     x1_detection = Math.max(0, Math.min(640, x1_detection));
@@ -1615,8 +1683,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     if (y2_detection < y1_detection) {
       [y1_detection, y2_detection] = [y2_detection, y1_detection];
     }
-    
-    const score = scores[scoreIdx];
     
     // Convert detection coordinates (640x640) back to canonical coordinates
     // Detection image was created using 'cover' which scales and crops
@@ -1651,16 +1717,32 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     let faceLandmarks = null;
     if (landmarks && landmarkIdx !== null && landmarkIdx < landmarks.length - 9) {
       // Landmarks are in detection space (640x640) - convert to canonical, then normalize
-      const leftEyeX_detection = landmarks[landmarkIdx];
-      const leftEyeY_detection = landmarks[landmarkIdx + 1];
-      const rightEyeX_detection = landmarks[landmarkIdx + 2];
-      const rightEyeY_detection = landmarks[landmarkIdx + 3];
-      const noseX_detection = landmarks[landmarkIdx + 4];
-      const noseY_detection = landmarks[landmarkIdx + 5];
-      const leftMouthX_detection = landmarks[landmarkIdx + 6];
-      const leftMouthY_detection = landmarks[landmarkIdx + 7];
-      const rightMouthX_detection = landmarks[landmarkIdx + 8];
-      const rightMouthY_detection = landmarks[landmarkIdx + 9];
+      // If boxes are normalized, landmarks might also be normalized
+      let leftEyeX_detection = landmarks[landmarkIdx];
+      let leftEyeY_detection = landmarks[landmarkIdx + 1];
+      let rightEyeX_detection = landmarks[landmarkIdx + 2];
+      let rightEyeY_detection = landmarks[landmarkIdx + 3];
+      let noseX_detection = landmarks[landmarkIdx + 4];
+      let noseY_detection = landmarks[landmarkIdx + 5];
+      let leftMouthX_detection = landmarks[landmarkIdx + 6];
+      let leftMouthY_detection = landmarks[landmarkIdx + 7];
+      let rightMouthX_detection = landmarks[landmarkIdx + 8];
+      let rightMouthY_detection = landmarks[landmarkIdx + 9];
+      
+      // If boxes are normalized, landmarks are likely also normalized
+      if (boxFormat === 'normalized_corners') {
+        // Convert normalized landmarks to pixel coordinates in 640x640 detection space
+        leftEyeX_detection *= 640;
+        leftEyeY_detection *= 640;
+        rightEyeX_detection *= 640;
+        rightEyeY_detection *= 640;
+        noseX_detection *= 640;
+        noseY_detection *= 640;
+        leftMouthX_detection *= 640;
+        leftMouthY_detection *= 640;
+        rightMouthX_detection *= 640;
+        rightMouthY_detection *= 640;
+      }
       
       // Convert to canonical coordinates (add crop offset, then divide by scale)
       const leftEyeX_canonical = Math.max(0, Math.min(canonicalWidth, (leftEyeX_detection + preprocessed.cropOffsetX) / preprocessed.scale));
