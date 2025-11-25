@@ -194,33 +194,80 @@ async function downloadModels() {
       return false;
     }
 
+    // List contents of extracted directory to debug structure
+    console.log('\n🔍 Checking extracted ZIP structure...');
+    function listDirRecursive(dir, prefix = '') {
+      try {
+        const items = fs.readdirSync(dir, { withFileTypes: true });
+        for (const item of items) {
+          const fullPath = path.join(dir, item.name);
+          if (item.isDirectory()) {
+            console.log(`${prefix}📁 ${item.name}/`);
+            listDirRecursive(fullPath, prefix + '  ');
+          } else {
+            const sizeMB = (fs.statSync(fullPath).size / 1024 / 1024).toFixed(2);
+            console.log(`${prefix}📄 ${item.name} (${sizeMB} MB)`);
+          }
+        }
+      } catch (error) {
+        console.warn(`   ⚠️  Error listing directory: ${error.message}`);
+      }
+    }
+    
+    if (fs.existsSync(extractDir)) {
+      console.log(`📁 Contents of ${extractDir}:`);
+      listDirRecursive(extractDir);
+    } else {
+      // Check if extraction created a different structure
+      const tempContents = fs.readdirSync(tempDir, { withFileTypes: true });
+      console.log(`📁 Contents of temp directory:`);
+      for (const item of tempContents) {
+        const fullPath = path.join(tempDir, item.name);
+        if (item.isDirectory()) {
+          console.log(`📁 ${item.name}/`);
+          listDirRecursive(fullPath, '  ');
+        } else {
+          const sizeMB = (fs.statSync(fullPath).size / 1024 / 1024).toFixed(2);
+          console.log(`📄 ${item.name} (${sizeMB} MB)`);
+        }
+      }
+    }
+
     // Copy ONNX files from extracted directory to models directory
     console.log('\n📋 Copying ONNX files...');
     let copiedCount = 0;
     let failedFiles = [];
 
-    for (const model of requiredModelFiles) {
-      // Look for the file in the extracted directory (could be in root or subdirectory)
-      const possiblePaths = [
-        path.join(extractDir, model.filename),
-        path.join(extractDir, 'buffalo_l', model.filename),
-        path.join(extractDir, 'models', model.filename),
-      ];
-
-      let found = false;
-      for (const srcPath of possiblePaths) {
-        if (fs.existsSync(srcPath)) {
-          const dstPath = path.join(modelsDir, model.filename);
-          fs.copyFileSync(srcPath, dstPath);
-          const sizeMB = (fs.statSync(dstPath).size / 1024 / 1024).toFixed(2);
-          console.log(`   ✅ Copied: ${model.filename} (${sizeMB} MB)`);
-          copiedCount++;
-          found = true;
-          break;
+    // Function to find file recursively
+    function findFileRecursive(dir, filename) {
+      try {
+        const items = fs.readdirSync(dir, { withFileTypes: true });
+        for (const item of items) {
+          const fullPath = path.join(dir, item.name);
+          if (item.isDirectory()) {
+            const found = findFileRecursive(fullPath, filename);
+            if (found) return found;
+          } else if (item.name === filename) {
+            return fullPath;
+          }
         }
+      } catch (error) {
+        // Ignore errors
       }
+      return null;
+    }
 
-      if (!found) {
+    for (const model of requiredModelFiles) {
+      // Search recursively in the extracted directory
+      const foundPath = findFileRecursive(tempDir, model.filename);
+      
+      if (foundPath) {
+        const dstPath = path.join(modelsDir, model.filename);
+        fs.copyFileSync(foundPath, dstPath);
+        const sizeMB = (fs.statSync(dstPath).size / 1024 / 1024).toFixed(2);
+        console.log(`   ✅ Copied: ${model.filename} (${sizeMB} MB) from ${path.relative(tempDir, foundPath)}`);
+        copiedCount++;
+      } else {
         console.warn(`   ⚠️  Not found in ZIP: ${model.filename}`);
         if (model.required) {
           failedFiles.push(model.filename);
