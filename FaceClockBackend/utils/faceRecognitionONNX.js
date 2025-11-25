@@ -1617,16 +1617,47 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   console.log(`   📊 Parsing up to ${maxDetections} potential detections (${numAnchors} anchors, ${boxFeatures} box features, ${scoreFeatures} score features)`);
   
   // Extract scores correctly from 2D array
-  // If scores are 2D [num_anchors, features], we need to extract the first feature (score)
+  // SCRFD outputs scores as [num_anchors, num_scales] or [num_anchors, 1]
+  // For multi-scale outputs, we typically take the maximum score across scales
   const extractedScores = [];
   if (scoreDims.length === 2 && scoreFeatures > 1) {
-    // 2D array: extract first column (score)
+    // 2D array: [num_anchors, features]
+    // For SCRFD, scores might be across multiple scales - take the maximum
+    // OR the score might be at a specific index (usually 0 or the last one)
     for (let i = 0; i < maxDetections; i++) {
-      extractedScores.push(scores[i * scoreFeatures]);
+      const baseIdx = i * scoreFeatures;
+      // Try multiple strategies:
+      // 1. Take maximum across all features (for multi-scale)
+      // 2. Take first feature (most common)
+      // 3. Take last feature
+      let score;
+      if (scoreFeatures === 10) {
+        // For 10 features, try taking the max (common in multi-scale detection)
+        const featureScores = [];
+        for (let j = 0; j < scoreFeatures; j++) {
+          featureScores.push(scores[baseIdx + j]);
+        }
+        score = Math.max(...featureScores);
+      } else {
+        // For fewer features, take the first one (most common)
+        score = scores[baseIdx];
+      }
+      extractedScores.push(score);
     }
   } else {
     // 1D array or already flattened
     extractedScores.push(...Array.from(scores).slice(0, maxDetections));
+  }
+  
+  // Debug: Log some raw score values to understand the format
+  if (scoreDims.length === 2 && scoreFeatures > 1 && extractedScores.length > 0) {
+    const sampleIdx = 0;
+    const sampleBase = sampleIdx * scoreFeatures;
+    const sampleFeatures = [];
+    for (let j = 0; j < Math.min(scoreFeatures, 10); j++) {
+      sampleFeatures.push(scores[sampleBase + j].toFixed(4));
+    }
+    console.log(`   🔍 Sample score features for anchor 0: [${sampleFeatures.join(', ')}] (using max: ${extractedScores[0].toFixed(4)})`);
   }
   
   // 🐛 DEBUG: Log top scores to diagnose detection issues
