@@ -80,6 +80,82 @@ const staffSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  // ⏰ WORKING HOURS: Assigned during registration (weekdays only)
+  // If not assigned, will fall back to host company default hours
+  clockInTime: {
+    type: String, // Format: "HH:MM" (e.g., "07:30")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        // Validate time format HH:MM (24-hour format)
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Clock-in time must be in HH:MM format (24-hour, e.g., "07:30")'
+    }
+  },
+  clockOutTime: {
+    type: String, // Format: "HH:MM" (e.g., "16:30")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Clock-out time must be in HH:MM format (24-hour, e.g., "16:30")'
+    }
+  },
+  breakStartTime: {
+    type: String, // Format: "HH:MM" (e.g., "13:00")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Break start time must be in HH:MM format (24-hour, e.g., "13:00")'
+    }
+  },
+  breakEndTime: {
+    type: String, // Format: "HH:MM" (e.g., "14:00")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Break end time must be in HH:MM format (24-hour, e.g., "14:00")'
+    }
+  },
+  // ⏰ EXTRA HOURS: Optional extra hours availability
+  extraHoursStartTime: {
+    type: String, // Format: "HH:MM" (e.g., "18:00")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Extra hours start time must be in HH:MM format (24-hour, e.g., "18:00")'
+    }
+  },
+  extraHoursEndTime: {
+    type: String, // Format: "HH:MM" (e.g., "20:00")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Extra hours end time must be in HH:MM format (24-hour, e.g., "20:00")'
+    }
+  },
   faceEmbedding: {
     type: [Number],
     required: false  // Now optional, use faceEmbeddings array instead
@@ -198,7 +274,7 @@ const staffSchema = new mongoose.Schema({
 staffSchema.index({ isActive: 1, name: 1 }); // Compound index for active staff queries
 staffSchema.index({ createdAt: -1 }); // For sorting by creation date
 staffSchema.index({ name: 1 }); // For name lookups
-staffSchema.index({ idNumber: 1 }); // For ID number lookups (unique)
+// Note: idNumber index is automatically created by unique: true, no need to add it explicitly
 
 // Encryption/Decryption helpers
 const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');

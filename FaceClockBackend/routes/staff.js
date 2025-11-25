@@ -106,8 +106,8 @@ router.post('/register', upload.fields([
   }
   
   try {
-    const { name, surname, idNumber, phoneNumber, role, department, hostCompanyId, location, customAddress } = req.body;
-    console.log('   📋 Extracted form data:', { name, surname, idNumber, role, department, hostCompanyId, location, customAddress });
+    const { name, surname, idNumber, phoneNumber, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime } = req.body;
+    console.log('   📋 Extracted form data:', { name, surname, idNumber, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime });
     
     // Validate required fields
     if (!name || !surname || !idNumber || !phoneNumber || !role || !department) {
@@ -145,6 +145,27 @@ router.post('/register', upload.fields([
     // Validate role
     if (!['Intern', 'Staff', 'Other'].includes(role)) {
       return res.status(400).json({ error: 'Role must be Intern, Staff, or Other' });
+    }
+    
+    // ⏰ VALIDATE WORKING HOURS: Validate time format if provided (HH:MM format)
+    const timeFormatRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (clockInTime && !timeFormatRegex.test(clockInTime.trim())) {
+      return res.status(400).json({ error: 'Clock-in time must be in HH:MM format (24-hour, e.g., "07:30")' });
+    }
+    if (clockOutTime && !timeFormatRegex.test(clockOutTime.trim())) {
+      return res.status(400).json({ error: 'Clock-out time must be in HH:MM format (24-hour, e.g., "16:30")' });
+    }
+    if (breakStartTime && !timeFormatRegex.test(breakStartTime.trim())) {
+      return res.status(400).json({ error: 'Break start time must be in HH:MM format (24-hour, e.g., "13:00")' });
+    }
+    if (breakEndTime && !timeFormatRegex.test(breakEndTime.trim())) {
+      return res.status(400).json({ error: 'Break end time must be in HH:MM format (24-hour, e.g., "14:00")' });
+    }
+    if (extraHoursStartTime && !timeFormatRegex.test(extraHoursStartTime.trim())) {
+      return res.status(400).json({ error: 'Extra hours start time must be in HH:MM format (24-hour, e.g., "18:00")' });
+    }
+    if (extraHoursEndTime && !timeFormatRegex.test(extraHoursEndTime.trim())) {
+      return res.status(400).json({ error: 'Extra hours end time must be in HH:MM format (24-hour, e.g., "20:00")' });
     }
     
     // 🌍 GEOCODING: Get location coordinates (from static dataset or geocode API)
@@ -520,6 +541,14 @@ router.post('/register', upload.fields([
         locationLatitude: locationLatitude, // Store geocoded coordinates
         locationLongitude: locationLongitude,
         locationAddress: isCustomAddress ? locationAddress : undefined, // Store full address if custom
+        // ⏰ WORKING HOURS: Store assigned working hours (optional - will fall back to host company default if not provided)
+        clockInTime: clockInTime && clockInTime.trim() ? clockInTime.trim() : undefined,
+        clockOutTime: clockOutTime && clockOutTime.trim() ? clockOutTime.trim() : undefined,
+        breakStartTime: breakStartTime && breakStartTime.trim() ? breakStartTime.trim() : undefined,
+        breakEndTime: breakEndTime && breakEndTime.trim() ? breakEndTime.trim() : undefined,
+        // ⏰ EXTRA HOURS: Store extra hours availability (optional)
+        extraHoursStartTime: extraHoursStartTime && extraHoursStartTime.trim() ? extraHoursStartTime.trim() : undefined,
+        extraHoursEndTime: extraHoursEndTime && extraHoursEndTime.trim() ? extraHoursEndTime.trim() : undefined,
       faceEmbedding: primaryEmbedding, // Primary embedding (for backward compatibility)
       faceEmbeddings: embeddingResults, // 🏦 BANK-GRADE: ALL embeddings (3-5) for centroid fusion
       embeddingQualities: embeddingQualities, // 🏦 BANK-GRADE: Quality metadata per embedding
@@ -836,6 +865,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       return res.status(403).json({
         success: false,
         error: errorMessage,
+        staffName: staff.name, // Include staff name for personalized frontend message
+        assignedLocation: staffLocationName, // Include assigned location name
         details: {
           distance: locationValidation.distance,
           requiredRadius: locationValidation.requiredRadius,
@@ -897,6 +928,95 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     
     console.log(`✅ Success: ${staff.name} ${clockTypeText} on ${shortDateString} at ${timeString}`);
     
+    // ⏰ WORKING HOURS VALIDATION: Check if clock time is within assigned hours
+    const TOLERANCE = 15; // 15 minutes tolerance
+    let timeWarning = null;
+    let expectedTime = null;
+    let isOnTime = true;
+    
+    // Helper to parse time string (HH:MM) to hour and minute
+    const parseTime = (timeString) => {
+      if (!timeString) return null;
+      const parts = timeString.split(':');
+      if (parts.length !== 2) return null;
+      const hour = parseInt(parts[0], 10);
+      const minute = parseInt(parts[1], 10);
+      if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return null;
+      }
+      return { hour, minute };
+    };
+    
+    // Get working hours for staff (staff-specific or host company default)
+    let workingHours = null;
+    if (staff.clockInTime && staff.clockOutTime) {
+      // Staff has assigned hours
+      workingHours = {
+        clockIn: parseTime(staff.clockInTime),
+        clockOut: parseTime(staff.clockOutTime),
+        startBreak: parseTime(staff.breakStartTime),
+        endBreak: parseTime(staff.breakEndTime),
+        source: 'staff'
+      };
+    } else if (staff.hostCompanyId) {
+      // Fall back to host company default hours
+      const HostCompany = require('../models/HostCompany');
+      const hostCompany = await HostCompany.findById(staff.hostCompanyId).lean();
+      if (hostCompany && hostCompany.defaultClockInTime && hostCompany.defaultClockOutTime) {
+        workingHours = {
+          clockIn: parseTime(hostCompany.defaultClockInTime),
+          clockOut: parseTime(hostCompany.defaultClockOutTime),
+          startBreak: parseTime(hostCompany.defaultBreakStartTime),
+          endBreak: parseTime(hostCompany.defaultBreakEndTime),
+          source: 'hostCompany'
+        };
+      }
+    }
+    
+    // Check if current time is within assigned hours (only for weekdays)
+    if (workingHours) {
+      const currentDay = timestamp.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+      const isWeekday = currentDay >= 1 && currentDay <= 5; // Monday to Friday
+      
+      if (isWeekday) {
+        let expectedTimeObj = null;
+        let timeType = '';
+        
+        if (type === 'in' && workingHours.clockIn) {
+          expectedTimeObj = workingHours.clockIn;
+          timeType = 'clock-in';
+        } else if (type === 'out' && workingHours.clockOut) {
+          expectedTimeObj = workingHours.clockOut;
+          timeType = 'clock-out';
+        } else if (type === 'break_start' && workingHours.startBreak) {
+          expectedTimeObj = workingHours.startBreak;
+          timeType = 'break start';
+        } else if (type === 'break_end' && workingHours.endBreak) {
+          expectedTimeObj = workingHours.endBreak;
+          timeType = 'break end';
+        }
+        
+        if (expectedTimeObj) {
+          const expectedDate = new Date(timestamp);
+          expectedDate.setHours(expectedTimeObj.hour, expectedTimeObj.minute, 0, 0);
+          
+          const diffMinutes = (timestamp - expectedDate) / (1000 * 60);
+          
+          if (Math.abs(diffMinutes) > TOLERANCE) {
+            isOnTime = false;
+            expectedTime = expectedDate.toLocaleTimeString('en-US', {
+              hour: '2-digit',
+              minute: '2-digit',
+              hour12: true
+            });
+            
+            const diffText = diffMinutes > 0 ? `${Math.round(diffMinutes)} minutes late` : `${Math.round(Math.abs(diffMinutes))} minutes early`;
+            timeWarning = `${timeType.charAt(0).toUpperCase() + timeType.slice(1)} time is ${diffText}. Expected: ${expectedTime}`;
+          }
+        }
+      }
+    }
+    
     // Prepare response data with date and time
     const responseData = {
       success: true,
@@ -907,7 +1027,20 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       date: dateString,
       time: timeString,
       dateTime: `${dateString} at ${timeString}`,
-      confidence
+      confidence,
+      // ⏰ WORKING HOURS: Include time validation info
+      timeValidation: {
+        isOnTime,
+        expectedTime,
+        warning: timeWarning,
+        workingHours: workingHours ? {
+          clockIn: workingHours.clockIn ? `${String(workingHours.clockIn.hour).padStart(2, '0')}:${String(workingHours.clockIn.minute).padStart(2, '0')}` : null,
+          clockOut: workingHours.clockOut ? `${String(workingHours.clockOut.hour).padStart(2, '0')}:${String(workingHours.clockOut.minute).padStart(2, '0')}` : null,
+          breakStart: workingHours.startBreak ? `${String(workingHours.startBreak.hour).padStart(2, '0')}:${String(workingHours.startBreak.minute).padStart(2, '0')}` : null,
+          breakEnd: workingHours.endBreak ? `${String(workingHours.endBreak.hour).padStart(2, '0')}:${String(workingHours.endBreak.minute).padStart(2, '0')}` : null,
+          source: workingHours.source
+        } : null
+      }
     };
     
     // ⚡ OPTIMIZED: Include request ID for status verification
@@ -1408,46 +1541,141 @@ router.get('/admin/staff', async (req, res) => {
       logsByStaffId[staffId].push(log);
     });
 
+    // 🔧 FIX: Resolve department IDs to department names
+    // Check if any staff have department as ObjectId (24 hex characters)
+    const mongoose = require('mongoose');
+    const departmentIdMap = {}; // Cache for department ID -> name mapping
+    const departmentIdsToResolve = new Set();
+    
+    staff.forEach(member => {
+      const dept = member.department;
+      if (dept && typeof dept === 'string' && mongoose.Types.ObjectId.isValid(dept) && dept.length === 24) {
+        // This looks like an ObjectId - need to resolve it
+        departmentIdsToResolve.add(dept);
+      }
+    });
+    
+    // Fetch all departments that need to be resolved
+    if (departmentIdsToResolve.size > 0) {
+      const departmentIdsArray = Array.from(departmentIdsToResolve);
+      const departments = await Department.find({ 
+        _id: { $in: departmentIdsArray } 
+      }).select('_id name').lean();
+      
+      departments.forEach(dept => {
+        departmentIdMap[dept._id.toString()] = dept.name;
+      });
+    }
+
+    // Helper to parse time string (HH:MM) to hour and minute
+    const parseTime = (timeString) => {
+      if (!timeString) return null;
+      const parts = timeString.split(':');
+      if (parts.length !== 2) return null;
+      const hour = parseInt(parts[0], 10);
+      const minute = parseInt(parts[1], 10);
+      if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return null;
+      }
+      return { hour, minute };
+    };
+
     // Build timesheets for each staff member
-    const staffWithTimesheets = staff.map(member => {
+    const staffWithTimesheets = await Promise.all(staff.map(async (member) => {
       const staffId = member._id.toString();
       const logs = logsByStaffId[staffId] || [];
 
-        // Group logs by date
-        const timesheetByDate = {};
-        logs.forEach(log => {
-          const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
-          if (!timesheetByDate[dateKey]) {
-            timesheetByDate[dateKey] = {
-              date: dateKey,
-              timeIn: null,
-              startLunch: null,
-              endLunch: null,
-              timeOut: null
-            };
-          }
+      // Get working hours for this staff member
+      let workingHours = null;
+      if (member.clockInTime && member.clockOutTime) {
+        workingHours = {
+          clockIn: parseTime(member.clockInTime),
+          clockOut: parseTime(member.clockOutTime),
+          source: 'staff'
+        };
+      } else if (member.hostCompanyId) {
+        const hostCompanyIdValue = typeof member.hostCompanyId === 'object' 
+          ? member.hostCompanyId._id || member.hostCompanyId 
+          : member.hostCompanyId;
+        const HostCompany = require('../models/HostCompany');
+        const hostCompany = await HostCompany.findById(hostCompanyIdValue).lean();
+        if (hostCompany && hostCompany.defaultClockInTime && hostCompany.defaultClockOutTime) {
+          workingHours = {
+            clockIn: parseTime(hostCompany.defaultClockInTime),
+            clockOut: parseTime(hostCompany.defaultClockOutTime),
+            source: 'hostCompany'
+          };
+        }
+      }
 
-          const timeStr = new Date(log.timestamp).toLocaleTimeString('en-US', {
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-            hour12: true
-          });
+      // Group logs by date
+      const timesheetByDate = {};
+      logs.forEach(log => {
+        const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+        if (!timesheetByDate[dateKey]) {
+          timesheetByDate[dateKey] = {
+            date: dateKey,
+            timeIn: null,
+            startLunch: null,
+            endLunch: null,
+            timeOut: null,
+            extraHours: null
+          };
+        }
 
-          if (log.clockType === 'in') {
-            timesheetByDate[dateKey].timeIn = timeStr;
-          } else if (log.clockType === 'break_start') {
-            timesheetByDate[dateKey].startLunch = timeStr;
-          } else if (log.clockType === 'break_end') {
-            timesheetByDate[dateKey].endLunch = timeStr;
-          } else if (log.clockType === 'out') {
-            timesheetByDate[dateKey].timeOut = timeStr;
-          }
+        const timeStr = new Date(log.timestamp).toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: true
         });
 
-        const timesheet = Object.values(timesheetByDate).sort((a, b) => 
-          new Date(a.date) - new Date(b.date)
-        );
+        if (log.clockType === 'in') {
+          timesheetByDate[dateKey].timeIn = timeStr;
+        } else if (log.clockType === 'break_start') {
+          timesheetByDate[dateKey].startLunch = timeStr;
+        } else if (log.clockType === 'break_end') {
+          timesheetByDate[dateKey].endLunch = timeStr;
+        } else if (log.clockType === 'out') {
+          timesheetByDate[dateKey].timeOut = timeStr;
+        }
+      });
+
+      // Calculate Extra Hours for days with working hours but no attendance
+      if (workingHours && workingHours.clockIn && workingHours.clockOut) {
+        const currentDate = new Date(startDate);
+        while (currentDate <= endDate) {
+          const dateKey = currentDate.toISOString().split('T')[0];
+          const dayOfWeek = currentDate.getDay();
+          const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5;
+          
+          if (isWeekday) {
+            if (!timesheetByDate[dateKey]) {
+              timesheetByDate[dateKey] = {
+                date: dateKey,
+                timeIn: null,
+                startLunch: null,
+                endLunch: null,
+                timeOut: null,
+                extraHours: null
+              };
+            }
+            
+            const hasClockIn = timesheetByDate[dateKey].timeIn !== null;
+            if (!hasClockIn) {
+              const startTimeStr = `${String(workingHours.clockIn.hour).padStart(2, '0')}:${String(workingHours.clockIn.minute).padStart(2, '0')}`;
+              const endTimeStr = `${String(workingHours.clockOut.hour).padStart(2, '0')}:${String(workingHours.clockOut.minute).padStart(2, '0')}`;
+              timesheetByDate[dateKey].extraHours = `Extra Hours: Was Available (${startTimeStr} - ${endTimeStr}) Not Attended`;
+            }
+          }
+          
+          currentDate.setDate(currentDate.getDate() + 1);
+        }
+      }
+
+      const timesheet = Object.values(timesheetByDate).sort((a, b) => 
+        new Date(a.date) - new Date(b.date)
+      );
 
       // Handle both populated (object) and non-populated (ID) hostCompanyId
       const hostCompany = member.hostCompanyId && typeof member.hostCompanyId === 'object' 
@@ -1457,6 +1685,18 @@ router.get('/admin/staff', async (req, res) => {
         ? (typeof member.hostCompanyId === 'object' ? member.hostCompanyId._id : member.hostCompanyId)
         : null;
 
+      // 🔧 FIX: Resolve department ID to name if it's an ObjectId
+      let departmentName = member.department;
+      if (member.department && typeof member.department === 'string') {
+        const deptId = member.department;
+        // Check if it's an ObjectId (24 hex characters)
+        if (mongoose.Types.ObjectId.isValid(deptId) && deptId.length === 24) {
+          // It's an ObjectId - resolve to name
+          departmentName = departmentIdMap[deptId] || member.department; // Fallback to original if not found
+        }
+        // Otherwise, it's already a name string, use it as-is
+      }
+
       return {
         _id: member._id,
         name: member.name,
@@ -1464,14 +1704,14 @@ router.get('/admin/staff', async (req, res) => {
         idNumber: member.idNumber,
         phoneNumber: member.phoneNumber,
         role: member.role,
-        department: member.department, // Include department field
+        department: departmentName, // 🔧 FIX: Use resolved department name instead of ID
         location: member.location,
         hostCompanyId: hostCompanyIdValue, // Include hostCompanyId (as ID)
         hostCompany: hostCompany, // Populated hostCompany object (if populated)
         createdAt: member.createdAt,
         timesheet
       };
-    });
+    }));
 
     const staffTime = Date.now() - staffStartTime;
     console.log(`⚡ Admin staff data fetched in ${staffTime}ms (${staff.length} staff, ${allLogs.length} logs)`);
@@ -1498,16 +1738,55 @@ router.get('/admin/not-accountable', async (req, res) => {
     const nextDate = new Date(targetDate);
     nextDate.setDate(nextDate.getDate() + 1);
 
-    // Expected times (in 24-hour format for easier comparison)
-    const EXPECTED_TIMES = {
-      clockIn: { hour: 7, minute: 30 },      // 07:30 AM
-      startBreak: { hour: 13, minute: 0 },  // 13:00 PM (1:00 PM)
-      endBreak: { hour: 14, minute: 0 },   // 14:00 PM (2:00 PM)
-      clockOut: { hour: 16, minute: 30 }    // 16:30 PM (4:30 PM)
-    };
-
+    // ⏰ WORKING HOURS: No longer hardcoded - will use staff's assigned hours or host company default
     // Tolerance window (in minutes) - allow 15 minutes before/after
     const TOLERANCE = 15;
+    
+    // Helper function to parse time string (HH:MM) to hour and minute
+    const parseTime = (timeString) => {
+      if (!timeString) return null;
+      const parts = timeString.split(':');
+      if (parts.length !== 2) return null;
+      const hour = parseInt(parts[0], 10);
+      const minute = parseInt(parts[1], 10);
+      if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return null;
+      }
+      return { hour, minute };
+    };
+    
+    // Helper function to get working hours for a staff member
+    // Returns staff's assigned hours if available, otherwise falls back to host company default
+    const getWorkingHours = async (staffMember) => {
+      // Check if staff has assigned hours
+      if (staffMember.clockInTime && staffMember.clockOutTime) {
+        return {
+          clockIn: parseTime(staffMember.clockInTime),
+          clockOut: parseTime(staffMember.clockOutTime),
+          startBreak: parseTime(staffMember.breakStartTime),
+          endBreak: parseTime(staffMember.breakEndTime),
+          source: 'staff' // Indicates these are staff-specific hours
+        };
+      }
+      
+      // Fall back to host company default hours
+      if (staffMember.hostCompanyId) {
+        const HostCompany = require('../models/HostCompany');
+        const hostCompany = await HostCompany.findById(staffMember.hostCompanyId).lean();
+        if (hostCompany && hostCompany.defaultClockInTime && hostCompany.defaultClockOutTime) {
+          return {
+            clockIn: parseTime(hostCompany.defaultClockInTime),
+            clockOut: parseTime(hostCompany.defaultClockOutTime),
+            startBreak: parseTime(hostCompany.defaultBreakStartTime),
+            endBreak: parseTime(hostCompany.defaultBreakEndTime),
+            source: 'hostCompany' // Indicates these are company default hours
+          };
+        }
+      }
+      
+      // No hours assigned - return null (will skip validation for this staff)
+      return null;
+    };
 
     // Build staff filter
     const staffFilter = { isActive: true };
@@ -1534,6 +1813,7 @@ router.get('/admin/not-accountable', async (req, res) => {
     }
 
     // OPTIMIZATION: Fetch logs and staff in parallel, use lean() for speed
+    // Include hostCompanyId and working hours fields for staff
     const [allLogs, allStaff] = await Promise.all([
       ClockLog.find(clockLogFilter)
         .select('staffId staffName clockType timestamp')
@@ -1541,7 +1821,7 @@ router.get('/admin/not-accountable', async (req, res) => {
         .lean(), // Use lean() - we don't need Mongoose documents
       
       Staff.find(staffFilter)
-        .select('_id name')
+        .select('_id name hostCompanyId clockInTime clockOutTime breakStartTime breakEndTime')
         .lean()
     ]);
 
@@ -1566,10 +1846,30 @@ router.get('/admin/not-accountable', async (req, res) => {
 
     const notAccountable = [];
 
-    // Check each staff member
-    allStaff.forEach(staff => {
+    // Check each staff member (using async/await for working hours lookup)
+    for (const staff of allStaff) {
       const staffId = staff._id.toString();
       const logs = staffLogs[staffId] || [];
+      
+      // ⏰ Get working hours for this staff member (staff-specific or host company default)
+      const workingHours = await getWorkingHours(staff);
+      
+      // Skip validation if no working hours are assigned (neither staff nor host company)
+      if (!workingHours) {
+        console.warn(`⚠️ No working hours assigned for ${staff.name} (ID: ${staffId}) - skipping time validation`);
+        continue;
+      }
+      
+      // Helper to format expected time for display
+      const formatExpectedTime = (hour, minute) => {
+        const time = new Date(targetDate);
+        time.setHours(hour, minute, 0, 0);
+        return time.toLocaleTimeString('en-US', {
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: true
+        });
+      };
       
       // Check if clock-in exists and is at wrong time
       const clockInLog = logs.find(log => log.clockType === 'in');
@@ -1578,106 +1878,120 @@ router.get('/admin/not-accountable', async (req, res) => {
           staffId: staff._id,
           staffName: staff.name,
           reason: 'No clock-in recorded',
-          details: 'Staff member did not clock in'
+          details: 'Staff member did not clock in',
+          expectedClockIn: workingHours.clockIn ? formatExpectedTime(workingHours.clockIn.hour, workingHours.clockIn.minute) : 'N/A'
         });
-      } else {
+      } else if (workingHours.clockIn) {
         const clockInTime = new Date(clockInLog.timestamp);
         const expectedTime = new Date(targetDate);
-        expectedTime.setHours(EXPECTED_TIMES.clockIn.hour, EXPECTED_TIMES.clockIn.minute, 0, 0);
+        expectedTime.setHours(workingHours.clockIn.hour, workingHours.clockIn.minute, 0, 0);
         
         const diffMinutes = (clockInTime - expectedTime) / (1000 * 60);
-        if (Math.abs(diffMinutes) > TOLERANCE) {
+        // Only flag LATE clock-ins (after expected time + tolerance), not early ones
+        // Early clock-ins are allowed but not flagged
+        if (diffMinutes > TOLERANCE) {
           const actualTime = clockInTime.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
             hour12: true
           });
+          const expectedTimeStr = formatExpectedTime(workingHours.clockIn.hour, workingHours.clockIn.minute);
           notAccountable.push({
             staffId: staff._id,
             staffName: staff.name,
-            reason: `Clock-in at wrong time: ${actualTime} (Expected: 07:30 AM)`,
-            details: `Clocked in at ${actualTime} instead of 07:30 AM`,
+            reason: `Clock-in at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
+            details: `Clocked in at ${actualTime} instead of ${expectedTimeStr}`,
             clockInTime: actualTime,
-            clockInTimestamp: clockInLog.timestamp
+            clockInTimestamp: clockInLog.timestamp,
+            expectedClockIn: expectedTimeStr
           });
         }
       }
 
       // Check break start time
       const breakStartLog = logs.find(log => log.clockType === 'break_start');
-      if (breakStartLog) {
+      if (breakStartLog && workingHours.startBreak) {
         const breakStartTime = new Date(breakStartLog.timestamp);
         const expectedTime = new Date(targetDate);
-        expectedTime.setHours(EXPECTED_TIMES.startBreak.hour, EXPECTED_TIMES.startBreak.minute, 0, 0);
+        expectedTime.setHours(workingHours.startBreak.hour, workingHours.startBreak.minute, 0, 0);
         
         const diffMinutes = (breakStartTime - expectedTime) / (1000 * 60);
-        if (Math.abs(diffMinutes) > TOLERANCE) {
+        // Only flag LATE break starts, not early ones
+        if (diffMinutes > TOLERANCE) {
           const actualTime = breakStartTime.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
             hour12: true
           });
+          const expectedTimeStr = formatExpectedTime(workingHours.startBreak.hour, workingHours.startBreak.minute);
           notAccountable.push({
             staffId: staff._id,
             staffName: staff.name,
-            reason: `Start break at wrong time: ${actualTime} (Expected: 01:00 PM)`,
-            details: `Started break at ${actualTime} instead of 01:00 PM`,
+            reason: `Start break at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
+            details: `Started break at ${actualTime} instead of ${expectedTimeStr}`,
             breakStartTime: actualTime,
-            breakStartTimestamp: breakStartLog.timestamp
+            breakStartTimestamp: breakStartLog.timestamp,
+            expectedBreakStart: expectedTimeStr
           });
         }
       }
 
       // Check break end time
       const breakEndLog = logs.find(log => log.clockType === 'break_end');
-      if (breakEndLog) {
+      if (breakEndLog && workingHours.endBreak) {
         const breakEndTime = new Date(breakEndLog.timestamp);
         const expectedTime = new Date(targetDate);
-        expectedTime.setHours(EXPECTED_TIMES.endBreak.hour, EXPECTED_TIMES.endBreak.minute, 0, 0);
+        expectedTime.setHours(workingHours.endBreak.hour, workingHours.endBreak.minute, 0, 0);
         
         const diffMinutes = (breakEndTime - expectedTime) / (1000 * 60);
-        if (Math.abs(diffMinutes) > TOLERANCE) {
+        // Only flag LATE break ends, not early ones
+        if (diffMinutes > TOLERANCE) {
           const actualTime = breakEndTime.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
             hour12: true
           });
+          const expectedTimeStr = formatExpectedTime(workingHours.endBreak.hour, workingHours.endBreak.minute);
           notAccountable.push({
             staffId: staff._id,
             staffName: staff.name,
-            reason: `End break at wrong time: ${actualTime} (Expected: 02:00 PM)`,
-            details: `Ended break at ${actualTime} instead of 02:00 PM`,
+            reason: `End break at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
+            details: `Ended break at ${actualTime} instead of ${expectedTimeStr}`,
             breakEndTime: actualTime,
-            breakEndTimestamp: breakEndLog.timestamp
+            breakEndTimestamp: breakEndLog.timestamp,
+            expectedBreakEnd: expectedTimeStr
           });
         }
       }
 
       // Check clock-out time
       const clockOutLog = logs.find(log => log.clockType === 'out');
-      if (clockOutLog) {
+      if (clockOutLog && workingHours.clockOut) {
         const clockOutTime = new Date(clockOutLog.timestamp);
         const expectedTime = new Date(targetDate);
-        expectedTime.setHours(EXPECTED_TIMES.clockOut.hour, EXPECTED_TIMES.clockOut.minute, 0, 0);
+        expectedTime.setHours(workingHours.clockOut.hour, workingHours.clockOut.minute, 0, 0);
         
         const diffMinutes = (clockOutTime - expectedTime) / (1000 * 60);
-        if (Math.abs(diffMinutes) > TOLERANCE) {
+        // Only flag LATE clock-outs, not early ones
+        if (diffMinutes > TOLERANCE) {
           const actualTime = clockOutTime.toLocaleTimeString('en-US', {
             hour: '2-digit',
             minute: '2-digit',
             hour12: true
           });
+          const expectedTimeStr = formatExpectedTime(workingHours.clockOut.hour, workingHours.clockOut.minute);
           notAccountable.push({
             staffId: staff._id,
             staffName: staff.name,
-            reason: `Clock-out at wrong time: ${actualTime} (Expected: 04:30 PM)`,
-            details: `Clocked out at ${actualTime} instead of 04:30 PM`,
+            reason: `Clock-out at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
+            details: `Clocked out at ${actualTime} instead of ${expectedTimeStr}`,
             clockOutTime: actualTime,
-            clockOutTimestamp: clockOutLog.timestamp
+            clockOutTimestamp: clockOutLog.timestamp,
+            expectedClockOut: expectedTimeStr
           });
         }
       }
-    });
+    }
 
     const notAccountableTime = Date.now() - notAccountableStartTime;
     console.log(`⚡ Not accountable data fetched in ${notAccountableTime}ms (${notAccountable.length} issues found)`);
@@ -1712,6 +2026,53 @@ router.get('/admin/staff/:staffId/day-details', async (req, res) => {
       staffId: staff._id,
       timestamp: { $gte: targetDate, $lt: nextDate }
     }).sort({ timestamp: 1 });
+
+    // Helper to parse time string (HH:MM) to hour and minute
+    const parseTime = (timeString) => {
+      if (!timeString) return null;
+      const parts = timeString.split(':');
+      if (parts.length !== 2) return null;
+      const hour = parseInt(parts[0], 10);
+      const minute = parseInt(parts[1], 10);
+      if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return null;
+      }
+      return { hour, minute };
+    };
+
+    // Get working hours for staff (staff-specific or host company default)
+    let workingHours = null;
+    if (staff.clockInTime && staff.clockOutTime) {
+      workingHours = {
+        clockIn: parseTime(staff.clockInTime),
+        clockOut: parseTime(staff.clockOutTime),
+        source: 'staff'
+      };
+    } else if (staff.hostCompanyId) {
+      const HostCompany = require('../models/HostCompany');
+      const hostCompany = await HostCompany.findById(staff.hostCompanyId).lean();
+      if (hostCompany && hostCompany.defaultClockInTime && hostCompany.defaultClockOutTime) {
+        workingHours = {
+          clockIn: parseTime(hostCompany.defaultClockInTime),
+          clockOut: parseTime(hostCompany.defaultClockOutTime),
+          source: 'hostCompany'
+        };
+      }
+    }
+
+    // Check for Extra Hours (working hours set but no clock-in)
+    let extraHours = null;
+    if (workingHours && workingHours.clockIn && workingHours.clockOut) {
+      const dayOfWeek = targetDate.getDay();
+      const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5; // Monday to Friday
+      const hasClockIn = logs.some(log => log.clockType === 'in');
+      
+      if (isWeekday && !hasClockIn) {
+        const startTimeStr = `${String(workingHours.clockIn.hour).padStart(2, '0')}:${String(workingHours.clockIn.minute).padStart(2, '0')}`;
+        const endTimeStr = `${String(workingHours.clockOut.hour).padStart(2, '0')}:${String(workingHours.clockOut.minute).padStart(2, '0')}`;
+        extraHours = `Extra Hours: Was Available (${startTimeStr} - ${endTimeStr}) Not Attended`;
+      }
+    }
 
     const dayDetails = {
       staff: {
@@ -1749,7 +2110,8 @@ router.get('/admin/staff/:staffId/day-details', async (req, res) => {
         startBreak: logs.find(log => log.clockType === 'break_start') || null,
         endBreak: logs.find(log => log.clockType === 'break_end') || null,
         clockOut: logs.find(log => log.clockType === 'out') || null
-      }
+      },
+      extraHours: extraHours
     };
 
     res.json({
@@ -1787,7 +2149,9 @@ router.post('/validate-preview', upload.single('image'), async (req, res) => {
       ready: validationResult.ready,
       quality: validationResult.quality,
       issues: validationResult.issues,
-      feedback: validationResult.feedback
+      feedback: validationResult.feedback,
+      gender: validationResult.metadata?.gender || 'NOT_FOUND',
+      genderConfidence: validationResult.metadata?.genderConfidence || 'NOT_FOUND'
     });
     
     // Return validation result
@@ -1829,6 +2193,39 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
       timestamp: { $gte: startDate, $lte: endDate }
     }).sort({ timestamp: 1 });
 
+    // Helper to parse time string (HH:MM) to hour and minute
+    const parseTime = (timeString) => {
+      if (!timeString) return null;
+      const parts = timeString.split(':');
+      if (parts.length !== 2) return null;
+      const hour = parseInt(parts[0], 10);
+      const minute = parseInt(parts[1], 10);
+      if (isNaN(hour) || isNaN(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        return null;
+      }
+      return { hour, minute };
+    };
+
+    // Get working hours for staff (staff-specific or host company default)
+    let workingHours = null;
+    if (staff.clockInTime && staff.clockOutTime) {
+      workingHours = {
+        clockIn: parseTime(staff.clockInTime),
+        clockOut: parseTime(staff.clockOutTime),
+        source: 'staff'
+      };
+    } else if (staff.hostCompanyId) {
+      const HostCompany = require('../models/HostCompany');
+      const hostCompany = await HostCompany.findById(staff.hostCompanyId).lean();
+      if (hostCompany && hostCompany.defaultClockInTime && hostCompany.defaultClockOutTime) {
+        workingHours = {
+          clockIn: parseTime(hostCompany.defaultClockInTime),
+          clockOut: parseTime(hostCompany.defaultClockOutTime),
+          source: 'hostCompany'
+        };
+      }
+    }
+
     // Group logs by date
     const timesheetByDate = {};
     logs.forEach(log => {
@@ -1839,7 +2236,8 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
           timeIn: null,
           startLunch: null,
           endLunch: null,
-          timeOut: null
+          timeOut: null,
+          extraHours: null
         };
       }
 
@@ -1860,6 +2258,44 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
         timesheetByDate[dateKey].timeOut = timeStr;
       }
     });
+
+    // Calculate Extra Hours for days with working hours but no attendance
+    if (workingHours && workingHours.clockIn && workingHours.clockOut) {
+      // Generate all dates in the period
+      const allDates = [];
+      const currentDate = new Date(startDate);
+      while (currentDate <= endDate) {
+        const dateKey = currentDate.toISOString().split('T')[0];
+        const dayOfWeek = currentDate.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+        const isWeekday = dayOfWeek >= 1 && dayOfWeek <= 5; // Monday to Friday
+        
+        if (isWeekday) {
+          // Check if this date already has a timesheet entry
+          if (!timesheetByDate[dateKey]) {
+            timesheetByDate[dateKey] = {
+              date: dateKey,
+              timeIn: null,
+              startLunch: null,
+              endLunch: null,
+              timeOut: null,
+              extraHours: null
+            };
+          }
+          
+          // Check if there was a clock-in on this day
+          const hasClockIn = timesheetByDate[dateKey].timeIn !== null;
+          
+          // If no clock-in and working hours are set, mark as extra hours not attended
+          if (!hasClockIn) {
+            const startTimeStr = `${String(workingHours.clockIn.hour).padStart(2, '0')}:${String(workingHours.clockIn.minute).padStart(2, '0')}`;
+            const endTimeStr = `${String(workingHours.clockOut.hour).padStart(2, '0')}:${String(workingHours.clockOut.minute).padStart(2, '0')}`;
+            timesheetByDate[dateKey].extraHours = `Extra Hours: Was Available (${startTimeStr} - ${endTimeStr}) Not Attended`;
+          }
+        }
+        
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+    }
 
     const timesheet = Object.values(timesheetByDate).sort((a, b) => 
       new Date(a.date) - new Date(b.date)
@@ -2567,7 +3003,11 @@ router.post('/admin/host-companies', async (req, res) => {
       businessType,
       industry,
       username,
-      password
+      password,
+      defaultClockInTime,
+      defaultClockOutTime,
+      defaultBreakStartTime,
+      defaultBreakEndTime
     } = req.body;
     
     if (!name || !name.trim()) {
@@ -2625,6 +3065,21 @@ router.post('/admin/host-companies', async (req, res) => {
       }
     }
     
+    // ⏰ VALIDATE DEFAULT WORKING HOURS: Validate time format if provided (HH:MM format)
+    const timeFormatRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (defaultClockInTime && !timeFormatRegex.test(defaultClockInTime.trim())) {
+      return res.status(400).json({ error: 'Default clock-in time must be in HH:MM format (24-hour, e.g., "07:30")' });
+    }
+    if (defaultClockOutTime && !timeFormatRegex.test(defaultClockOutTime.trim())) {
+      return res.status(400).json({ error: 'Default clock-out time must be in HH:MM format (24-hour, e.g., "16:30")' });
+    }
+    if (defaultBreakStartTime && !timeFormatRegex.test(defaultBreakStartTime.trim())) {
+      return res.status(400).json({ error: 'Default break start time must be in HH:MM format (24-hour, e.g., "13:00")' });
+    }
+    if (defaultBreakEndTime && !timeFormatRegex.test(defaultBreakEndTime.trim())) {
+      return res.status(400).json({ error: 'Default break end time must be in HH:MM format (24-hour, e.g., "14:00")' });
+    }
+    
     const company = new HostCompany({
       name: name.trim(),
       companyName: companyName.trim(),
@@ -2635,6 +3090,11 @@ router.post('/admin/host-companies', async (req, res) => {
       industry: industry && industry.trim() ? industry.trim() : undefined,
       username: username.trim().toLowerCase(),
       password: password, // Will be hashed by pre-save hook
+      // ⏰ DEFAULT WORKING HOURS: Store default working hours for this host company
+      defaultClockInTime: defaultClockInTime && defaultClockInTime.trim() ? defaultClockInTime.trim() : undefined,
+      defaultClockOutTime: defaultClockOutTime && defaultClockOutTime.trim() ? defaultClockOutTime.trim() : undefined,
+      defaultBreakStartTime: defaultBreakStartTime && defaultBreakStartTime.trim() ? defaultBreakStartTime.trim() : undefined,
+      defaultBreakEndTime: defaultBreakEndTime && defaultBreakEndTime.trim() ? defaultBreakEndTime.trim() : undefined,
       isActive: true
     });
     
@@ -2677,7 +3137,11 @@ router.put('/admin/host-companies/:id', async (req, res) => {
       industry,
       username,
       password,
-      isActive
+      isActive,
+      defaultClockInTime,
+      defaultClockOutTime,
+      defaultBreakStartTime,
+      defaultBreakEndTime
     } = req.body;
     
     const company = await HostCompany.findById(id);
@@ -2742,6 +3206,33 @@ router.put('/admin/host-companies/:id', async (req, res) => {
         return res.status(400).json({ error: 'Password must be at least 6 characters' });
       }
       company.password = password; // Will be hashed by pre-save hook
+    }
+    
+    // ⏰ VALIDATE AND UPDATE DEFAULT WORKING HOURS
+    const timeFormatRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (defaultClockInTime !== undefined) {
+      if (defaultClockInTime && !timeFormatRegex.test(defaultClockInTime.trim())) {
+        return res.status(400).json({ error: 'Default clock-in time must be in HH:MM format (24-hour, e.g., "07:30")' });
+      }
+      company.defaultClockInTime = defaultClockInTime ? defaultClockInTime.trim() : undefined;
+    }
+    if (defaultClockOutTime !== undefined) {
+      if (defaultClockOutTime && !timeFormatRegex.test(defaultClockOutTime.trim())) {
+        return res.status(400).json({ error: 'Default clock-out time must be in HH:MM format (24-hour, e.g., "16:30")' });
+      }
+      company.defaultClockOutTime = defaultClockOutTime ? defaultClockOutTime.trim() : undefined;
+    }
+    if (defaultBreakStartTime !== undefined) {
+      if (defaultBreakStartTime && !timeFormatRegex.test(defaultBreakStartTime.trim())) {
+        return res.status(400).json({ error: 'Default break start time must be in HH:MM format (24-hour, e.g., "13:00")' });
+      }
+      company.defaultBreakStartTime = defaultBreakStartTime ? defaultBreakStartTime.trim() : undefined;
+    }
+    if (defaultBreakEndTime !== undefined) {
+      if (defaultBreakEndTime && !timeFormatRegex.test(defaultBreakEndTime.trim())) {
+        return res.status(400).json({ error: 'Default break end time must be in HH:MM format (24-hour, e.g., "14:00")' });
+      }
+      company.defaultBreakEndTime = defaultBreakEndTime ? defaultBreakEndTime.trim() : undefined;
     }
     
     if (isActive !== undefined) {

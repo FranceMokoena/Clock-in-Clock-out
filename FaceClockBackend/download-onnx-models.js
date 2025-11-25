@@ -20,30 +20,48 @@ const modelsDir = path.join(__dirname, 'models', 'onnx');
 // For now, we'll use alternative pre-converted models or provide conversion instructions
 const modelFiles = [
   {
-    filename: 'scrfd_500m_bnkps.onnx',
-    description: 'SCRFD face detection model (500M)',
+    filename: 'scrfd_10g_gnkps_fp32.onnx',
+    description: 'SCRFD face detection model (10G - Preferred)',
     sources: [
-      // Hugging Face (often has pre-converted models)
-      'https://huggingface.co/deepinsight/scrfd-500m/resolve/main/scrfd_500m_bnkps.onnx',
-      // Alternative: Use InsightFace Python to convert, or find pre-converted versions
-      'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
-      // Model Zoo alternative
-      'https://github.com/onnx/models/raw/main/vision/body_analysis/insightface/scrfd_500m_bnkps.onnx',
+      // GitHub releases (most reliable)
+      'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_10g_gnkps_fp32.onnx',
+      // jsdelivr CDN
+      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_10g_gnkps_fp32.onnx',
     ],
-    note: 'If download fails, you may need to convert from PyTorch using InsightFace tools'
+    note: 'Preferred detection model - better accuracy'
+  },
+  {
+    filename: 'scrfd_500m_bnkps.onnx',
+    description: 'SCRFD face detection model (500M - Fallback)',
+    sources: [
+      // GitHub releases
+      'https://github.com/deepinsight/insightface/releases/download/v0.7/scrfd_500m_bnkps.onnx',
+      // jsdelivr CDN (more reliable for public repos)
+      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/scrfd_500m_bnkps.onnx',
+    ],
+    note: 'Fallback detection model - smaller size'
   },
   {
     filename: 'w600k_r50.onnx',
-    description: 'ArcFace recognition model (W600K)',
+    description: 'ArcFace recognition model (W600K - Primary)',
     sources: [
-      // Hugging Face
-      'https://huggingface.co/deepinsight/arcface-r50/resolve/main/w600k_r50.onnx',
-      // Alternative model (Glint360K - more accurate)
-      'https://huggingface.co/deepinsight/glint360k-r50/resolve/main/glint360k_r50.onnx',
-      // GitHub releases
+      // GitHub releases (most reliable)
       'https://github.com/deepinsight/insightface/releases/download/v0.7/w600k_r50.onnx',
+      // jsdelivr CDN
+      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/w600k_r50.onnx',
     ],
-    note: 'If download fails, you may need to convert from PyTorch using InsightFace tools'
+    note: 'Primary recognition model'
+  },
+  {
+    filename: 'glint360k_r50.onnx',
+    description: 'ArcFace recognition model (Glint360K - Alternative)',
+    sources: [
+      // GitHub releases
+      'https://github.com/deepinsight/insightface/releases/download/v0.7/glint360k_r50.onnx',
+      // jsdelivr CDN
+      'https://cdn.jsdelivr.net/gh/deepinsight/insightface@master/model_zoo/buffalo_l/glint360k_r50.onnx',
+    ],
+    note: 'Alternative recognition model - more accurate, optional'
   }
 ];
 

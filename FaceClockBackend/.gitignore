@@ -116,7 +116,11 @@ Thumbs.db
 # Face recognition models - NOTE: We need these in git for Render deployment
 # models/face-api/  # Commented out - models need to be committed for fast deployment
 *.pb
+
+# ONNX models - Exclude from git (too large, will download during Render build)
+# Models are downloaded during build via download-onnx-models.js
 *.onnx
+models/onnx/*.onnx
 
 # Build files
 build/

@@ -1,0 +1,3 @@
+# ONNX models are NOT tracked in git (too large for GitHub)
+# Models will be downloaded during Render build via download-onnx-models.js
+# See RENDER_DEPLOYMENT_NO_GIT_LFS.md for details

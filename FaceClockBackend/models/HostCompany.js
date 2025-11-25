@@ -23,6 +23,56 @@ const hostCompanySchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  // ⏰ DEFAULT WORKING HOURS: Assigned during host company creation (weekdays only)
+  // These are used as fallback when staff members don't have individual hours assigned
+  defaultClockInTime: {
+    type: String, // Format: "HH:MM" (e.g., "07:30")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Default clock-in time must be in HH:MM format (24-hour, e.g., "07:30")'
+    }
+  },
+  defaultClockOutTime: {
+    type: String, // Format: "HH:MM" (e.g., "16:30")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Default clock-out time must be in HH:MM format (24-hour, e.g., "16:30")'
+    }
+  },
+  defaultBreakStartTime: {
+    type: String, // Format: "HH:MM" (e.g., "13:00")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Default break start time must be in HH:MM format (24-hour, e.g., "13:00")'
+    }
+  },
+  defaultBreakEndTime: {
+    type: String, // Format: "HH:MM" (e.g., "14:00")
+    required: false,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        if (!v) return true; // Optional
+        return /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/.test(v);
+      },
+      message: 'Default break end time must be in HH:MM format (24-hour, e.g., "14:00")'
+    }
+  },
   emailAddress: {
     type: String,
     required: false,
@@ -100,7 +150,7 @@ hostCompanySchema.methods.comparePassword = async function(candidatePassword) {
 // Add indexes for faster queries
 hostCompanySchema.index({ isActive: 1, name: 1 });
 hostCompanySchema.index({ companyName: 1 });
-hostCompanySchema.index({ username: 1 }); // For login lookups
+// Note: username index is automatically created by unique: true, no need to add it explicitly
 
 module.exports = mongoose.model('HostCompany', hostCompanySchema);
 

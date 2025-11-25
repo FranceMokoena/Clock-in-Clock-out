@@ -180,8 +180,19 @@ process.on('unhandledRejection', (err) => {
 
 async function startServer() {
   console.log('🚀 Preparing face recognition services...');
-  await loadModels();
-  console.log('✅ Face recognition models ready');
+  try {
+    await loadModels();
+    console.log('✅ Face recognition models ready');
+  } catch (error) {
+    console.error('⚠️  WARNING: Face recognition models failed to load:', error.message);
+    console.error('⚠️  The server will start, but face recognition features will not work.');
+    console.error('💡 Solutions:');
+    console.error('   1. Ensure models are in: models/onnx/');
+    console.error('   2. Run: npm run download-models');
+    console.error('   3. Or commit models to git (if they exist locally)');
+    console.error('   4. Check Render logs for download errors');
+    // Don't throw - let server start anyway (models will fail gracefully in routes)
+  }
 
   console.log('📦 Warming staff cache...');
   await staffCache.preload();
