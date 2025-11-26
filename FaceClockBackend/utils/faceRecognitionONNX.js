@@ -1770,6 +1770,15 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     
     // Extract box coordinates (first 4 values)
     // SCRFD typically outputs [x1, y1, x2, y2] or [center_x, center_y, width, height]
+    // DEBUG: Log all 10 features for first few detections to understand format
+    if (i < 3 && validDetections.length <= 3) {
+      const allFeatures = [];
+      for (let f = 0; f < Math.min(10, boxFeatures); f++) {
+        allFeatures.push(boxes[boxBaseIdx + f].toFixed(4));
+      }
+      console.log(`   🔍 Box features for detection ${i}: [${allFeatures.join(', ')}]`);
+    }
+    
     const boxVal0 = boxes[boxBaseIdx];
     const boxVal1 = boxes[boxBaseIdx + 1];
     const boxVal2 = boxes[boxBaseIdx + 2];
@@ -1779,24 +1788,47 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     let x1_detection, y1_detection, x2_detection, y2_detection;
     
     if (boxFormat === 'normalized_center_size') {
-      // SCRFD outputs boxes in corner format [x1, y2, x2, y1] with offset-normalized values
-      // Based on logs: [-0.195, -0.312, 0.363, -0.361] → [195.1, 88.8, 552.4, 120.5]
-      // This shows: x1=boxVal0, y1=boxVal3, x2=boxVal2, y2=boxVal1 (y coordinates swapped!)
-      // Values are offset-normalized (center at 0, range -0.5 to 0.5)
+      // SCRFD outputs boxes - trying multiple format interpretations
+      // Based on logs showing tiny heights, the format might be different than expected
       
       // Check if values are offset-normalized (have negative values)
       if (boxVal0 < 0 || boxVal1 < 0 || boxVal2 < 0 || boxVal3 < 0) {
-        // Offset-normalized corner format: [x1, y2, x2, y1]
-        x1_detection = (boxVal0 + 0.5) * 640;  // x1 from index 0
-        y2_detection = (boxVal1 + 0.5) * 640;  // y2 from index 1
-        x2_detection = (boxVal2 + 0.5) * 640;  // x2 from index 2
-        y1_detection = (boxVal3 + 0.5) * 640;  // y1 from index 3 (swapped!)
+        // Try format [x1, y1, x2, y2] first (standard corner format)
+        const x1_candidate1 = (boxVal0 + 0.5) * 640;
+        const y1_candidate1 = (boxVal1 + 0.5) * 640;
+        const x2_candidate1 = (boxVal2 + 0.5) * 640;
+        const y2_candidate1 = (boxVal3 + 0.5) * 640;
+        
+        // Try format [x1, y2, x2, y1] (swapped y-coords)
+        const x1_candidate2 = (boxVal0 + 0.5) * 640;
+        const y2_candidate2 = (boxVal1 + 0.5) * 640;
+        const x2_candidate2 = (boxVal2 + 0.5) * 640;
+        const y1_candidate2 = (boxVal3 + 0.5) * 640;
+        
+        // Choose the format that produces valid boxes (y1 < y2, reasonable height)
+        const height1 = Math.abs(y2_candidate1 - y1_candidate1);
+        const height2 = Math.abs(y2_candidate2 - y1_candidate2);
+        
+        // Use format that gives larger, more reasonable height
+        if (height2 > height1 && height2 > 50) {
+          // Use swapped format
+          x1_detection = x1_candidate2;
+          y1_detection = Math.min(y1_candidate2, y2_candidate2);
+          x2_detection = x2_candidate2;
+          y2_detection = Math.max(y1_candidate2, y2_candidate2);
+        } else {
+          // Use standard format
+          x1_detection = Math.min(x1_candidate1, x2_candidate1);
+          y1_detection = Math.min(y1_candidate1, y2_candidate1);
+          x2_detection = Math.max(x1_candidate1, x2_candidate1);
+          y2_detection = Math.max(y1_candidate1, y2_candidate1);
+        }
       } else {
-        // Standard normalized (0-1) corner format: [x1, y2, x2, y1]
-        x1_detection = boxVal0 * 640;
-        y2_detection = boxVal1 * 640;
-        x2_detection = boxVal2 * 640;
-        y1_detection = boxVal3 * 640;
+        // Standard normalized (0-1) - try standard corner format
+        x1_detection = Math.min(boxVal0, boxVal2) * 640;
+        y1_detection = Math.min(boxVal1, boxVal3) * 640;
+        x2_detection = Math.max(boxVal0, boxVal2) * 640;
+        y2_detection = Math.max(boxVal1, boxVal3) * 640;
       }
     } else if (boxFormat === 'normalized_corners') {
       // Boxes are in normalized corner format [x1, y1, x2, y2] (0-1 or -1 to 1 range)
