@@ -590,6 +590,31 @@ router.post('/register', upload.fields([
 
         // Index all successful registration images for this staff member
         const imageBuffers = images.map(img => img.buffer);
+        
+        // 📦 OPTIONAL: Upload images to S3 for backup/storage (if S3_BUCKET is configured)
+        const s3Uploads = [];
+        if (process.env.S3_BUCKET) {
+          try {
+            for (let i = 0; i < images.length; i++) {
+              const image = images[i];
+              const s3Key = `staff/${staffIdString}/registration/image${i + 1}_${Date.now()}.jpg`;
+              const s3Result = await rekognition.uploadToS3(s3Key, image.buffer, image.mimetype || 'image/jpeg');
+              if (s3Result) {
+                s3Uploads.push(s3Result);
+                console.log(`[S3] Uploaded image ${i + 1} to: ${s3Result.key}`);
+              }
+            }
+            // Store S3 keys in staff record for reference
+            if (s3Uploads.length > 0) {
+              staff.s3ImageKeys = s3Uploads.map(u => u.key);
+              staff.s3Bucket = process.env.S3_BUCKET;
+            }
+          } catch (s3Error) {
+            console.warn('[S3] Failed to upload images to S3 (non-critical):', s3Error.message);
+            // Continue with Rekognition indexing even if S3 upload fails
+          }
+        }
+        
         const indexedFaceIds = await rekognition.indexFacesForStaff(
           collectionId,
           staffIdString,

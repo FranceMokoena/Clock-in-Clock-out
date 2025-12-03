@@ -240,6 +240,17 @@ const staffSchema = new mongoose.Schema({
     type: Date,
     required: false,
   },
+  // 📦 S3 Storage: Image keys for backup/storage (optional)
+  s3ImageKeys: {
+    type: [String],
+    default: [],
+    required: false,
+  },
+  s3Bucket: {
+    type: String,
+    required: false,
+    trim: true,
+  },
   trustedDevices: {
     type: [{
       fingerprint: {

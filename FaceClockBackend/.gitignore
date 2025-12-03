@@ -11,6 +11,32 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+*.pdb
+*.pdb.map
+*.pdb.map.gz
+*.pdb.map.gz.map
+*.pdb.map.gz.map.gz
+*.pdb.map.gz.map.gz.map
+*.pdb.map.gz.map.gz.map.gz
+*.pdb.map.gz.map.gz.map.gz.map
+*.pdb.map.gz.map.gz.map.gz.map.gz
+*.apk
+*.aab
+*.ipa
+*.dSYM.zip
+*.app
+*.zip
+*.tar
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.lzma
+*.tar.lz
+*.tar.lzo
+*.tar.lz4
+*.tar.zstd
+*.tar.br
+*.tar.gz.br
 
 # Logs
 logs
@@ -52,6 +78,14 @@ jspm_packages/
 
 # Output of 'npm pack'
 *.tgz
+*.pdf
+*.docx
+*.doc
+*.xls
+*.xlsx
+*.ppt
+*.pptx
+*.txt
 
 # Yarn Integrity file
 .yarn-integrity
