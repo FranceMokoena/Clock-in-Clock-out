@@ -43,6 +43,9 @@ try {
 
 staffCache = require('./utils/staffCache');
 
+// AWS Rekognition client (optional - lazy loaded in routes)
+const rekognition = require('./utils/rekognitionClient');
+
 const app = express();
 
 // CORS configuration - allow all origins (adjust for production if needed)
@@ -126,6 +129,27 @@ app.use('/api/locations', locationsRoutes);
     // Load models
     await loadModels();
     console.log('✅ Models loaded successfully');
+    
+    // Check AWS Rekognition configuration (optional)
+    if (rekognition.isConfigured()) {
+      console.log('🌐 AWS Rekognition: Configured');
+      console.log(`   Region: ${process.env.AWS_REGION || 'us-east-1'}`);
+      if (process.env.S3_BUCKET) {
+        console.log(`   S3 Bucket: ${process.env.S3_BUCKET}`);
+      } else {
+        console.log('   S3 Bucket: Not configured (images won\'t be uploaded to S3)');
+      }
+      // Test Rekognition connection (non-blocking)
+      try {
+        await rekognition.ensureCollection();
+        console.log('✅ AWS Rekognition: Collection ready');
+      } catch (rekError) {
+        console.warn('⚠️ AWS Rekognition: Collection check failed (will retry on first use):', rekError.message);
+      }
+    } else {
+      console.log('⚠️ AWS Rekognition: Not configured (using ONNX only)');
+      console.log('   Set AWS_REGION in .env to enable Rekognition');
+    }
     
     // Preload staff cache
     console.log('🔥 Preloading staff cache...');
