@@ -243,15 +243,24 @@ async function startServer() {
   staffCache.startBackgroundRefresh();
 
   app.listen(PORT, '0.0.0.0', () => {
+    const env = process.env.NODE_ENV || 'development';
+    const externalUrl = process.env.RENDER_EXTERNAL_URL || process.env.EXTERNAL_URL;
+
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📡 API available at http://localhost:${PORT}/api`);
-    console.log(`📱 Android emulator: http://10.0.2.2:${PORT}/api`);
-    console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.0.104:${PORT}/api)`);
-    console.log(`   Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)`);
-    console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-    if (process.env.RENDER_EXTERNAL_URL) {
-      console.log(`🌐 External URL: ${process.env.RENDER_EXTERNAL_URL}`);
+    console.log(`🌍 Environment: ${env}`);
+
+    if (env === 'production' && externalUrl) {
+      // Render / production: show public URL instead of localhost
+      console.log(`📡 API available at ${externalUrl}/api`);
+      console.log(`🌐 External URL: ${externalUrl}`);
+    } else {
+      // Local / development helpers
+      console.log(`📡 API available at http://localhost:${PORT}/api`);
+      console.log(`📱 Android emulator: http://10.0.2.2:${PORT}/api`);
+      console.log(`📱 Physical device: Use your computer's IP (e.g., http://192.168.0.104:${PORT}/api)`);
+      console.log(`   Find your IP: ipconfig (Windows) or ifconfig (Mac/Linux)`);
     }
+
     console.log(`\n✅ Server ready! Models will load automatically on first face recognition request.`);
   });
 }
