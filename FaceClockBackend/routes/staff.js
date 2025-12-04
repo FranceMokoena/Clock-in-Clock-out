@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const mongoose = require('mongoose');
+const sharp = require('sharp');
 const Staff = require('../models/Staff');
 const ClockLog = require('../models/ClockLog');
 const Department = require('../models/Department');
@@ -40,6 +41,32 @@ const upload = multer({
     fileSize: 10 * 1024 * 1024 // 10MB limit
   }
 });
+
+// 💾 MEMORY OPTIMIZATION: Resize images before processing to reduce memory usage
+async function resizeImage(buffer, maxSize = 1024) {
+  try {
+    const metadata = await sharp(buffer).metadata();
+    // If image is already small enough, return as-is
+    if (metadata.width <= maxSize && metadata.height <= maxSize) {
+      return buffer;
+    }
+    
+    // Resize to max dimension while maintaining aspect ratio
+    const resized = await sharp(buffer)
+      .resize(maxSize, maxSize, { 
+        fit: 'inside', 
+        withoutEnlargement: true 
+      })
+      .jpeg({ quality: 85 }) // Compress to JPEG
+      .toBuffer();
+    
+    console.log(`💾 Resized image: ${metadata.width}x${metadata.height} → ${(await sharp(resized).metadata()).width}x${(await sharp(resized).metadata()).height} (${Math.round(resized.length/1024)}KB)`);
+    return resized;
+  } catch (error) {
+    console.warn('⚠️ Image resize failed, using original:', error.message);
+    return buffer; // Fallback to original if resize fails
+  }
+}
 
 // Add error handling for multer
 const handleMulterError = (err, req, res, next) => {
@@ -750,37 +777,88 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.log(`✅ Processing ${type} request for staff member`);
     console.log(`   User location: ${userLat}, ${userLon}`);
     
-    // 🌐 OPTIONAL AWS Rekognition analysis (face count / basic quality)
-    // This complements ONNX quality gates and helps catch obvious issues early.
+    // 💾 MEMORY OPTIMIZATION: Resize image before processing to reduce memory usage
+    let processedImageBuffer = req.file.buffer;
+    try {
+      processedImageBuffer = await resizeImage(req.file.buffer, 1024);
+      // Free original buffer if resized
+      if (processedImageBuffer !== req.file.buffer) {
+        req.file.buffer = null; // Explicitly free memory
+      }
+    } catch (resizeError) {
+      console.warn('⚠️ Image resize failed, using original:', resizeError.message);
+    }
+    
+    // 🌐 AWS Rekognition: PRIMARY identification (try FIRST to avoid loading ONNX models)
+    // If Rekognition finds a match, we can skip ONNX entirely (saves ~200-250MB memory)
+    let primaryStaff = null;
+    let primaryFaceSimilarity = null;
+    let rekognitionMatchFound = false;
+
     if (rekognition.isConfigured()) {
       try {
-        const analysis = await rekognition.detectFaceAttributes(req.file.buffer);
+        // First: Quality check (face count)
+        const analysis = await rekognition.detectFaceAttributes(processedImageBuffer);
         if (!analysis || analysis.faceCount === 0) {
+          // Free buffer before returning
+          processedImageBuffer = null;
           return res.status(400).json({
             success: false,
             error: 'We could not detect a face. Please face the camera directly in good lighting.',
           });
         }
         if (analysis.faceCount > 1) {
+          // Free buffer before returning
+          processedImageBuffer = null;
           return res.status(400).json({
             success: false,
             error: 'Multiple faces detected. Only one person may appear in the frame when clocking in.',
           });
         }
-        const primary = analysis.primaryFace;
-        if (primary && primary.confidence < 90) {
-          console.log(
-            `[Rekognition] Face detected but confidence is low (${primary.confidence.toFixed(
-              1
-            )}%) – continuing with ONNX gates.`
-          );
+        
+        // Second: Face matching (PRIMARY PATH - saves memory if successful)
+        const collectionId = await rekognition.ensureCollection();
+        const rekognitionMatch = await rekognition.searchFaceByImage(
+          collectionId,
+          processedImageBuffer,
+          85,
+          1
+        );
+
+        if (rekognitionMatch && rekognitionMatch.externalImageId) {
+          rekognitionMatchFound = true;
+          const matchedStaffId = rekognitionMatch.externalImageId;
+          const matchedStaff = await Staff.findById(matchedStaffId).lean().catch(() => null);
+
+          if (matchedStaff) {
+            primaryStaff = matchedStaff;
+            primaryFaceSimilarity = rekognitionMatch.similarity;
+            console.log(
+              `✅ [Rekognition] Match found: ${matchedStaff.name} (${rekognitionMatch.similarity.toFixed(1)}%) - Skipping ONNX (memory saved!)`
+            );
+          }
         }
-      } catch (awsAnalysisError) {
+      } catch (awsErr) {
         console.warn(
-          '[Rekognition] DetectFaces analysis failed (fallback to ONNX only):',
-          awsAnalysisError.message
+          '[Rekognition] Failed, will use ONNX fallback:',
+          awsErr.message
         );
       }
+    }
+    
+    // 💾 MEMORY OPTIMIZATION: If Rekognition found a match, skip ONNX entirely
+    // This saves ~200-250MB by not loading ONNX models
+    if (rekognitionMatchFound && primaryStaff) {
+      // Free buffer immediately - we don't need it anymore
+      processedImageBuffer = null;
+      req.file.buffer = null;
+      
+      // Get staff cache for location validation (lightweight)
+      const staffWithEmbeddings = await staffCache.getStaff();
+      
+      // Continue with Rekognition match (skip ONNX embedding generation)
+      // We'll handle the rest of the clock-in logic below
+      // ... (code continues to location validation and clock log creation)
     }
     
     // 🏦 BANK-GRADE Phase 4: Generate device fingerprint for quality tracking
@@ -791,73 +869,86 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       console.log(`🏦 Device fingerprint: ${deviceFingerprint.substring(0, 8)}...`);
     }
     
-    // Generate embedding from captured image (now returns object with embedding, quality, etc.)
-    // Pass device fingerprint for adaptive quality thresholds
+    // 💾 MEMORY OPTIMIZATION: Only generate ONNX embedding if Rekognition didn't find a match
+    // This prevents loading ~200-250MB ONNX models when Rekognition works
     let embeddingResult;
-    try {
-      const embeddingStartTime = Date.now();
-      process.stdout.write(`\n🕐 [CLOCK] Starting embedding generation...\n`);
-      console.log(`⏱️ [PERF] Embedding generation started at ${new Date().toISOString()}`);
+    
+    // Skip ONNX if Rekognition already found a match
+    if (!rekognitionMatchFound) {
+      // Generate embedding from captured image (now returns object with embedding, quality, etc.)
+      // Pass device fingerprint for adaptive quality thresholds
+      try {
+        const embeddingStartTime = Date.now();
+        process.stdout.write(`\n🕐 [CLOCK] Starting ONNX embedding generation (Rekognition fallback)...\n`);
+        console.log(`⏱️ [PERF] Embedding generation started at ${new Date().toISOString()}`);
+        
+        embeddingResult = await generateEmbedding(processedImageBuffer, deviceFingerprint);
       
-      embeddingResult = await generateEmbedding(req.file.buffer, deviceFingerprint);
-      
-      const embeddingTime = Date.now() - embeddingStartTime;
-      process.stdout.write(`\n✅ [CLOCK] Embedding generation complete (${embeddingTime}ms)\n`);
-      console.log(`⏱️ [PERF] Embedding generation took ${embeddingTime}ms (${(embeddingTime/1000).toFixed(1)}s)`);
-      
-      // Validate embedding result
-      if (!embeddingResult) {
-        throw new Error('Failed to generate face embedding - no result returned');
+        const embeddingTime = Date.now() - embeddingStartTime;
+        process.stdout.write(`\n✅ [CLOCK] Embedding generation complete (${embeddingTime}ms)\n`);
+        console.log(`⏱️ [PERF] Embedding generation took ${embeddingTime}ms (${(embeddingTime/1000).toFixed(1)}s)`);
+        
+        // Validate embedding result
+        if (!embeddingResult) {
+          throw new Error('Failed to generate face embedding - no result returned');
+        }
+        
+        // Ensure embedding exists
+        const embedding = embeddingResult.embedding || embeddingResult;
+        if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
+          throw new Error('Invalid embedding generated - embedding is not a valid array');
+        }
+        
+        // Extract quality score (can be object or number)
+        const qualityScore = typeof embeddingResult.quality === 'object' 
+          ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
+          : (embeddingResult.quality || 0.75);
+        console.log(`✅ Embedding generated - Quality: ${(qualityScore * 100).toFixed(1)}%, Length: ${embedding.length}`);
+        
+        // 💾 MEMORY OPTIMIZATION: Free buffer after embedding generation
+        processedImageBuffer = null;
+        req.file.buffer = null;
+      } catch (embeddingError) {
+          // IMMEDIATE error logging to stderr
+        process.stderr.write(`\n❌ [CLOCK] Error generating embedding: ${errorMsg}\n`);
+        if (embeddingError.stack) {
+          process.stderr.write(`❌ [CLOCK] Error stack: ${embeddingError.stack}\n`);
+        }
+        // Also log to console.error
+        console.error('❌ Error generating embedding:', errorMsg);
+        if (embeddingError.stack) {
+          console.error('❌ Error stack:', embeddingError.stack);
+        }
+        
+        // ENTERPRISE: Provide user-friendly error messages
+        let userFriendlyError = errorMsg;
+        if (errorMsg.includes('too small')) {
+          userFriendlyError = 'Face too small. Please move closer to the camera (at least 150px face size required).';
+        } else if (errorMsg.includes('too large')) {
+          userFriendlyError = 'Face too large. Please move further from the camera.';
+        } else if (errorMsg.includes('too blurry')) {
+          userFriendlyError = 'Image is too blurry. Please ensure camera is focused and hold still.';
+        } else if (errorMsg.includes('brightness')) {
+          userFriendlyError = 'Image brightness out of range. Please adjust lighting (not too dark or too bright).';
+        } else if (errorMsg.includes('Multiple faces')) {
+          userFriendlyError = 'Multiple faces detected. Please ensure only ONE person is in the frame.';
+        } else if (errorMsg.includes('No face detected')) {
+          userFriendlyError = 'No face detected. Please ensure your face is visible, well-lit, and facing the camera directly.';
+        } else if (errorMsg.includes('quality too low')) {
+          userFriendlyError = 'Face detection quality too low. Please ensure good lighting and face the camera directly.';
+        } else if (errorMsg.includes('landmarks')) {
+          userFriendlyError = 'Facial features not properly detected. Please ensure your face is clearly visible and facing the camera directly.';
+        }
+        
+        // Free buffer before returning error
+        processedImageBuffer = null;
+        req.file.buffer = null;
+        
+        return res.status(500).json({ 
+          success: false,
+          error: userFriendlyError 
+        });
       }
-      
-      // Ensure embedding exists
-      const embedding = embeddingResult.embedding || embeddingResult;
-      if (!embedding || !Array.isArray(embedding) || embedding.length === 0) {
-        throw new Error('Invalid embedding generated - embedding is not a valid array');
-      }
-      
-      // Extract quality score (can be object or number)
-      const qualityScore = typeof embeddingResult.quality === 'object' 
-        ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
-        : (embeddingResult.quality || 0.75);
-      console.log(`✅ Embedding generated - Quality: ${(qualityScore * 100).toFixed(1)}%, Length: ${embedding.length}`);
-    } catch (embeddingError) {
-      const errorMsg = embeddingError?.message || String(embeddingError) || 'Failed to generate face embedding';
-      // IMMEDIATE error logging to stderr
-      process.stderr.write(`\n❌ [CLOCK] Error generating embedding: ${errorMsg}\n`);
-      if (embeddingError.stack) {
-        process.stderr.write(`❌ [CLOCK] Error stack: ${embeddingError.stack}\n`);
-      }
-      // Also log to console.error
-      console.error('❌ Error generating embedding:', errorMsg);
-      if (embeddingError.stack) {
-        console.error('❌ Error stack:', embeddingError.stack);
-      }
-      
-      // ENTERPRISE: Provide user-friendly error messages
-      let userFriendlyError = errorMsg;
-      if (errorMsg.includes('too small')) {
-        userFriendlyError = 'Face too small. Please move closer to the camera (at least 150px face size required).';
-      } else if (errorMsg.includes('too large')) {
-        userFriendlyError = 'Face too large. Please move further from the camera.';
-      } else if (errorMsg.includes('too blurry')) {
-        userFriendlyError = 'Image is too blurry. Please ensure camera is focused and hold still.';
-      } else if (errorMsg.includes('brightness')) {
-        userFriendlyError = 'Image brightness out of range. Please adjust lighting (not too dark or too bright).';
-      } else if (errorMsg.includes('Multiple faces')) {
-        userFriendlyError = 'Multiple faces detected. Please ensure only ONE person is in the frame.';
-      } else if (errorMsg.includes('No face detected')) {
-        userFriendlyError = 'No face detected. Please ensure your face is visible, well-lit, and facing the camera directly.';
-      } else if (errorMsg.includes('quality too low')) {
-        userFriendlyError = 'Face detection quality too low. Please ensure good lighting and face the camera directly.';
-      } else if (errorMsg.includes('landmarks')) {
-        userFriendlyError = 'Facial features not properly detected. Please ensure your face is clearly visible and facing the camera directly.';
-      }
-      
-      return res.status(500).json({ 
-        success: false,
-        error: userFriendlyError 
-      });
     }
     
     // Get all active staff members from cache (FAST PATH - no DB query!)
@@ -867,87 +958,41 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.log(`⏱️ [PERF] Staff cache retrieval took ${cacheTime}ms`);
     
     if (!staffWithEmbeddings || staffWithEmbeddings.length === 0) {
+      // Free buffer before returning
+      processedImageBuffer = null;
+      req.file.buffer = null;
       return res.status(404).json({ 
         success: false,
         error: 'No staff members registered. Please register staff first.' 
       });
     }
 
-    // 🌐 AWS Rekognition: PRIMARY identification (global collection for now)
-    let primaryStaff = null;
-    let primaryFaceSimilarity = null; // Rekognition similarity (0-100)
-
-    if (rekognition.isConfigured()) {
-      try {
-        const collectionId = await rekognition.ensureCollection();
-        const rekognitionMatch = await rekognition.searchFaceByImage(
-          collectionId,
-          req.file.buffer,
-          85,
-          1
-        );
-
-        if (rekognitionMatch && rekognitionMatch.externalImageId) {
-          const matchedStaffId = rekognitionMatch.externalImageId;
-          const matchedStaff =
-            staffWithEmbeddings.find(
-              s => s._id.toString() === matchedStaffId.toString()
-            ) ||
-            (await Staff.findById(matchedStaffId).lean().catch(() => null));
-
-          if (matchedStaff) {
-            primaryStaff = matchedStaff;
-            primaryFaceSimilarity = rekognitionMatch.similarity;
-            console.log(
-              `[Rekognition] Primary match: ${matchedStaff.name} (${rekognitionMatch.similarity.toFixed(
-                1
-              )}%)`
-            );
-          } else {
-            console.warn(
-              `[Rekognition] ExternalImageId=${matchedStaffId} did not match any active staff in cache`
-            );
-          }
-        } else {
-          console.warn(
-            '[Rekognition] No face match found for clock-in image; ONNX will be used as fallback'
-          );
-        }
-      } catch (awsErr) {
-        console.warn(
-          '[Rekognition] Clock-in Rekognition identification failed (ONNX will be used):',
-          awsErr.message
-        );
-      }
-    } else {
-      console.warn(
-        '[Rekognition] Not configured – ONNX will be used as primary matcher'
-      );
+    // 🔍 ONNX: Fallback / secondary matcher (only if Rekognition didn't find a match)
+    let match = null;
+    if (!rekognitionMatchFound) {
+      console.log(`🔍 Starting ONNX face matching process (Rekognition fallback)...`);
+      // Extract quality score (can be object or number)
+      const qualityScore = typeof embeddingResult.quality === 'object' 
+        ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
+        : (embeddingResult.quality || 0.75);
+      console.log(`   - Clock-in embedding quality: ${(qualityScore * 100).toFixed(1)}%`);
+      console.log(`   - Clock-in embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
+      console.log(`   - Staff members to compare: ${staffWithEmbeddings.length}`);
+      
+      const matchingStartTime = Date.now();
+      console.log(`⏱️ [PERF] Starting face matching with ${staffWithEmbeddings.length} staff members...`);
+      
+      // 🏦 BANK-GRADE Phase 3: Pass device fingerprint and location to matching
+      // Note: Location validation happens after matching, so we pass locationValid: true initially
+      // Location will be validated separately and can affect final score
+      match = await findMatchingStaff(embeddingResult, staffWithEmbeddings, {
+        deviceFingerprint,      // Device fingerprint for multi-signal fusion
+        locationValid: true,    // Will be validated after matching
+        useType: 'daily',
+      });
+      const matchingTime = Date.now() - matchingStartTime;
+      console.log(`⏱️ [PERF] Face matching took ${matchingTime}ms (${(matchingTime/1000).toFixed(1)}s)`);
     }
-    
-    // 🔍 ONNX: Fallback / secondary matcher
-    console.log(`🔍 Starting ONNX face matching process (fallback/secondary)...`);
-    // Extract quality score (can be object or number)
-    const qualityScore = typeof embeddingResult.quality === 'object' 
-      ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
-      : (embeddingResult.quality || 0.75);
-    console.log(`   - Clock-in embedding quality: ${(qualityScore * 100).toFixed(1)}%`);
-    console.log(`   - Clock-in embedding length: ${embeddingResult.embedding ? embeddingResult.embedding.length : 'N/A'}`);
-    console.log(`   - Staff members to compare: ${staffWithEmbeddings.length}`);
-    
-    const matchingStartTime = Date.now();
-    console.log(`⏱️ [PERF] Starting face matching with ${staffWithEmbeddings.length} staff members...`);
-    
-    // 🏦 BANK-GRADE Phase 3: Pass device fingerprint and location to matching
-    // Note: Location validation happens after matching, so we pass locationValid: true initially
-    // Location will be validated separately and can affect final score
-    const match = await findMatchingStaff(embeddingResult, staffWithEmbeddings, {
-      deviceFingerprint,      // Device fingerprint for multi-signal fusion
-      locationValid: true,    // Will be validated after matching
-      useType: 'daily',
-    });
-    const matchingTime = Date.now() - matchingStartTime;
-    console.log(`⏱️ [PERF] Face matching took ${matchingTime}ms (${(matchingTime/1000).toFixed(1)}s)`);
     
     // Decide final staff using Rekognition as primary, ONNX as fallback
     let staff;

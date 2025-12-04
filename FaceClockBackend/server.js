@@ -176,8 +176,41 @@ app.use('/api/locations', locationsRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Face Clock API is running' });
+  const used = process.memoryUsage();
+  const mbUsed = Math.round(used.heapUsed / 1024 / 1024);
+  const mbTotal = Math.round(used.heapTotal / 1024 / 1024);
+  const mbRss = Math.round(used.rss / 1024 / 1024);
+  
+  res.json({ 
+    status: 'OK', 
+    message: 'Face Clock API is running',
+    memory: {
+      heapUsed: `${mbUsed}MB`,
+      heapTotal: `${mbTotal}MB`,
+      rss: `${mbRss}MB`,
+      limit: '512MB',
+      usagePercent: Math.round((mbUsed / 512) * 100)
+    }
+  });
 });
+
+// 💾 MEMORY OPTIMIZATION: Monitor memory usage every 30 seconds
+setInterval(() => {
+  const used = process.memoryUsage();
+  const mbUsed = Math.round(used.heapUsed / 1024 / 1024);
+  const mbTotal = Math.round(used.heapTotal / 1024 / 1024);
+  const mbRss = Math.round(used.rss / 1024 / 1024);
+  const usagePercent = Math.round((mbUsed / 512) * 100);
+  
+  console.log(`💾 Memory: ${mbUsed}MB / ${mbTotal}MB heap, ${mbRss}MB RSS (${usagePercent}% of 512MB limit)`);
+  
+  if (mbUsed > 450) {
+    console.warn('⚠️ Memory usage high! Consider optimizing or upgrading hosting plan.');
+  }
+  if (mbUsed > 480) {
+    console.error('🚨 Memory usage critical! Service may crash soon.');
+  }
+}, 30000); // Every 30 seconds
 
 // Root endpoint
 app.get('/', (req, res) => {
