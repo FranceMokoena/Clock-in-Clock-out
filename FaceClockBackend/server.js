@@ -118,61 +118,11 @@ app.use('/api/staff', (req, res, next) => {
 app.use('/api/staff', staffRoutes);
 app.use('/api/locations', locationsRoutes);
 
-// 🏦 BANK-GRADE: Model warmup on startup (preload + warm inference)
-// This eliminates "cold start" latency on first request
-(async () => {
-  try {
-    console.log('\n🔥 ========== MODEL WARMUP ==========');
-    console.log('🔥 Preloading ONNX models and warming up inference...');
-    const warmupStart = Date.now();
-    
-    // Load models
-    await loadModels();
-    console.log('✅ Models loaded successfully');
-    
-    // Check AWS Rekognition configuration (optional)
-    if (rekognition.isConfigured()) {
-      console.log('🌐 AWS Rekognition: Configured');
-      console.log(`   Region: ${process.env.AWS_REGION || 'us-east-1'}`);
-      if (process.env.S3_BUCKET) {
-        console.log(`   S3 Bucket: ${process.env.S3_BUCKET}`);
-      } else {
-        console.log('   S3 Bucket: Not configured (images won\'t be uploaded to S3)');
-      }
-      // Test Rekognition connection (non-blocking)
-      try {
-        await rekognition.ensureCollection();
-        console.log('✅ AWS Rekognition: Collection ready');
-      } catch (rekError) {
-        console.warn('⚠️ AWS Rekognition: Collection check failed (will retry on first use):', rekError.message);
-      }
-    } else {
-      console.log('⚠️ AWS Rekognition: Not configured (using ONNX only)');
-      console.log('   Set AWS_REGION in .env to enable Rekognition');
-    }
-    
-    // Preload staff cache
-    console.log('🔥 Preloading staff cache...');
-    await staffCache.preload();
-    console.log('✅ Staff cache preloaded');
-    
-    // Warmup inference with dummy image (eliminates first-request latency)
-    console.log('🔥 Warming up inference pipeline with dummy image...');
-    const dummyImageBuffer = Buffer.alloc(640 * 480 * 3); // 640x480 RGB
-    try {
-      await faceRecognition.warmupInference(dummyImageBuffer);
-      console.log('✅ Inference pipeline warmed up');
-    } catch (warmupError) {
-      console.warn('⚠️ Warmup inference failed (non-critical):', warmupError.message);
-    }
-    
-    const warmupTime = Date.now() - warmupStart;
-    console.log(`✅ Warmup complete in ${warmupTime}ms (${(warmupTime / 1000).toFixed(1)}s)`);
-    console.log('🔥 ===================================\n');
-  } catch (error) {
-    console.error('⚠️ Warmup failed (non-critical):', error.message);
-  }
-})();
+// NOTE: We NO LONGER preload / warm up ONNX models at startup.
+// This keeps memory low on platforms like Render (512MB limit).
+// ONNX models are now loaded lazily inside faceRecognitionONNX.js
+// the first time we actually need them (i.e. when Rekognition
+// is not used or fails, and we fall back to ONNX).
 
 // Health check
 app.get('/api/health', (req, res) => {

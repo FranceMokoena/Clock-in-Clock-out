@@ -1174,6 +1174,20 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       console.warn(`⚠️ No device fingerprint provided for ${staff.name}, but trusted devices exist.`);
     }
     
+    // 🚦 If the device is not trusted, force a modal-friendly response immediately
+    if (deviceTrustStatus !== 'trusted') {
+      const deviceApprovalMessage =
+        'This device is pending approval. Please contact your administrator to approve it.';
+      return res.status(403).json({
+        success: false,
+        error: deviceApprovalMessage,
+        requiresDeviceApproval: true,
+        deviceStatus: deviceTrustStatus,
+        deviceMessage: deviceApprovalMessage,
+        staffName: staff.name,
+      });
+    }
+    
     // 🏦 BANK-GRADE Phase 4: Log risk score if elevated
     if (riskScore && riskScore.score > 0.3) {
       console.warn(`⚠️ Elevated risk score: ${(riskScore.score * 100).toFixed(1)}% (${riskScore.level})`);
@@ -1386,6 +1400,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     }
     
     // Prepare response data with date and time
+    // Provide a user-friendly modal message whenever the device is not trusted/pending
+    let deviceApprovalMessage = null;
+    if (deviceTrustStatus !== 'trusted') {
+      deviceApprovalMessage =
+        'This device is pending approval. Please contact your administrator to approve it.';
+    } else if ((riskScore?.factors || []).includes('Device not recognized as trusted')) {
+      deviceApprovalMessage =
+        'This device is pending approval. Please contact your administrator to approve it.';
+    }
+
     const responseData = {
       success: true,
       message: `${staff.name} — ${clockTypeText}`,
@@ -1397,6 +1421,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       dateTime: `${dateString} at ${timeString}`,
       confidence,
       deviceStatus: deviceTrustStatus,
+      requiresDeviceApproval: Boolean(deviceApprovalMessage),
+      deviceMessage: deviceApprovalMessage,
       // ⏰ WORKING HOURS: Include time validation info
       timeValidation: {
         isOnTime,
