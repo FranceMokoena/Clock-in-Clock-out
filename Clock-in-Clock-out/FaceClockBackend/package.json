@@ -1,0 +1,32 @@
+{
+  "name": "faceclockbackend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node --max-old-space-size=400 server.js",
+    "dev": "nodemon server.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "download-models": "node download-onnx-models.js",
+    "postinstall": "echo '🔧 Running postinstall script...' && node download-onnx-models.js || (echo '⚠️ Node.js download failed, trying Python...' && (python3 download-models-python.py 2>&1 || python download-models-python.py 2>&1 || echo '⚠️ Python download also failed - server will attempt runtime download'))"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "aws-sdk": "^2.1692.0",
+    "axios": "^1.13.2",
+    "bcryptjs": "^2.4.3",
+    "body-parser": "^2.2.0",
+    "canvas": "^2.11.2",
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.1.0",
+    "mongoose": "^8.19.3",
+    "multer": "^1.4.5-lts.1",
+    "onnxruntime-node": "^1.23.2",
+    "sharp": "^0.33.2",
+    "@aws-sdk/client-rekognition": "^3.744.0",
+    "@aws-sdk/client-s3": "^3.744.0"
+  }
+}
