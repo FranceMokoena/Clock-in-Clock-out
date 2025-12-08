@@ -1,0 +1,34 @@
+# Large model files (should be downloaded at runtime)
+FaceClockBackend/models/onnx/*.onnx
+!FaceClockBackend/models/onnx/README.md
+
+# Old face-api models (no longer used)
+FaceClockBackend/models/face-api/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Node modules
+node_modules/
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# IDE
+.vscode/
+.idea/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Word temp files
+~$*.docx
+~$*.doc
+
