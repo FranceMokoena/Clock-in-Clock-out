@@ -74,10 +74,12 @@ app.use((req, res, next) => {
 const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/Employees';
 
 // Improved MongoDB connection with better error handling
-mongoose.connect(MONGO_URI)
+// Store connection promise to wait for it before starting server
+const mongoConnectPromise = mongoose.connect(MONGO_URI)
 .then(() => {
   console.log('✅ MongoDB connected successfully');
   console.log(`📊 Database: ${mongoose.connection.name}`);
+  return true;
 })
 .catch(err => {
   console.error('❌ MongoDB connection error:', err.message);
@@ -87,14 +89,15 @@ mongoose.connect(MONGO_URI)
     console.error('   1. Go to MongoDB Atlas: https://cloud.mongodb.com/');
     console.error('   2. Navigate to: Network Access → IP Access List');
     console.error('   3. Click "Add IP Address"');
-    console.error('   4. For Render.com, add: 0.0.0.0/0 (allows all IPs)');
-    console.error('      OR add specific Render IP ranges if available');
+    console.error('   4. For EC2/Production, add: 0.0.0.0/0 (allows all IPs)');
+    console.error('      OR add specific IP ranges if available');
     console.error('   5. Wait 1-2 minutes for changes to propagate');
   }
   console.error('\n💡 Make sure:');
   console.error('   - MONGO_URI is set correctly in .env file');
   console.error('   - Your IP address is whitelisted in MongoDB Atlas');
   console.error('   - Database user has correct permissions');
+  throw err; // Re-throw to prevent server from starting without DB
 });
 
 // Debug: Log all incoming requests to /api/staff (must be before routes)
@@ -221,6 +224,11 @@ process.on('unhandledRejection', (err) => {
 });
 
 async function startServer() {
+  // Wait for MongoDB connection before proceeding
+  console.log('⏳ Waiting for MongoDB connection...');
+  await mongoConnectPromise;
+  console.log('✅ MongoDB ready, proceeding with server startup...');
+  
   // LAZY LOADING: Don't load models at startup to save memory
   // Models will be loaded on first request (lazy loading)
   console.log('🚀 Starting server with lazy model loading...');
@@ -245,6 +253,7 @@ async function startServer() {
     console.log('✅ Model files found (will load on first request)');
   }
 
+  // Now that MongoDB is connected, preload staff cache
   console.log('📦 Warming staff cache...');
   await staffCache.preload();
   staffCache.startBackgroundRefresh();
