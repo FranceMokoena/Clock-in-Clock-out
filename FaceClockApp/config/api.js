@@ -1,16 +1,12 @@
 // API Configuration
-// For physical devices: Set EXPO_PUBLIC_API_URL to your computer's IP (e.g., http://192.168.1.104:5000/api)
-// For Android emulator: Uses 10.0.2.2 automatically
-// For production: Uses Render backend automatically
+// Force production API to EC2 unless EXPO_PUBLIC_API_URL is explicitly provided.
+// This prevents accidental fallbacks to LAN/local during Metro dev.
 
 import { Platform, NativeModules } from 'react-native';
 import Constants from 'expo-constants';
 
-const DEFAULT_PRODUCTION_URL = 'https://clock-in-clock-out-oyia.onrender.com/api';
-
-// ⚠️ UPDATE THIS IP when you change networks!
-// Find your IP with: ipconfig (Windows) or ifconfig (Mac/Linux)
-const PHYSICAL_DEVICE_IP = '192.168.88.41'; // Current IP address
+const DEFAULT_PRODUCTION_URL = 'http://100.31.103.225:5000/api';
+const PHYSICAL_DEVICE_IP = '100.31.103.225';
 
 const getHostFromUri = (uri) => {
   if (!uri || typeof uri !== 'string') {
@@ -65,17 +61,7 @@ const DEFAULT_LOCAL_URL = `http://${LOCAL_HOST}:5000/api`;
 // Check for custom local IP (for physical devices)
 // Set this in your .env or app.json: EXPO_PUBLIC_API_URL=http://192.168.1.104:5000/api
 const envUrl = process.env.EXPO_PUBLIC_API_URL?.trim()?.replace(/\s+/g, ''); // Remove all spaces
-const envMode = process.env.EXPO_PUBLIC_API_ENV?.toLowerCase();
-const forceProduction = envMode === 'production';
-
-let API_BASE_URL;
-if (envUrl) {
-  API_BASE_URL = envUrl;
-} else if (__DEV__ && !forceProduction) {
-  API_BASE_URL = DEFAULT_LOCAL_URL;
-} else {
-  API_BASE_URL = DEFAULT_PRODUCTION_URL;
-}
+let API_BASE_URL = envUrl || DEFAULT_PRODUCTION_URL;
 
 console.log('🌐 API Base URL:', API_BASE_URL);
 if (__DEV__) {

@@ -2,7 +2,7 @@
   "expo": {
     "name": "Internship Success Clock-in/Clock-out System",
     "slug": "internship-success-clock",
-    "version": "1.0.0",
+    "version": "1.0.2",
     "orientation": "default",
     "icon": "./assets/APP-ICON.png",
     "userInterfaceStyle": "light",
@@ -22,7 +22,8 @@
     },
     "android": {
       "package": "com.internshipsuccess.clock",
-      "versionCode": 1,
+      "versionCode": 3,
+      "useCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/APP-ICON.png",
         "backgroundColor": "#ffffff"
