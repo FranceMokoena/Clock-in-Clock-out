@@ -163,3 +163,4 @@ dist/
 # Test files
 coverage/
 .nyc_output/
+"FaceClockBackend/.env" 
