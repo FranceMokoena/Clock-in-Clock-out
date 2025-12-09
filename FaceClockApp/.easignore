@@ -1,0 +1,198 @@
+# EAS Build Ignore File
+# Files and directories that should NOT be included in EAS builds
+# This significantly reduces APK size by excluding unnecessary files
+
+# ============================================
+# DOCUMENTATION FILES (Keep only README.md)
+# ============================================
+*.md
+!README.md
+DEPLOYMENT.md
+PRODUCTION_ICON_SETUP.md
+RESTORE_CAPPP_JPG.md
+**/*.md
+
+# ============================================
+# BUILD ARTIFACTS & OUTPUTS
+# ============================================
+*.apk
+*.aab
+*.ipa
+*.dSYM.zip
+*.app
+build/
+dist/
+.expo/
+.expo-shared/
+web-build/
+android/
+ios/
+*.orig.*
+
+# ============================================
+# DEVELOPMENT & CONFIG FILES
+# ============================================
+.env
+.env.local
+.env.development
+.env.test
+.env.production.local
+*.log
+*.log.*
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+
+# ============================================
+# UNUSED ASSETS (Large files that aren't needed)
+# ============================================
+assets/8e8d722b-6a0a-4da0-9ca2-3aba986f49e9.eps
+assets/Internship-Success.apk
+assets/splash-icon.png
+assets/WATERMARK.png
+
+# ============================================
+# TEST & DEVELOPMENT SCREENS
+# ============================================
+screens/CameraTest.js
+__tests__/
+__mocks__/
+*.test.js
+*.test.ts
+*.test.jsx
+*.test.tsx
+*.spec.js
+*.spec.ts
+*.spec.jsx
+*.spec.tsx
+jest.config.js
+jest.config.ts
+
+# ============================================
+# CLEANUP & UTILITY SCRIPTS
+# ============================================
+cleanup-unnecessary-files.js
+resize-icon.js
+*.sh
+*.bat
+*.ps1
+
+# ============================================
+# NODE MODULES (Already excluded by default)
+# ============================================
+node_modules/
+.pnp
+.pnp.js
+.yarn/
+.yarn-integrity
+
+# ============================================
+# GIT FILES
+# ============================================
+.git/
+.gitignore
+.gitattributes
+.gitkeep
+
+# ============================================
+# IDE & EDITOR FILES
+# ============================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# ============================================
+# OS FILES
+# ============================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# ============================================
+# TEMPORARY & CACHE FILES
+# ============================================
+*.tmp
+*.temp
+*.cache
+.cache/
+.metro-health-check*
+.metro-cache/
+.turbo/
+.npm/
+.eslintcache
+.stylelintcache
+
+# ============================================
+# EXAMPLE & TEMPLATE FILES
+# ============================================
+*.example.js
+*.example.ts
+*.example.jsx
+*.example.tsx
+*.template.js
+*.template.ts
+config/faceDetection.example.js
+
+# ============================================
+# CERTIFICATES & KEYS (Security)
+# ============================================
+*.pem
+*.p8
+*.p12
+*.key
+*.jks
+*.keystore
+*.mobileprovision
+*.provisionprofile
+*.certSigningRequest
+
+# ============================================
+# TYPE DEFINITIONS (Not needed in production)
+# ============================================
+*.tsbuildinfo
+tsconfig.tsbuildinfo
+expo-env.d.ts
+
+# ============================================
+# PACKAGE MANAGER FILES
+# ============================================
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.npmrc
+.yarnrc
+
+# ============================================
+# COVERAGE & TEST REPORTS
+# ============================================
+coverage/
+.nyc_output/
+*.lcov
+.jest/
+
+# ============================================
+# MISC DEVELOPMENT FILES
+# ============================================
+.babelrc.js
+.eslintrc.js
+.prettierrc.js
+.editorconfig
+.nvmrc
+.dockerignore
+docker-compose.yml
+docker-compose.*.yml
+
