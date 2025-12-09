@@ -1,3 +1,20 @@
+.git
+**/node_modules
+**/.expo
+**/.expo-shared
+**/.env
+**/.env.*
+*.pdf
+*.docx
+*.pptx
+*.zip
+*.mp4
+*.mov
+*.psd
+*.ai
+*.sketch
+assets/raw/**
+assets/large/**
 # EAS Build Ignore File
 # Files and directories that should NOT be included in EAS builds
 # This significantly reduces APK size by excluding unnecessary files
