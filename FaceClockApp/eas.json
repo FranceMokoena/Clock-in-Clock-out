@@ -37,7 +37,8 @@
       },
       "env": {
         "EXPO_PUBLIC_API_ENV": "production",
-        "NODE_ENV": "production"
+        "NODE_ENV": "production",
+        "EXPO_PUBLIC_API_URL": "http://100.31.103.225:5000/api"
       },
       "cache": {
         "disabled": false
