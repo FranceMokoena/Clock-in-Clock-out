@@ -5,7 +5,7 @@
 import { Platform, NativeModules } from 'react-native';
 import Constants from 'expo-constants';
 
-const DEFAULT_PRODUCTION_URL = 'http://100.31.103.225:5000/api';
+const DEFAULT_PRODUCTION_URL = 'https://clock-in.duckdns.org/api';
 const PHYSICAL_DEVICE_IP = '100.31.103.225';
 
 const getHostFromUri = (uri) => {
@@ -14,7 +14,7 @@ const getHostFromUri = (uri) => {
   }
   try {
     // Ensure the URI has a protocol so URL can parse it
-    const normalized = uri.includes('://') ? uri : `http://${uri}`;
+    const normalized = uri.includes('://') ? uri : `https://${uri}`;
     const { hostname } = new URL(normalized);
     return hostname;
   } catch (error) {

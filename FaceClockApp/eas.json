@@ -39,7 +39,7 @@
       "env": {
         "EXPO_PUBLIC_API_ENV": "production",
         "NODE_ENV": "production",
-        "EXPO_PUBLIC_API_URL": "http://100.31.103.225:5000/api"
+        "EXPO_PUBLIC_API_URL": "https://clock-in.duckdns.org/api"
       },
       "cache": {
         "disabled": false
