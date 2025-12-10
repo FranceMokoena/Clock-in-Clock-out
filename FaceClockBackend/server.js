@@ -3,11 +3,11 @@
 // face-api.js works reliably with the CPU backend (pure JavaScript).
 // If you need faster performance, consider using a different face recognition library
 // that's compatible with TensorFlow.js Node backend.
-
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
+
 
 const staffRoutes = require('./routes/staff');
 const locationsRoutes = require('./routes/locations');
