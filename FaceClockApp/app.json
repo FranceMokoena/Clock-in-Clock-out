@@ -23,7 +23,6 @@
     "android": {
       "package": "com.internshipsuccess.clock",
       "versionCode": 3,
-      "useCleartextTraffic": true,
       "adaptiveIcon": {
         "foregroundImage": "./assets/APP-ICON.png",
         "backgroundColor": "#ffffff"
@@ -58,7 +57,8 @@
           }
         }
       ],
-      "./app.plugin.js"
+      "./app.plugin.js",
+      "expo-asset"
     ],
     "extra": {
       "eas": {
