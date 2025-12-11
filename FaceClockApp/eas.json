@@ -13,8 +13,13 @@
       },
       "ios": {
         "simulator": true
+      },
+      "env": {
+        "EXPO_PUBLIC_API_ENV": "production",
+        "EXPO_PUBLIC_API_URL": "https://clock-in.duckdns.org/api"
       }
     },
+
     "preview": {
       "distribution": "internal",
       "channel": "preview",
@@ -23,29 +28,30 @@
       },
       "ios": {
         "simulator": false
+      },
+      "env": {
+        "EXPO_PUBLIC_API_ENV": "production",
+        "EXPO_PUBLIC_API_URL": "https://clock-in.duckdns.org/api"
       }
     },
+
     "production": {
       "channel": "production",
       "android": {
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease",
-        "image": "latest"
+        "gradleCommand": ":app:assembleRelease"
       },
       "ios": {
-        "simulator": false,
-        "image": "latest"
+        "simulator": false
       },
       "env": {
-        "EXPO_PUBLIC_API_ENV": "production",
         "NODE_ENV": "production",
+        "EXPO_PUBLIC_API_ENV": "production",
         "EXPO_PUBLIC_API_URL": "https://clock-in.duckdns.org/api"
-      },
-      "cache": {
-        "disabled": false
       }
     }
   },
+
   "submit": {
     "production": {}
   }
