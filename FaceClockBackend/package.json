@@ -23,11 +23,13 @@
     "canvas": "^2.11.2",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "expo": "^54.0.27",
+    "expo": "~54.0.28",
     "express": "^5.1.0",
     "mongoose": "^8.19.3",
     "multer": "^1.4.5-lts.1",
     "onnxruntime-node": "^1.23.2",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
     "sharp": "^0.33.2"
   }
 }
