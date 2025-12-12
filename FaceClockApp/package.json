@@ -14,7 +14,6 @@
     "@react-navigation/native": "^6.1.18",
     "@react-navigation/native-stack": "^6.11.0",
     "axios": "^1.13.2",
-    "expo": "~54.0.28",
     "expo-application": "~7.0.8",
     "expo-asset": "~12.0.11",
     "expo-build-properties": "~1.0.10",
@@ -40,6 +39,7 @@
   },
   "private": true,
   "devDependencies": {
+    "expo": "^54.0.29",
     "sharp": "^0.34.5"
   }
 }

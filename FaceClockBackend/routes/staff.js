@@ -1530,8 +1530,9 @@ router.get('/verify-registration', async (req, res) => {
       res.json({ success: true, registered: false });
     }
   } catch (error) {
+    const message = error?.message || String(error);
     console.error('Error verifying registration:', error);
-    res.status(500).json({ error: 'Failed to verify registration' });
+    res.status(500).json({ error: 'Failed to verify registration', details: message });
   }
 });
 
@@ -3338,8 +3339,9 @@ router.get('/admin/host-companies', async (req, res) => {
       companies: companiesWithStats
     });
   } catch (error) {
+    const message = error?.message || String(error);
     console.error('Error fetching host companies:', error);
-    res.status(500).json({ error: 'Failed to fetch host companies' });
+    res.status(500).json({ error: 'Failed to fetch host companies', details: message });
   }
 });
 
