@@ -24,6 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { getDeviceHeaders } from '../utils/deviceInfo';
 import { analyzeFrame, FaceDetectionFeedback, resetFrameAnalysis } from '../utils/faceDetectionFeedback';
 import { ProfessionalFeedback } from '../components/ProfessionalFeedback';
+import API_BASE_URL from '../config/api';
 
 /**
  * Professional Bank-Grade Feedback: Minimal, clean, enterprise-style messages

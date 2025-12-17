@@ -24,6 +24,7 @@ import { useTheme } from '../context/ThemeContext';
 import { FaceDetectionFeedback, analyzeFrame, resetFrameAnalysis } from '../utils/faceDetectionFeedback';
 import { ProfessionalFeedback } from '../components/ProfessionalFeedback';
 import { getDeviceHeaders } from '../utils/deviceInfo';
+import API_BASE_URL from '../config/api';
 // Backend pre-validation: uses backend models for real-time feedback
 
 /**
