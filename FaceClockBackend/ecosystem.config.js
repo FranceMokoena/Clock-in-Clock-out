@@ -7,19 +7,24 @@ const workingDir = isProduction
   ? '/home/ubuntu/FaceClockBackend' 
   : path.join(__dirname);
 
+// Use absolute path for script to ensure it's found
+const scriptPath = path.join(workingDir, 'server.js');
+
 module.exports = {
   apps: [
     {
       name: "faceclock",
-      script: "server.js",
+      script: scriptPath,
       cwd: workingDir,
+      interpreter: "node",
+      interpreter_args: "--max-old-space-size=400",
       watch: false,
-      env_file: '.env',
+      env_file: path.join(workingDir, '.env'),
       env: {
         NODE_ENV: "production"
       },
-      error_file: './logs/err.log',
-      out_file: './logs/out.log',
+      error_file: path.join(workingDir, 'logs/err.log'),
+      out_file: path.join(workingDir, 'logs/out.log'),
       log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
       merge_logs: true,
       autorestart: true,
