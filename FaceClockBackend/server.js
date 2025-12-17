@@ -35,11 +35,30 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) throw new Error('MONGO_URI must be set in .env');
+mongoose.set('bufferCommands', false);
 
-const mongoConnectPromise = mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ MongoDB connected successfully'))
+// MongoDB connection options to prevent timeout errors
+const mongoOptions = {
+  serverSelectionTimeoutMS: 30000, // 30 seconds - time to wait for server selection
+  socketTimeoutMS: 45000, // 45 seconds - time to wait for socket connection
+  connectTimeoutMS: 30000, // 30 seconds - time to wait for initial connection
+   // Disable mongoose buffering - fail immediately if not connected
+  bufferCommands: false, // Disable mongoose buffering
+  maxPoolSize: 10, // Maximum number of connections in the connection pool
+  minPoolSize: 2, // Minimum number of connections in the connection pool
+  retryWrites: true,
+  w: 'majority'
+};
+
+const mongoConnectPromise = mongoose.connect(MONGO_URI, mongoOptions)
+  .then(() => {
+    console.log('✅ MongoDB connected successfully');
+    console.log(`📊 Database: ${mongoose.connection.name}`);
+    console.log(`🔗 Host: ${mongoose.connection.host}:${mongoose.connection.port}`);
+  })
   .catch(err => {
     console.error('❌ MongoDB connection error:', err.message);
+    console.error('❌ Full error:', err);
     throw err;
   });
 
@@ -63,6 +82,33 @@ const healthHandler = (req, res) => {
 app.get('/api/health', healthHandler);
 app.post('/api/health', healthHandler);
 app.options('/api/health', (req, res) => res.sendStatus(204));
+
+// API root endpoint listing all API routes (handle both /api and /api/)
+const apiRootHandler = (req, res) => {
+  res.json({
+    status: 'OK',
+    message: 'Internship Success Clock-in/Clock-out API',
+    endpoints: {
+      health: 'GET/POST /api/health',
+      login: 'POST /api/staff/login',
+      register: 'POST /api/staff/register',
+      clock: 'POST /api/staff/clock',
+      validatePreview: 'POST /api/staff/validate-preview',
+      verifyRegistration: 'GET /api/staff/verify-registration',
+      locations: 'GET /api/locations/all',
+      staffList: 'GET /api/staff/list',
+      staffLogs: 'GET /api/staff/logs',
+      adminStats: 'GET /api/staff/admin/stats',
+      adminStaff: 'GET /api/staff/admin/staff',
+      adminHostCompanies: 'GET /api/staff/admin/host-companies',
+      adminDepartments: 'GET /api/staff/admin/departments/all',
+      adminNotAccountable: 'GET /api/staff/admin/not-accountable',
+      adminTimesheet: 'GET /api/staff/admin/staff/:staffId/timesheet'
+    }
+  });
+};
+app.all('/api', apiRootHandler);
+app.all('/api/', apiRootHandler);
 
 // Root endpoint listing all frontend routes
 app.all('/', (req, res) => {
