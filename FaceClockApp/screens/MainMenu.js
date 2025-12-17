@@ -100,6 +100,40 @@ export default function MainMenu({ navigation }) {
               <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Clock Out</Text>
             </TouchableOpacity>
 
+
+            {/* Clock Out Button */}
+            <TouchableOpacity
+              style={[styles.gridButton, dynamicStyles.gridButton]}
+              onPress={() => navigation.navigate('ClockIn', { clockType: 'out' })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gridButtonIcon}>🕐</Text>
+              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Start Tea Time</Text>
+            </TouchableOpacity>
+{/* Clock Out Button */}
+<TouchableOpacity
+              style={[styles.gridButton, dynamicStyles.gridButton]}
+              onPress={() => navigation.navigate('ClockIn', { clockType: 'out' })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gridButtonIcon}>🕐</Text>
+              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>End Tea Time</Text>
+            </TouchableOpacity>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
             {/* Start Break Button */}
             <TouchableOpacity
               style={[styles.gridButton, dynamicStyles.gridButton]}

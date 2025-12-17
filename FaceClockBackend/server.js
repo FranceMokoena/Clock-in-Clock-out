@@ -7,6 +7,7 @@ const staffRoutes = require('./routes/staff');
 const locationsRoutes = require('./routes/locations');
 const staffCache = require('./utils/staffCache');
 
+
 // ONNX Runtime face recognition
 let faceRecognition;
 try {
@@ -31,6 +32,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // MongoDB connection
+
 const MONGO_URI = process.env.MONGO_URI;
 if (!MONGO_URI) throw new Error('MONGO_URI must be set in .env');
 
