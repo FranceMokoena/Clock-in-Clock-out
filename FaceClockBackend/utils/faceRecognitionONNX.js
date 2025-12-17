@@ -40,7 +40,6 @@
  */
 
 const ort = require('onnxruntime-node');
-const { loadImage } = require('canvas');
 const sharp = require('sharp');
 const fs = require('fs');
 const path = require('path');

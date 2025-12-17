@@ -6,6 +6,7 @@ const cors = require('cors');
 const staffRoutes = require('./routes/staff');
 const locationsRoutes = require('./routes/locations');
 const staffCache = require('./utils/staffCache');
+const API_BASE_URL = process.env.API_BASE_URL;
 
 
 // ONNX Runtime face recognition
