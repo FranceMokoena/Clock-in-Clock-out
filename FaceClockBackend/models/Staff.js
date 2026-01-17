@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
 const staffSchema = new mongoose.Schema({
   name: {
@@ -45,6 +46,16 @@ const staffSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'HostCompany',
     required: false // Optional for backward compatibility
+  },
+  mentorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Staff',
+    required: false // Optional - mentor assigned to interns/staff
+  },
+  mentorName: {
+    type: String,
+    required: false,
+    trim: true
   },
   location: {
     type: String,
@@ -344,6 +355,52 @@ const staffSchema = new mongoose.Schema({
   isActive: {
     type: Boolean,
     default: true
+  },
+  // Profile picture (base64 encoded or URL)
+  profilePicture: {
+    type: String,
+    required: false,
+    trim: true
+  },
+  stipendAmount: {
+    type: Number,
+    required: false,
+    min: 0
+  },
+  // Expected working hours (used for payroll expectations only)
+  expectedWorkingDaysPerWeek: {
+    type: Number,
+    required: false,
+    min: 0
+  },
+  expectedWorkingDaysPerMonth: {
+    type: Number,
+    required: false,
+    min: 0
+  },
+  expectedHoursPerDay: {
+    type: Number,
+    required: false,
+    min: 0
+  },
+  expectedWeeklyHours: {
+    type: Number,
+    required: false,
+    min: 0
+  },
+  expectedMonthlyHours: {
+    type: Number,
+    required: false,
+    min: 0
+  },
+  // 🔐 Password field (required for Staff and Intern roles only)
+  password: {
+    type: String,
+    required: function() {
+      // Password is required only for Staff and Intern roles
+      return this.role === 'Staff' || this.role === 'Intern';
+    },
+    select: false // Don't include password in queries by default
   }
 });
 
@@ -393,6 +450,36 @@ staffSchema.statics.decryptEmbedding = function(encryptedData) {
   let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
   decrypted += decipher.final('utf8');
   return JSON.parse(decrypted);
+};
+
+// 🔐 Hash password before saving (only for Staff and Intern roles)
+staffSchema.pre('save', async function(next) {
+  // Only hash the password if it has been modified (or is new) and role requires it
+  if (!this.isModified('password')) {
+    return next();
+  }
+  
+  // Only hash if password exists and role is Staff or Intern
+  if (this.password && (this.role === 'Staff' || this.role === 'Intern')) {
+    try {
+      // Hash password with cost of 10
+      const salt = await bcrypt.genSalt(10);
+      this.password = await bcrypt.hash(this.password, salt);
+      next();
+    } catch (error) {
+      next(error);
+    }
+  } else {
+    next();
+  }
+});
+
+// 🔐 Method to compare password for login
+staffSchema.methods.comparePassword = async function(candidatePassword) {
+  if (!this.password) {
+    return false;
+  }
+  return await bcrypt.compare(candidatePassword, this.password);
 };
 
 module.exports = mongoose.model('Staff', staffSchema);

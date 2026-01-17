@@ -1,0 +1,75 @@
+{
+  "timestamp": "2026-01-10T21:46:34.500Z",
+  "summary": {
+    "totalStaff": 3,
+    "totalInterns": 3,
+    "totalDepartments": 7,
+    "totalHostCompanies": 5
+  },
+  "departments": [
+    {
+      "name": "1st DEPT",
+      "code": "1DEPT",
+      "company": "Internship Success",
+      "interns": []
+    },
+    {
+      "name": "DEPARTMENT OF SALES",
+      "code": "DETS198",
+      "company": "Internship Success",
+      "interns": [
+        {
+          "name": "France Mokoena Mokoena",
+          "idNumber": "0212315697087",
+          "role": "Intern"
+        },
+        {
+          "name": "Senzo Mkhize Mkhize",
+          "idNumber": "0109095708086",
+          "role": "Intern"
+        }
+      ]
+    },
+    {
+      "name": "NEWS AND WEATHER",
+      "code": "NE355",
+      "company": "SABC NEWS",
+      "interns": []
+    },
+    {
+      "name": "IT & COMPUTER SCIENCE",
+      "code": "ITCS",
+      "company": "SABC NEWS",
+      "interns": [
+        {
+          "name": "Sethu Shongwe Shongwe",
+          "idNumber": "9710315608088",
+          "role": "Intern"
+        }
+      ]
+    },
+    {
+      "name": "Cleaning and packaging",
+      "code": "Cp3aa",
+      "company": "KFC",
+      "interns": []
+    },
+    {
+      "name": "HEALTHY AND ASSOSIATES",
+      "code": "HE332SD",
+      "company": "Kentucky Fried Chicken",
+      "interns": []
+    },
+    {
+      "name": "HR & ADMIN",
+      "code": "HDR1009",
+      "company": "INTERNSHIP SUCCESS",
+      "interns": []
+    }
+  ],
+  "issues": {
+    "unassignedStaff": 0,
+    "inactiveStaff": 0,
+    "departmentMismatches": 0
+  }
+}

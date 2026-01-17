@@ -24,7 +24,6 @@ import { useTheme } from '../context/ThemeContext';
 import { FaceDetectionFeedback, analyzeFrame, resetFrameAnalysis } from '../utils/faceDetectionFeedback';
 import { ProfessionalFeedback } from '../components/ProfessionalFeedback';
 import { getDeviceHeaders } from '../utils/deviceInfo';
-import API_BASE_URL from '../config/api';
 // Backend pre-validation: uses backend models for real-time feedback
 
 /**
@@ -1724,8 +1723,12 @@ export default function ClockIn({ navigation, route }) {
         <Text style={[styles.headerTitle, dynamicStyles.headerTitle]}>
           {initialClockType === 'in' ? 'Clock In' : 
            initialClockType === 'out' ? 'Clock Out' : 
-           initialClockType === 'break_start' ? 'Start Break' : 
-           initialClockType === 'break_end' ? 'End Break' : 
+           initialClockType === 'break_start' ? 'Start Tea Time' : 
+           initialClockType === 'break_end' ? 'End Tea Time' :
+           initialClockType === 'extra_shift_in' ? 'Extra Shift - Clock In' :
+           initialClockType === 'extra_shift_out' ? 'Extra Shift - Clock Out' :
+           initialClockType === 'lunch_start' ? 'Start Lunch' :
+           initialClockType === 'lunch_end' ? 'End Lunch' :
            'Clock In / Out'}
         </Text>
         <View style={styles.placeholder} />
@@ -1967,7 +1970,8 @@ export default function ClockIn({ navigation, route }) {
               styles.clockButton,
               initialClockType === 'in' && styles.clockInButton,
               initialClockType === 'out' && styles.clockOutButton,
-              (initialClockType === 'break_start' || initialClockType === 'break_end') && styles.breakButton,
+              (initialClockType === 'break_start' || initialClockType === 'break_end' || 
+               initialClockType === 'lunch_start' || initialClockType === 'lunch_end') && styles.breakButton,
               (loading || capturing) && styles.buttonDisabled,
               isLandscape && styles.clockButtonLandscape,
             ]}
@@ -2000,9 +2004,15 @@ export default function ClockIn({ navigation, route }) {
                   styles.clockButtonText,
                   isLandscape && styles.clockButtonTextLandscape
                 ]}>
-                  {initialClockType === 'in' ? 'Clock In' : 
-                   initialClockType === 'out' ? 'Clock Out' : 
-                   initialClockType === 'break_start' ? 'Start Break' : 'End Break'}
+              {initialClockType === 'in' ? 'Clock In' : 
+               initialClockType === 'out' ? 'Clock Out' : 
+               initialClockType === 'break_start' ? 'Start Tea Time' :
+               initialClockType === 'break_end' ? 'End Tea Time' :
+               initialClockType === 'extra_shift_in' ? 'Extra Shift In' :
+               initialClockType === 'extra_shift_out' ? 'Extra Shift Out' :
+               initialClockType === 'lunch_start' ? 'Start Lunch' :
+               initialClockType === 'lunch_end' ? 'End Lunch' :
+               'Clock'}
                 </Text>
               </View>
             )}
@@ -2025,8 +2035,12 @@ export default function ClockIn({ navigation, route }) {
             <Text style={[styles.resultTitle, dynamicStyles.resultTitle]}>
               {result?.clockType === 'in' ? 'Clock-In Success!' : 
                result?.clockType === 'out' ? 'Clock-Out Success!' : 
-               result?.clockType === 'break_start' ? 'Break Started!' : 
-               result?.clockType === 'break_end' ? 'Break Ended!' : 
+               result?.clockType === 'break_start' ? 'Tea Time Started!' : 
+               result?.clockType === 'break_end' ? 'Tea Time Ended!' :
+               result?.clockType === 'extra_shift_in' ? 'Extra Shift Started!' :
+               result?.clockType === 'extra_shift_out' ? 'Extra Shift Ended!' :
+               result?.clockType === 'lunch_start' ? 'Lunch Started!' :
+               result?.clockType === 'lunch_end' ? 'Lunch Ended!' :
                'Success!'}
             </Text>
             <Text style={[styles.resultMessage, dynamicStyles.resultMessage]}>{result?.message}</Text>

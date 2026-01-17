@@ -1,50 +1,49 @@
-// Learn more https://docs.expo.dev/guides/customizing-metro
 const { getDefaultConfig } = require('expo/metro-config');
 
-/** @type {import('expo/metro-config').MetroConfig} */
 const config = getDefaultConfig(__dirname);
 
-// Optimize bundle size for production
+const isProduction = process.env.NODE_ENV === 'production';
+
 config.transformer = {
   ...config.transformer,
-  // Enable minification
-  minifierPath: require.resolve('metro-minify-terser'),
-  minifierConfig: {
-    // Remove console statements in production
-    compress: {
-      drop_console: true,
-      drop_debugger: true,
-      pure_funcs: ['console.log', 'console.info', 'console.debug', 'console.trace'],
-    },
-    // Optimize output
-    output: {
-      comments: false,
-      ascii_only: true,
-    },
-  },
-  // Enable inline requires for better tree shaking
   getTransformOptions: async () => ({
     transform: {
       experimentalImportSupport: false,
-      inlineRequires: true,
+      inlineRequires: isProduction,
     },
   }),
 };
 
-// Optimize resolver for smaller bundles
+if (isProduction) {
+  config.transformer.minifierPath = require.resolve('metro-minify-terser');
+  config.transformer.minifierConfig = {
+    compress: {
+      drop_console: true,
+      drop_debugger: true,
+    },
+    output: {
+      comments: false,
+      ascii_only: true,
+    },
+  };
+}
+
 config.resolver = {
   ...config.resolver,
-  // Keep all necessary file extensions (don't remove json as it's needed)
-  // Exclude unnecessary platforms if needed
   platforms: ['ios', 'android', 'native', 'web'],
 };
 
-// Optimize serializer for production
-config.serializer = {
-  ...config.serializer,
-  // Custom serializer options for smaller bundles
-  customSerializer: config.serializer.customSerializer,
+// Add middleware to handle platform detection for Expo Go compatibility
+config.middleware = {
+  ...config.middleware,
+  handler: (req, res, next) => {
+    // Ensure platform header is set for Expo Go
+    if (!req.headers['expo-platform'] && !req.headers['exponent-platform']) {
+      // Default to 'android' for Expo Go if not specified
+      req.headers['expo-platform'] = 'android';
+    }
+    next();
+  }
 };
 
 module.exports = config;
-

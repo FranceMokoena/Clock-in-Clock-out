@@ -1,0 +1,110 @@
+/* Risk & Alert Reports CSS - Government style */
+.risk-alert-reports {
+  background: #ffffff;
+  padding: 20px;
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+}
+
+.risk-summary {
+  background: #ffffff;
+  padding: 12px;
+  border: 1px solid var(--gov-border);
+  margin-bottom: 18px;
+}
+
+.risk-summary h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gov-text-main);
+  margin: 0 0 12px 0;
+}
+
+.risk-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.risk-metric {
+  background: #ffffff;
+  padding: 12px;
+  text-align: left;
+  border-left: 4px solid var(--gov-secondary);
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+}
+
+.risk-metric.high { border-left-color: var(--gov-danger); }
+.risk-metric.medium { border-left-color: var(--gov-warning); }
+.risk-metric.low { border-left-color: var(--gov-success); }
+
+.risk-metric .metric-value {
+  font-size: 18px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--gov-text-main);
+}
+
+.risk-metric .metric-label {
+  font-size: 12px;
+  color: var(--gov-text-muted);
+  font-weight: 500;
+  text-transform: none;
+}
+
+.risk-filter-buttons { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+
+.risk-filter-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--gov-border);
+  background: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.risk-filter-btn.active { background: var(--gov-accent); }
+
+.risk-profiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+
+.risk-profile-card {
+  background: #ffffff;
+  border: 1px solid var(--gov-border);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 0;
+}
+
+.risk-profile-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
+
+.risk-profile-name { font-size: 14px; font-weight: 600; color: var(--gov-text-main); margin: 0; }
+
+.risk-profile-icon { width: 28px; height: 28px; font-size: 14px; }
+
+.risk-score-bar { background: #F7F9FB; height: 8px; border-radius: 2px; margin-bottom: 12px; }
+.risk-score-fill.high { background: var(--gov-danger); }
+.risk-score-fill.medium { background: var(--gov-warning); }
+.risk-score-fill.low { background: var(--gov-success); }
+
+.risk-score-label .label { font-size: 12px; color: var(--gov-text-muted); font-weight: 500; }
+.risk-score-label .score { font-size: 14px; font-weight: 600; }
+
+.risk-metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 12px; }
+.risk-metric-item { background: #FBFCFD; padding: 10px; border: 1px solid var(--gov-border); }
+.risk-metric-item .label { font-size: 11px; color: var(--gov-text-muted); font-weight: 500; }
+.risk-metric-item .value { font-size: 14px; font-weight: 600; color: var(--gov-text-main); }
+
+.risk-flags { border-top: 1px solid var(--gov-border); padding-top: 12px; margin-top: 12px; }
+.risk-flag { font-size: 12px; color: var(--gov-text-main); }
+
+@media (max-width: 1024px) {
+  .risk-profiles { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+}
+
+@media (max-width: 768px) {
+  .risk-alert-reports { padding: 16px; }
+  .risk-profiles { grid-template-columns: 1fr; }
+  .risk-grid { grid-template-columns: repeat(2, 1fr); }
+}

@@ -293,27 +293,54 @@ async function downloadModelFile(url, filepath, timeout = 600000) {
 }
 
 /**
- * Extract ZIP file using system unzip or Python
+ * Extract ZIP file using Node.js library (cross-platform, works on Windows/Linux/Mac)
+ * Uses adm-zip for reliable extraction without external dependencies
  */
 function extractZipFile(zipPath, extractTo) {
-  const { execSync } = require('child_process');
   try {
     console.log('📦 Extracting ZIP file...');
-    execSync(`unzip -q -o "${zipPath}" -d "${extractTo}"`, { stdio: 'inherit' });
+    
+    // Use adm-zip for cross-platform ZIP extraction (works on Windows, Linux, Mac)
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(zipPath);
+    
+    // Extract all files to the target directory
+    zip.extractAllTo(extractTo, true); // true = overwrite existing files
+    
+    console.log('✅ ZIP file extracted successfully');
     return true;
   } catch (error) {
-    console.log('⚠️  unzip command failed, trying Python...');
+    console.error('❌ Failed to extract ZIP file:', error.message);
+    
+    // Fallback: Try system unzip (Linux/Mac) or Python (if available)
+    const { execSync } = require('child_process');
+    
+    // Try system unzip first (Linux/Mac)
     try {
-      const pythonScript = `import zipfile; zipfile.ZipFile('${zipPath}').extractall('${extractTo}')`;
-      execSync(`python3 -c "${pythonScript}"`, { stdio: 'inherit' });
+      console.log('⚠️  Trying system unzip command...');
+      execSync(`unzip -q -o "${zipPath}" -d "${extractTo}"`, { stdio: 'inherit' });
+      console.log('✅ ZIP extracted using system unzip');
       return true;
-    } catch (pyError) {
+    } catch (unzipError) {
+      // Try Python as last resort
       try {
-        execSync(`python -c "${pythonScript}"`, { stdio: 'inherit' });
+        console.log('⚠️  Trying Python zipfile...');
+        const pythonScript = `import zipfile, os; zipfile.ZipFile(r'${zipPath.replace(/\\/g, '/')}').extractall(r'${extractTo.replace(/\\/g, '/')}')`;
+        execSync(`python3 -c "${pythonScript}"`, { stdio: 'inherit' });
+        console.log('✅ ZIP extracted using Python');
         return true;
-      } catch (py2Error) {
-        console.error('❌ Failed to extract ZIP:', py2Error.message);
-        return false;
+      } catch (pyError) {
+        try {
+          execSync(`python -c "${pythonScript}"`, { stdio: 'inherit' });
+          console.log('✅ ZIP extracted using Python');
+          return true;
+        } catch (py2Error) {
+          console.error('❌ All extraction methods failed');
+          console.error('   - adm-zip failed:', error.message);
+          console.error('   - unzip command failed:', unzipError.message);
+          console.error('   - Python failed:', py2Error.message);
+          return false;
+        }
       }
     }
   }
@@ -506,17 +533,12 @@ async function loadModels() {
         throw new Error(errorMsg);
       }
 
-      console.log('📦 Loading SCRFD face detection model...');
       detectionModel = await ort.InferenceSession.create(detectionModelPath, {
         executionProviders: ['cpu'], // Use 'cuda' for GPU if available
         graphOptimizationLevel: 'all', // Optimize graph to reduce memory
         enableMemPattern: false, // Disable memory pattern to reduce overhead
         enableCpuMemArena: false, // Disable CPU memory arena to reduce memory usage
       });
-      // Log input/output names for debugging
-      console.log('   📋 Detection model inputs:', JSON.stringify(detectionModel.inputNames));
-      console.log('   📋 Detection model outputs:', JSON.stringify(detectionModel.outputNames));
-      console.log('✅ SCRFD detection model loaded');
 
       // Load ArcFace recognition model
       if (!hasRecognition) {
@@ -537,8 +559,6 @@ async function loadModels() {
       // Try w600k first, fallback to glint360k
       // MEMORY OPTIMIZATION: Use session options to reduce memory usage
       if (fs.existsSync(recognitionModelPath)) {
-        console.log('📦 Loading ArcFace recognition model (w600k)...');
-        console.log('   ⚠️  Large model (166MB) - optimizing memory usage...');
         recognitionModel = await ort.InferenceSession.create(recognitionModelPath, {
           executionProviders: ['cpu'],
           graphOptimizationLevel: 'all', // Optimize graph to reduce memory
@@ -550,13 +570,7 @@ async function loadModels() {
             intra_op_num_threads: 1, // Use single thread to reduce memory
           },
         });
-        console.log('   ✅ Recognition model loaded');
-        console.log('   📋 Input names:', JSON.stringify(recognitionModel.inputNames));
-        console.log('   📋 Output names:', JSON.stringify(recognitionModel.outputNames));
-        console.log('   📋 Input metadata:', JSON.stringify(recognitionModel.inputMetadata));
       } else if (fs.existsSync(altRecognitionPath)) {
-        console.log('📦 Loading ArcFace recognition model (glint360k)...');
-        console.log('   ⚠️  Large model - optimizing memory usage...');
         recognitionModel = await ort.InferenceSession.create(altRecognitionPath, {
           executionProviders: ['cpu'],
           graphOptimizationLevel: 'all',
@@ -567,13 +581,10 @@ async function loadModels() {
             intra_op_num_threads: 1,
           },
         });
-        console.log('   Recognition model inputs:', recognitionModel.inputNames);
-        console.log('   Recognition model outputs:', recognitionModel.outputNames);
       }
-      console.log('✅ ArcFace recognition model loaded');
 
       modelsLoaded = true;
-      console.log('✅ All ONNX models loaded successfully');
+      console.log('✅ ONNX models loaded successfully');
       return;
     } catch (error) {
       modelsLoadError = error;
@@ -834,7 +845,6 @@ async function correctBrightness(imageBuffer, currentBrightness) {
       .linear(1.0, limitedAdjustment * 255) // linear(a, b) = a * pixel + b
       .toBuffer();
     
-    console.log(`   ✅ Brightness auto-corrected: ${(currentBrightness * 100).toFixed(1)}% → ~${(targetBrightness * 100).toFixed(0)}%`);
     
     return corrected;
   } catch (error) {
@@ -860,7 +870,6 @@ async function getDeviceQuality(deviceFingerprint) {
     const deviceQuality = await DeviceQuality.findOne({ deviceFingerprint }).lean();
     
     if (deviceQuality) {
-      console.log(`   📱 Device quality: ${deviceQuality.qualityTier} tier (blur: ${deviceQuality.averageBlurVariance.toFixed(1)}, width: ${deviceQuality.averageImageWidth.toFixed(0)}px, score: ${(deviceQuality.averageQualityScore * 100).toFixed(1)}%)`);
     }
     
     return deviceQuality;
@@ -889,7 +898,6 @@ async function trackDeviceQuality(deviceFingerprint, qualityMetrics) {
     // Update quality metrics
     await deviceQuality.updateQualityMetrics(qualityMetrics);
     
-    console.log(`   📊 Device quality updated: ${deviceQuality.qualityTier} tier (${deviceQuality.totalClockIns} clock-ins)`);
   } catch (error) {
     console.warn('⚠️ Error tracking device quality:', error.message);
     // Fail silently, don't break clock-in process
@@ -950,7 +958,6 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
     if (deviceQuality && deviceQuality.totalClockIns >= CONFIG.MIN_CLOCK_INS_FOR_CLASSIFICATION) {
       isKnownLowQualityDevice = deviceQuality.qualityTier === 'low';
       if (isKnownLowQualityDevice) {
-        console.log(`   📱 Known low-quality device detected (${deviceQuality.totalClockIns} clock-ins, avg blur: ${deviceQuality.averageBlurVariance.toFixed(1)}, avg width: ${deviceQuality.averageImageWidth.toFixed(0)}px)`);
       }
     }
   }
@@ -978,8 +985,6 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
     if (shouldEnhance) {
       enhancementAttempted = true;
       const enhancementType = isLowQualityCamera ? 'aggressive' : (isVeryBlurry ? 'aggressive (very blurry)' : 'moderate');
-      console.log(`   🔧 ${isVeryBlurry ? 'Very blurry image' : isLowQualityCamera ? 'Low-quality camera' : 'Blurry image'} detected: Applying ${enhancementType} enhancement...`);
-      console.log(`   📊 Before: Variance=${blurResult.variance.toFixed(1)}, Sharpness=${(blurResult.score * 100).toFixed(1)}%`);
       
       // Use aggressive enhancement for very blurry images or low-quality cameras
       const aggressiveness = (isLowQualityCamera || isVeryBlurry) ? CONFIG.ENHANCEMENT_AGGRESSIVENESS : 1.0;
@@ -989,12 +994,9 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
       const enhancedBlurResult = await detectBlur(enhancedBuffer);
       if (enhancedBlurResult.variance > blurResult.variance) {
         enhancementImproved = true;
-        console.log(`   ✅ Image enhanced: sharpness improved from ${(blurResult.score * 100).toFixed(1)}% to ${(enhancedBlurResult.score * 100).toFixed(1)}%`);
-        console.log(`   📊 After: Variance=${enhancedBlurResult.variance.toFixed(1)}, Sharpness=${(enhancedBlurResult.score * 100).toFixed(1)}%`);
         blurResult = enhancedBlurResult;
         imageBuffer = enhancedBuffer; // Use enhanced image for processing
       } else {
-        console.log(`   ⚠️ Enhancement didn't improve sharpness (${enhancedBlurResult.variance.toFixed(1)} vs ${blurResult.variance.toFixed(1)}), using original image`);
       }
     } else if (blurResult.isBlurry) {
       // Image is blurry but enhancement wasn't attempted (shouldn't happen, but log it)
@@ -1012,25 +1014,20 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
   if (isLowQualityCamera) {
     // Very lenient for low-quality cameras
     effectiveBlurThreshold = CONFIG.MIN_BLUR_THRESHOLD_LOW_CAMERA; // 40
-    console.log(`   📱 Low-quality camera mode: Using lenient blur threshold (${effectiveBlurThreshold})`);
   } else if (enhancementImproved) {
     // Enhanced image - use relaxed threshold
     effectiveBlurThreshold = CONFIG.MIN_BLUR_THRESHOLD * 0.6; // 60% of normal (36)
-    console.log(`   ✅ Enhanced image: Using relaxed blur threshold (${effectiveBlurThreshold})`);
   } else if (enhancementAttempted || isVeryBlurry) {
     // 🐛 FIX: Enhancement attempted OR very blurry image - be lenient
     // This helps ALL staff with blurry images, even if enhancement didn't help
     effectiveBlurThreshold = CONFIG.MIN_BLUR_THRESHOLD * 0.5; // 50% of normal (30) - more lenient
-    console.log(`   ⚠️ ${isVeryBlurry ? 'Very blurry image' : 'Enhancement attempted'}: Using lenient threshold (${effectiveBlurThreshold})`);
   } else if (metadata.width < CONFIG.MIN_IMAGE_WIDTH_STRICT) {
     // Medium-quality camera - moderate threshold
     effectiveBlurThreshold 
     = CONFIG.MIN_BLUR_THRESHOLD * 0.8; // 80% of normal (48)
-    console.log(`   📸 Medium-quality camera: Using relaxed threshold (${effectiveBlurThreshold})`);
   } else {
     // High-quality camera - use normal threshold
     effectiveBlurThreshold = CONFIG.MIN_BLUR_THRESHOLD; // 60
-    console.log(`   ✅ High-quality camera: Using standard threshold (${effectiveBlurThreshold})`);
   }
   
   // 🐛 CRITICAL FIX: For very blurry images, use even more lenient threshold if still below
@@ -1040,7 +1037,6 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
     const veryBlurryThreshold = Math.max(CONFIG.MIN_BLUR_THRESHOLD_LOW_CAMERA, blurResult.variance * 1.5);
     if (veryBlurryThreshold < effectiveBlurThreshold) {
       effectiveBlurThreshold = veryBlurryThreshold;
-      console.log(`   🔧 Very blurry image: Using minimum viable threshold (${effectiveBlurThreshold.toFixed(1)})`);
     }
   }
   
@@ -1055,7 +1051,6 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
     console.warn(`   ⚠️ Image quality is marginal (variance: ${blurResult.variance.toFixed(1)} < ${CONFIG.MIN_BLUR_THRESHOLD}). Accuracy may be reduced.`);
   }
   
-  console.log(`   ✅ Quality gates passed: Size=${metadata.width}x${metadata.height}, Brightness=${(brightness * 100).toFixed(1)}%, Sharpness=${(blurResult.score * 100).toFixed(1)}%`);
   
   // 🏦 BANK-GRADE: Resize to CANONICAL_SIZE (single size for detection + recognition)
   image = sharp(imageBuffer);
@@ -1066,7 +1061,6 @@ async function preprocessCanonical(imageBuffer, deviceFingerprint = null) {
   const scaleX = canonicalMetadata.width / metadata.width;
   const scaleY = canonicalMetadata.height / metadata.height;
   
-  console.log(`   🏦 Canonical preprocessing: ${metadata.width}x${metadata.height} → ${canonicalMetadata.width}x${canonicalMetadata.height} (scale: ${scaleX.toFixed(3)}x, ${scaleY.toFixed(3)}x)`);
   
   // Get canonical image buffer for later use (detection + recognition)
   const canonicalBuffer = await canonicalImage.toBuffer();
@@ -1109,7 +1103,6 @@ async function preprocessForDetection(canonicalBuffer, canonicalWidth, canonical
   // Calculate scale factor to maintain aspect ratio and resize to square
   const detectionSize = CONFIG.DETECTION_SIZE; // 640x640
   
-  console.log(`   🔧 Resizing for SCRFD detection: ${canonicalWidth}x${canonicalHeight} → ${detectionSize}x${detectionSize} (square)`);
   
   // Resize to square using 'cover' to fill entire square (may crop edges)
   // 'cover' ensures the square is filled without letterboxing
@@ -1159,7 +1152,6 @@ async function preprocessForDetection(canonicalBuffer, canonicalWidth, canonical
     }
   }
 
-  console.log(`   ✅ Detection tensor created: shape=[1, 3, ${height}, ${width}], size=${reshaped.length} elements`);
 
   // 🏦 BANK-GRADE: Calculate coordinate conversion factors
   // When using 'cover', Sharp scales to fill the square (maintains aspect ratio, crops if needed)
@@ -1176,7 +1168,6 @@ async function preprocessForDetection(canonicalBuffer, canonicalWidth, canonical
   const cropOffsetX = Math.max(0, (scaledWidth - detectionSize) / 2); // Horizontal crop (if width > detectionSize)
   const cropOffsetY = Math.max(0, (scaledHeight - detectionSize) / 2); // Vertical crop (if height > detectionSize)
 
-  console.log(`   🔧 Coordinate conversion: scale=${scale.toFixed(3)}, cropOffset=(${cropOffsetX.toFixed(1)}, ${cropOffsetY.toFixed(1)})`);
 
   return {
     tensor: new ort.Tensor('float32', reshaped, [1, 3, height, width]),
@@ -1279,14 +1270,12 @@ function checkIfOverlapping(detections) {
       const iou = calculateIoU(detections[i].box, detections[j].box);
       if (iou > 0.3) {
         // Significant overlap (>30%) - likely same face detected multiple times
-        console.log(`   🔍 Detections ${i + 1} and ${j + 1} overlap (IoU: ${(iou * 100).toFixed(1)}%) - likely same face`);
         return true;
       }
     }
   }
   
   // No significant overlap - likely different faces
-  console.log(`   🔍 Detections are not overlapping - likely different faces`);
   return false;
 }
 
@@ -1321,7 +1310,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   const preprocessStartTime = Date.now();
   const preprocessed = await preprocessForDetection(canonicalBuffer, canonicalWidth, canonicalHeight);
   const preprocessTime = Date.now() - preprocessStartTime;
-  console.log(`   ✅ Detection preprocessing complete: ${canonicalWidth}x${canonicalHeight} → ${preprocessed.width}x${preprocessed.height} (square) in ${preprocessTime}ms`);
   
   // Validate preprocessing result
   if (!preprocessed || !preprocessed.tensor) {
@@ -1363,7 +1351,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     throw new Error(`Invalid tensor: ${capturedTensor?.constructor?.name || typeof capturedTensor}`);
   }
   
-  console.log(`   📝 About to queue inference - Input name: "${inputName}", Tensor shape: [${capturedTensor.dims.join(', ')}]`);
   
   let results;
   try {
@@ -1377,9 +1364,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
         }
         
         const modelInputName = detectionModel.inputNames[0];
-        console.log(`   🔧 Inside promise - Model input name: "${modelInputName}"`);
-        console.log(`   🔧 Inside promise - Captured tensor exists: ${!!capturedTensor}`);
-        console.log(`   🔧 Inside promise - Captured tensor is Tensor: ${capturedTensor instanceof ort.Tensor}`);
         
         if (!modelInputName || typeof modelInputName !== 'string' || modelInputName.trim().length === 0) {
           throw new Error(`Invalid model input name: "${modelInputName}" (type: ${typeof modelInputName})`);
@@ -1412,42 +1396,12 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
         const inferenceStartTime = Date.now();
         const inferenceResult = await detectionModel.run(feeds);
         const inferenceTime = Date.now() - inferenceStartTime;
-        console.log(`   ✅ Detection complete (${inferenceTime}ms). Outputs: ${Object.keys(inferenceResult).join(', ')}`);
         return inferenceResult;
       } catch (inferenceError) {
-        // IMMEDIATE error logging to stderr (always flushed)
-        process.stderr.write(`\n❌ ========== DETECTION INFERENCE FAILED ==========\n`);
-        process.stderr.write(`❌ Error message: ${inferenceError.message}\n`);
-        if (detectionModel && detectionModel.inputNames) {
-          process.stderr.write(`📋 Model expects inputs: ${detectionModel.inputNames.join(', ')}\n`);
-        } else {
-          process.stderr.write(`📋 Model or input names not available\n`);
-        }
-        process.stderr.write(`📦 Captured tensor exists: ${!!capturedTensor}\n`);
-        process.stderr.write(`📦 Captured tensor is Tensor: ${capturedTensor instanceof ort.Tensor}\n`);
-        if (capturedTensor) {
-          process.stderr.write(`📦 Captured tensor shape: [${capturedTensor.dims?.join(', ') || 'N/A'}]\n`);
-        }
+        console.error(`❌ Detection inference failed: ${inferenceError.message}`);
         if (inferenceError.stack) {
-          process.stderr.write(`❌ Error stack: ${inferenceError.stack}\n`);
+          console.error(`❌ Error stack: ${inferenceError.stack}`);
         }
-        process.stderr.write(`❌ ===============================================\n`);
-        
-        // Also log to console.error for normal logging
-        console.error(`   ❌ ========== DETECTION INFERENCE FAILED ==========`);
-        console.error(`   ❌ Error message: ${inferenceError.message}`);
-        if (detectionModel && detectionModel.inputNames) {
-          console.error(`   📋 Model expects inputs: ${detectionModel.inputNames.join(', ')}`);
-        } else {
-          console.error(`   📋 Model or input names not available`);
-        }
-        console.error(`   📦 Captured tensor exists: ${!!capturedTensor}`);
-        console.error(`   📦 Captured tensor is Tensor: ${capturedTensor instanceof ort.Tensor}`);
-        if (capturedTensor) {
-          console.error(`   📦 Captured tensor shape: [${capturedTensor.dims?.join(', ') || 'N/A'}]`);
-        }
-        console.error(`   ❌ Error stack: ${inferenceError.stack}`);
-        console.error(`   ❌ ===============================================`);
         throw inferenceError;
       }
     });
@@ -1524,7 +1478,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
         boxOutput = results[identifiedOutputs.box];
         scoreOutput = results[identifiedOutputs.score];
         landmarkOutput = identifiedOutputs.landmarks ? results[identifiedOutputs.landmarks] : null;
-        console.log(`   🔧 Mapped numeric outputs by shape (scale 32): box=${identifiedOutputs.box}, score=${identifiedOutputs.score}, landmarks=${identifiedOutputs.landmarks || 'none'}`);
       } else {
         // Fall back to order-based mapping for scale 32
         const scale32BoxKey = outputNames[6];
@@ -1535,7 +1488,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
           boxOutput = results[scale32BoxKey];
           scoreOutput = results[scale32ScoreKey];
           landmarkOutput = results[scale32LandmarkKey] || null;
-          console.log(`   🔧 Mapped numeric outputs by order (scale 32): box=${scale32BoxKey}, score=${scale32ScoreKey}, landmarks=${scale32LandmarkKey || 'none'}`);
         } else {
           // Try scale 16
           const scale16BoxKey = outputNames[3];
@@ -1546,7 +1498,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
             boxOutput = results[scale16BoxKey];
             scoreOutput = results[scale16ScoreKey];
             landmarkOutput = results[scale16LandmarkKey] || null;
-            console.log(`   🔧 Mapped numeric outputs (scale 16): box=${scale16BoxKey}, score=${scale16ScoreKey}, landmarks=${scale16LandmarkKey || 'none'}`);
           } else {
             // Try scale 8
             const scale8BoxKey = outputNames[0];
@@ -1557,7 +1508,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
               boxOutput = results[scale8BoxKey];
               scoreOutput = results[scale8ScoreKey];
               landmarkOutput = results[scale8LandmarkKey] || null;
-              console.log(`   🔧 Mapped numeric outputs (scale 8): box=${scale8BoxKey}, score=${scale8ScoreKey}, landmarks=${scale8LandmarkKey || 'none'}`);
             }
           }
         }
@@ -1600,19 +1550,13 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
 
   if (shouldNormalizeScores) {
     if (logitsDetected) {
-      console.log(`   🔧 Normalizing SCRFD logits → probabilities (min=${minRawScore.toFixed(4)}, max=${maxRawScore.toFixed(4)})`);
     } else {
-      console.log('   🔧 Forcing SCRFD sigmoid normalization (scores already appear probabilistic)');
     }
   } else {
-    console.log('   ℹ️ SCRFD scores already appear to be probabilities (0-1 range) - skipping extra sigmoid to avoid double-normalization');
   }
 
   // Log tensor shapes for debugging
-  console.log(`   📊 Box output shape: [${boxOutput.dims.join(', ')}]`);
-  console.log(`   📊 Score output shape: [${scoreOutput.dims.join(', ')}]`);
   if (landmarkOutput) {
-    console.log(`   📊 Landmark output shape: [${landmarkOutput.dims.join(', ')}]`);
   }
 
   // Parse SCRFD output - format depends on model version
@@ -1660,7 +1604,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   // Use the minimum number of anchors from boxes and scores
   const maxDetections = Math.min(numAnchors, scoreAnchors || scores.length);
   
-  console.log(`   📊 Parsing up to ${maxDetections} potential detections (${numAnchors} anchors, ${boxFeatures} box features, ${scoreFeatures} score features)`);
   
   // Extract scores correctly from 2D array
   // SCRFD outputs scores as [num_anchors, num_scales] or [num_anchors, 1]
@@ -1776,14 +1719,10 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     const maxPositive = positiveScores.length > 0 ? Math.max(...positiveScores.map(p => p.val)) : maxVal;
     const processedScore0 = extractedScores[0];
     
-    console.log(`   🔍 Sample score features for anchor 0: [${sampleFeatures.join(', ')}]`);
-    console.log(`   🔍 Using max positive (idx ${maxIdx}): raw=${maxVal.toFixed(4)}, ${shouldNormalizeScores ? 'sigmoid=' : 'direct='}${processedScore0.toFixed(4)} (${(processedScore0 * 100).toFixed(1)}%)`);
   }
   
   // 🐛 DEBUG: Log top scores to diagnose detection issues
   const topScores = Array.from(extractedScores).sort((a, b) => b - a).slice(0, 10);
-  console.log(`   🔍 Top 10 detection scores: ${topScores.map(s => (s * 100).toFixed(1)).join('%, ')}%`);
-  console.log(`   🔍 Detection threshold: ${(CONFIG.MIN_DETECTION_SCORE * 100).toFixed(1)}%`);
   
   // Determine box format by checking first box
   // SCRFD typically outputs boxes in center-size format: [center_x, center_y, width, height]
@@ -1812,7 +1751,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
       // Values might be center+size format or other
       boxFormat = 'center_size';
     }
-    console.log(`   🔍 Detected box format: ${boxFormat} (first box values: [${firstBoxValues.map(v => v.toFixed(3)).join(', ')}])`);
   }
   
   // 🏦 BANK-GRADE: Parse detections and convert to normalized coordinates (0-1)
@@ -1832,7 +1770,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
     });
   }
   
-  console.log(`   📊 Found ${validDetections.length} detections above threshold (${(CONFIG.MIN_DETECTION_SCORE * 100).toFixed(1)}%)`);
   
   // Now parse only the valid detections
   for (const detection of validDetections) {
@@ -1852,7 +1789,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
       for (let f = 0; f < Math.min(10, boxFeatures); f++) {
         allFeatures.push(boxes[boxBaseIdx + f].toFixed(4));
       }
-      console.log(`   🔍 Box features for detection ${i}: [${allFeatures.join(', ')}]`);
     }
     
     const boxVal0 = boxes[boxBaseIdx];
@@ -2106,12 +2042,7 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
       const passesWidth = faceWidth_pixels >= CONFIG.MIN_FACE_SIZE;
       const passesHeight = faceHeight_pixels >= CONFIG.MIN_FACE_SIZE;
       const status = (passesWidth && passesHeight) ? '✓ PASS' : '✗ REJECT';
-      console.log(`   🔍 Detection ${i}: ${status} - score=${(score * 100).toFixed(1)}%, size=${faceWidth_pixels.toFixed(0)}x${faceHeight_pixels.toFixed(0)}px (min: ${CONFIG.MIN_FACE_SIZE}px)`);
       if (!passesWidth || !passesHeight) {
-        console.log(`      ⚠️ Rejected: ${!passesWidth ? `width too small (${faceWidth_pixels.toFixed(0)} < ${CONFIG.MIN_FACE_SIZE})` : ''} ${!passesHeight ? `height too small (${faceHeight_pixels.toFixed(0)} < ${CONFIG.MIN_FACE_SIZE})` : ''}`);
-        console.log(`      📐 Box detection: [${x1_detection.toFixed(1)}, ${y1_detection.toFixed(1)}, ${x2_detection.toFixed(1)}, ${y2_detection.toFixed(1)}] (640x640 space)`);
-        console.log(`      📐 Box canonical: [${x1_canonical_clamped.toFixed(1)}, ${y1_canonical_clamped.toFixed(1)}, ${x2_canonical_clamped.toFixed(1)}, ${y2_canonical_clamped.toFixed(1)}] (${canonicalWidth}x${canonicalHeight} space)`);
-        console.log(`      🔧 Conversion: scale=${preprocessed.scale.toFixed(3)}, cropOffset=(${preprocessed.cropOffsetX.toFixed(1)}, ${preprocessed.cropOffsetY.toFixed(1)})`);
       }
     }
     
@@ -2142,7 +2073,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
   // Lower IoU threshold (0.2) = more aggressive filtering (removes more overlapping detections)
   // 0.2 (20%) threshold ensures even slight overlaps are filtered (reduces duplicate detections from SCRFD multi-scale)
   let filteredDetections = applyNMS(detections, 0.2); // 0.2 IoU threshold for very aggressive NMS (reduces multiple detections)
-  console.log(`   🔍 After NMS filtering: ${filteredDetections.length} unique face(s)`);
   
   // ENTERPRISE QUALITY GATE 4: Face count validation - MUST be exactly 1 face
   if (filteredDetections.length === 0) {
@@ -2174,7 +2104,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
       const avgSize = (best.box.width + det.box.width) / 2;
       const centerDistRatio = centerDist / avgSize;
 
-      console.log(`   📊 Detection vs best [${i}]: IoU=${(iou * 100).toFixed(1)}%, sizeDiff=${(sizeDiff * 100).toFixed(1)}%, centerDistRatio=${(centerDistRatio * 100).toFixed(1)}%`);
 
       // Heuristic:
       // - If box is reasonably close to best (clustered) → treat as duplicate
@@ -2196,13 +2125,11 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
 
     // All remaining detections form a tight cluster around the same face → keep best one only
     filteredDetections = [best];
-    console.log(`   ✅ All detections form a tight cluster around one face - accepting best detection (score: ${(best.score * 100).toFixed(1)}%)`);
   }
   
   // Only ONE face after NMS - proceed with it
   filteredDetections.sort((a, b) => b.score - a.score);
   const bestDetection = filteredDetections[0];
-  console.log(`✅ Single face confirmed after NMS filtering (score: ${(bestDetection.score * 100).toFixed(1)}%)`);
   
   // 🏦 BANK-GRADE: Face size validation using normalized coordinates
   // Convert normalized coordinates to pixels for validation
@@ -2234,14 +2161,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
       // Validate all 5 keypoints are detected and reasonable
       const { leftEye, rightEye, nose, leftMouth, rightMouth } = bestDetection.landmarks;
       
-      // Log landmark values for debugging
-      console.log(`   📍 Landmark values:`, {
-        leftEye: leftEye ? `(${leftEye.x.toFixed(1)}, ${leftEye.y.toFixed(1)})` : 'missing',
-        rightEye: rightEye ? `(${rightEye.x.toFixed(1)}, ${rightEye.y.toFixed(1)})` : 'missing',
-        nose: nose ? `(${nose.x.toFixed(1)}, ${nose.y.toFixed(1)})` : 'missing',
-        leftMouth: leftMouth ? `(${leftMouth.x.toFixed(1)}, ${leftMouth.y.toFixed(1)})` : 'missing',
-        rightMouth: rightMouth ? `(${rightMouth.x.toFixed(1)}, ${rightMouth.y.toFixed(1)})` : 'missing',
-      });
       
       // 🏦 BANK-GRADE: Validate landmarks using normalized coordinates (0-1)
       // Landmarks are already normalized in the new implementation
@@ -2282,15 +2201,12 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
           if (!livenessResult.isLive) {
             throw new Error(`Liveness check failed: ${livenessResult.reason}`);
           }
-          console.log(`   ✅ Liveness check passed: ${livenessResult.score.toFixed(2)} (symmetry: ${(livenessResult.symmetry * 100).toFixed(1)}%, eye ratio: ${(livenessResult.eyeDistanceRatio * 100).toFixed(1)}%)`);
         }
         
-        console.log(`   ✅ Facial landmarks validated: All 5 keypoints detected (eyes, nose, mouth)`);
       }
     }
   }
   
-  console.log(`   ✅ Quality gates passed: Face size=${faceSize_pixels.toFixed(0)}px, Quality=${(bestDetection.score * 100).toFixed(1)}%, Count=1, Landmarks=${bestDetection.landmarks ? 'Yes' : 'No'}`);
 
   // 🐛 CRITICAL FIX: Return filteredDetections (after NMS), not detections (before NMS)
   // This ensures validatePreview sees the correct face count (1 after NMS, not 5 before NMS)
@@ -2310,10 +2226,6 @@ async function detectFaces(canonicalBuffer, canonicalWidth, canonicalHeight) {
  */
 async function detectGender(detection, canonicalBuffer, canonicalWidth, canonicalHeight) {
   try {
-    console.log('👤 detectGender called - detection:', {
-      hasLandmarks: !!detection.landmarks,
-      landmarksKeys: detection.landmarks ? Object.keys(detection.landmarks) : 'none'
-    });
     
     // If gender model is available, use it
     if (genderModel) {
@@ -2324,21 +2236,14 @@ async function detectGender(detection, canonicalBuffer, canonicalWidth, canonica
     // Heuristic-based gender detection using facial landmarks
     // This is a placeholder that can be replaced with a real ONNX model
     if (!detection.landmarks) {
-      console.log('⚠️ No landmarks available for gender detection');
       return { gender: 'UNKNOWN', confidence: 0.5 };
     }
     
     const { leftEye, rightEye, nose, leftMouth, rightMouth } = detection.landmarks;
     if (!leftEye || !rightEye || !nose) {
-      console.log('⚠️ Missing required landmarks for gender detection:', {
-        leftEye: !!leftEye,
-        rightEye: !!rightEye,
-        nose: !!nose
-      });
       return { gender: 'UNKNOWN', confidence: 0.5 };
     }
     
-    console.log('👤 Landmarks available, calculating gender...');
     
     // Convert normalized coordinates to pixels
     const leftEyeX = leftEye.x * canonicalWidth;
@@ -2401,7 +2306,6 @@ async function detectGender(detection, canonicalBuffer, canonicalWidth, canonica
       confidence: Math.max(0.6, confidence) // Minimum 60% confidence for heuristic method
     };
     
-    console.log('👤 Gender detection result:', result);
     return result;
     
   } catch (error) {
@@ -2939,7 +2843,6 @@ async function trackFailedMatch(embeddingData, bestMatch, bestSimilarity, thresh
       extraData: extraData // Store additional context
     });
     
-    console.log(`📊 Failed match tracked for active learning (reason: ${reason}, similarity: ${(bestSimilarity * 100).toFixed(2)}%)`);
     
     // Check if threshold adjustment is needed
     await checkAndAdjustThresholds();
@@ -3980,7 +3883,6 @@ async function findMatchingStaff(embeddingData, staffList, options = {}) {
     
     const matchStatus = similarity >= threshold ? '✅ MATCH' : '❌ below threshold';
     const gapFromThreshold = similarity >= threshold ? '' : ` (${((threshold - similarity) * 100).toFixed(1)}% below threshold)`;
-    console.log(`   👤 ${staff.name}: ${(similarity * 100).toFixed(2)}% ${matchStatus}${gapFromThreshold} (best of ${staffEmbeddings.length} embedding(s))`);
     
     // 🏦 BANK-GRADE Phase 4: Calculate risk score
     const signals = {
@@ -3995,17 +3897,16 @@ async function findMatchingStaff(embeddingData, staffList, options = {}) {
       locationValid: options.locationValid !== false,
     });
     
-    if (riskScore.score > CONFIG.RISK_THRESHOLDS.low) {
-      console.log(`   ⚠️ Risk score: ${(riskScore.score * 100).toFixed(1)}% (${riskScore.level})`);
+    if (riskScore.score > CONFIG.RISK_THRESHOLDS.high) {
+      console.warn(`⚠️ High risk score: ${(riskScore.score * 100).toFixed(1)}% (${riskScore.level})`);
       if (riskScore.factors.length > 0) {
-        console.log(`      Factors: ${riskScore.factors.join(', ')}`);
+        console.warn(`   Factors: ${riskScore.factors.join(', ')}`);
       }
     }
     if (similarities.length > 1) {
       const minSimilarity = Math.min(...similarities);
       const maxSimilarity = Math.max(...similarities);
       const avgSimilarity = similarities.reduce((a, b) => a + b, 0) / similarities.length;
-      console.log(`      └─ Similarity range: ${(minSimilarity * 100).toFixed(2)}% - ${(maxSimilarity * 100).toFixed(2)}% (avg: ${(avgSimilarity * 100).toFixed(2)}%, using best: ${(maxSimilarity * 100).toFixed(2)}%)`);
     }
     
       // CRITICAL: Always track the best similarity across ALL staff (even if below threshold)
@@ -4685,9 +4586,7 @@ async function validatePreview(imageBuffer) {
     // 👤 GENDER DETECTION: Detect gender from face
     let genderResult = { gender: 'UNKNOWN', confidence: 0.5 };
     try {
-      console.log('👤 Starting gender detection...');
       genderResult = await detectGender(bestDetection, canonicalData.canonicalBuffer, canonicalData.canonicalWidth, canonicalData.canonicalHeight);
-      console.log(`👤 ✅ Gender detected: ${genderResult.gender} (confidence: ${(genderResult.confidence * 100).toFixed(1)}%)`);
     } catch (genderError) {
       console.error('❌ Gender detection failed:', genderError.message);
       console.error('   Error stack:', genderError.stack);

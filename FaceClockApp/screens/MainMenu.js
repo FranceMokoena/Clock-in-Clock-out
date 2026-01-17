@@ -43,10 +43,10 @@ export default function MainMenu({ navigation }) {
         </Text>
       </TouchableOpacity>
 
-      {/* Admin Icon - Top Right */}
+      {/* Login Icon - Top Right */}
       <TouchableOpacity
         style={[styles.adminButton, dynamicStyles.adminButton]}
-        onPress={() => navigation.navigate('AdminLogin')}
+        onPress={() => navigation.navigate('UnifiedLogin')}
         activeOpacity={0.7}
       >
         <Text style={styles.adminIcon}>+</Text>
@@ -77,10 +77,10 @@ export default function MainMenu({ navigation }) {
           </View>
         </View>
 
-        {/* Main Actions Section - 2x2 Grid */}
+        {/* Main Actions Section - 3x2 Grid */}
         <View style={styles.actionsContainer}>
           <View style={styles.buttonGrid}>
-            {/* Clock In Button */}
+            {/* Clock In Button with Dropdown */}
             <TouchableOpacity
               style={[styles.gridButton, dynamicStyles.gridButton]}
               onPress={() => navigation.navigate('ClockIn', { clockType: 'in' })}
@@ -90,7 +90,47 @@ export default function MainMenu({ navigation }) {
               <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Clock In</Text>
             </TouchableOpacity>
 
-            {/* Clock Out Button */}
+            
+
+            {/* Start Tea-Time Button with Dropdown */}
+            <TouchableOpacity
+              style={[styles.gridButton, dynamicStyles.gridButton]}
+              onPress={() => navigation.navigate('ClockIn', { clockType: 'break_start' })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gridButtonIcon}>☕</Text>
+              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Start Tea Time</Text>
+            </TouchableOpacity>
+
+            {/* End Tea-Time Button */}
+            <TouchableOpacity
+              style={[styles.gridButton, dynamicStyles.gridButton]}
+              onPress={() => navigation.navigate('ClockIn', { clockType: 'break_end' })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gridButtonIcon}>☕</Text>
+              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>End Tea Time</Text>
+            </TouchableOpacity>
+
+            {/* Row 2: Go to Lunch, End Lunch, Clock Out */}
+            <TouchableOpacity
+              style={[styles.gridButton, dynamicStyles.gridButton]}
+              onPress={() => navigation.navigate('ClockIn', { clockType: 'lunch_start' })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gridButtonIcon}>🍽️</Text>
+              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Go to Lunch</Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={[styles.gridButton, dynamicStyles.gridButton]}
+              onPress={() => navigation.navigate('ClockIn', { clockType: 'lunch_end' })}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.gridButtonIcon}>🍽️</Text>
+              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>End Lunch</Text>
+            </TouchableOpacity>
+
             <TouchableOpacity
               style={[styles.gridButton, dynamicStyles.gridButton]}
               onPress={() => navigation.navigate('ClockIn', { clockType: 'out' })}
@@ -99,36 +139,26 @@ export default function MainMenu({ navigation }) {
               <Text style={styles.gridButtonIcon}>🕐</Text>
               <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Clock Out</Text>
             </TouchableOpacity>
-
-
-
-
-            {/* Start Break Button */}
-            <TouchableOpacity
-              style={[styles.gridButton, dynamicStyles.gridButton]}
-              onPress={() => navigation.navigate('ClockIn', { clockType: 'break_start' })}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.gridButtonIcon}>☕</Text>
-              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>Start Break</Text>
-            </TouchableOpacity>
-
-            {/* End Break Button */}
-            <TouchableOpacity
-              style={[styles.gridButton, dynamicStyles.gridButton]}
-              onPress={() => navigation.navigate('ClockIn', { clockType: 'break_end' })}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.gridButtonIcon}>☕</Text>
-              <Text style={[styles.gridButtonText, dynamicStyles.gridButtonText]}>End Break</Text>
-            </TouchableOpacity>
           </View>
+
+
+
+
+
+
+
         </View>
 
-        {/* Footer Info */}
-        <View style={styles.footer}>
-          <Text style={[styles.footerText, dynamicStyles.footerText]}>Secure • Fast • Reliable</Text>
-        </View>
+
+
+
+
+
+
+
+
+
+
       </ScrollView>
     </SafeAreaView>
   );
@@ -147,9 +177,6 @@ const getDynamicStyles = (theme) => StyleSheet.create({
   },
   gridButtonText: {
     color: theme.gridButtonText,
-  },
-  footerText: {
-    color: theme.text,
   },
 });
 
@@ -281,17 +308,16 @@ const styles = StyleSheet.create({
   actionsContainer: {
     flex: 1,
     justifyContent: 'center',
-    paddingVertical: -10,
+    paddingVertical: 10,
   },
   buttonGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginBottom: -10,
-    PaddingVertical: 10,
+    marginBottom: 10,
   },
   gridButton: {
-    width: (width - 60) / 2,
+    width: (width - 80) / 3,
     aspectRatio: 1,
     backgroundColor: '#374151',
     borderRadius: 16,
@@ -305,24 +331,14 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
   gridButtonIcon: {
-    fontSize: 48,
-    marginBottom: 12,
+    fontSize: 40,
+    marginBottom: 10,
   },
   gridButtonText: {
     color: '#ffffff',
-    fontSize: 16,
+    fontSize: 14,
     fontWeight: '600',
     textAlign: 'center',
-  },
-  footer: {
-    alignItems: 'center',
-    marginTop: 20,
-    paddingTop: 10,
-  },
-  footerText: {
-    color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '500',
-    letterSpacing: 1,
+    paddingHorizontal: 4,
   },
 });

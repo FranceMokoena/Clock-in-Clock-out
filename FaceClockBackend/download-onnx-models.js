@@ -120,30 +120,51 @@ function downloadFile(url, filepath, timeout = 300000) { // 5 minute timeout
 }
 
 function extractZip(zipPath, extractTo) {
-  // Try to use unzip command (available on Linux/Mac)
-  // Fallback to Python zipfile if unzip not available
+  // Use adm-zip for cross-platform ZIP extraction (works on Windows, Linux, Mac)
   try {
     console.log('📦 Extracting ZIP file...');
-    execSync(`unzip -q -o "${zipPath}" -d "${extractTo}"`, { stdio: 'inherit' });
+    
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(zipPath);
+    
+    // Extract all files to the target directory
+    zip.extractAllTo(extractTo, true); // true = overwrite existing files
+    
+    console.log('✅ ZIP file extracted successfully');
     return true;
   } catch (error) {
-    console.log('⚠️  unzip command failed, trying Python...');
+    console.error('❌ Failed to extract ZIP with adm-zip:', error.message);
+    
+    // Fallback: Try system unzip (Linux/Mac) or Python (if available)
     try {
-      // Use Python to extract ZIP
-      const pythonScript = `
+      console.log('⚠️  Trying system unzip command...');
+      execSync(`unzip -q -o "${zipPath}" -d "${extractTo}"`, { stdio: 'inherit' });
+      console.log('✅ ZIP extracted using system unzip');
+      return true;
+    } catch (unzipError) {
+      // Try Python as last resort
+      try {
+        console.log('⚠️  Trying Python zipfile...');
+        const pythonScript = `
 import zipfile
 import sys
-zipfile.ZipFile('${zipPath}').extractall('${extractTo}')
+zipfile.ZipFile(r'${zipPath.replace(/\\/g, '/')}').extractall(r'${extractTo.replace(/\\/g, '/')}')
 `;
-      execSync(`python3 -c "${pythonScript}"`, { stdio: 'inherit' });
-      return true;
-    } catch (pyError) {
-      try {
-        execSync(`python -c "${pythonScript}"`, { stdio: 'inherit' });
+        execSync(`python3 -c "${pythonScript}"`, { stdio: 'inherit' });
+        console.log('✅ ZIP extracted using Python');
         return true;
-      } catch (py2Error) {
-        console.error('❌ Failed to extract ZIP:', py2Error.message);
-        return false;
+      } catch (pyError) {
+        try {
+          execSync(`python -c "${pythonScript}"`, { stdio: 'inherit' });
+          console.log('✅ ZIP extracted using Python');
+          return true;
+        } catch (py2Error) {
+          console.error('❌ All extraction methods failed');
+          console.error('   - adm-zip failed:', error.message);
+          console.error('   - unzip command failed:', unzipError.message);
+          console.error('   - Python failed:', py2Error.message);
+          return false;
+        }
       }
     }
   }

@@ -1,0 +1,391 @@
+.staff-list-container {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.staff-list-container:hover {
+  box-shadow: 0 8px 20px rgba(49, 102, 174, 0.12);
+}
+
+.staff-list-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.staff-list-header h2 {
+  font-size: 24px;
+  font-weight: 700;
+  color: #3166AE;
+  margin: 0;
+}
+
+.month-year-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.month-year-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.month-year-selector select {
+  padding: 8px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  color: #3166AE;
+  cursor: pointer;
+}
+
+.filters-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.staff-filters {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 200px;
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: #3166AE;
+  box-shadow: 0 0 0 3px rgba(30, 64, 175, 0.1);
+}
+
+.filter-select {
+  padding: 10px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  font-size: 14px;
+  background: white;
+  color: #3166AE;
+  cursor: pointer;
+  min-width: 150px;
+}
+
+.view-details-btn {
+  background: #699ae2;
+  color: white;
+  border: none;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.view-details-btn:hover {
+  background: #5585d8;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(105, 154, 226, 0.3);
+}
+
+.staff-details-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+}
+
+  .modal-content {
+    background: white;
+    border-radius: 12px;
+    width: 95%;
+    max-width: 1000px;
+    max-height: 92vh;
+    overflow-y: auto;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+  }
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.modal-header h3 {
+  font-size: 20px;
+  font-weight: 700;
+  color: #1e3a8a;
+  margin: 0;
+}
+
+.modal-header button {
+  background: none;
+  border: none;
+  font-size: 24px;
+  color: #64748b;
+  cursor: pointer;
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.modal-header button:hover {
+  color: #3166AE;
+}
+
+.modal-body {
+  padding: 24px;
+  scroll-behavior: smooth;
+}
+
+.details-section {
+  margin-bottom: 24px;
+}
+
+.details-section h4 {
+  font-size: 16px;
+  font-weight: 700;
+  color: #3166AE;
+  margin-bottom: 12px;
+}
+
+.details-section p {
+  margin: 8px 0;
+  color: #334155;
+  font-size: 14px;
+}
+
+.staff-table-container {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+
+.staff-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.staff-table thead {
+  background: #f8fafc;
+}
+
+.staff-table th {
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 12px;
+  font-weight: 700;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.staff-table td {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e5e7eb;
+  font-size: 14px;
+  color: #3166AE;
+}
+
+.staff-table tbody tr:hover {
+  background: #f8fafc;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.timesheet-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.timesheet-table th,
+.timesheet-table td {
+  padding: 10px;
+  text-align: left;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.timesheet-table th {
+  background: #f8fafc;
+  font-weight: 600;
+  color: #64748b;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.staff-table th:nth-child(6),
+.staff-table th:nth-child(7) {
+  text-align: center;
+}
+
+.payroll-link {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #1f2937;
+  background: #eef2ff;
+  color: #111827;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.payroll-amount {
+  min-width: 90px;
+  text-align: center;
+}
+
+.payroll-amount .payroll-amount-text {
+  display: inline-block;
+  transition: filter 0.25s ease;
+}
+
+.payroll-amount.blurred .payroll-amount-text {
+  filter: blur(3px);
+}
+
+.payroll-amount.blurred:hover .payroll-amount-text {
+  filter: none;
+}
+
+.payroll-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.section-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: #f1f5f9;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.section-header-row h4 {
+  margin: 0;
+  font-size: 16px;
+  letter-spacing: 0.5px;
+}
+
+.collapse-toggle {
+  background: transparent;
+  border: none;
+  color: #1d4ed8;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.payroll-block {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.payroll-block .detail-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.payroll-block .detail-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+}
+
+.payroll-block .detail-value {
+  font-weight: 700;
+  color: #111827;
+}
+
+.payroll-block .detail-label-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.payroll-block .current-value-note {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.payroll-block .detail-input-block {
+  flex: 1;
+  margin-left: 16px;
+}
+
+.payroll-input {
+  width: 100%;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  padding: 10px 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.modal-save-button {
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  background: #111827;
+  color: #fff;
+  font-weight: 700;
+  cursor: pointer;
+  align-self: flex-start;
+}
+
+.payroll-preview {
+  background: #FFFFFF;
+  border: 1px dashed #cbd5f5;
+  border-radius: 8px;
+}
+
+.export-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: #111827;
+  color: #fff;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.help-text {
+  font-size: 12px;
+  color: #64748b;
+  font-style: italic;
+}
+
+.error-text {
+  color: #b91c1c;
+}
+

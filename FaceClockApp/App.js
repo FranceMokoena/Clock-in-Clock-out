@@ -5,12 +5,22 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { ThemeProvider, useTheme } from './context/ThemeContext';
-
+import { NotificationProvider } from './context/NotificationContext';
 import MainMenu from './screens/MainMenu';
 import RegisterStaff from './screens/RegisterStaff';
-import ClockIn from './screens/ClockIn';
+import ClockIn from './screens/Shared/ClockIn';
+import Recents from './screens/Shared/Recents';
 import AdminLogin from './screens/AdminLogin';
 import AdminDashboard from './screens/AdminDashboard';
+import InternLogin from './screens/Intern/Login';
+import InternDashboard from './screens/Intern/Dashboard';
+import InternAttendance from './screens/Intern/Attendance';
+import InternApplications from './screens/Intern/Applications';
+import InternPayroll from './screens/Intern/Payroll';
+import InternReports from './screens/Intern/InternReports';
+import InternAttendanceCorrections from './screens/Intern/AttendanceCorrections';
+import InternRotationPlan from './screens/Intern/RotationPlan';
+import UnifiedLogin from './screens/UnifiedLogin';
 
 const Stack = createNativeStackNavigator();
 
@@ -96,7 +106,7 @@ function FaceSplashScreen() {
 
 function AppNavigator() {
   const { theme, isDarkMode } = useTheme();
-  
+
   return (
     <NavigationContainer>
       <StatusBar style={isDarkMode ? 'light' : 'dark'} />
@@ -109,8 +119,18 @@ function AppNavigator() {
         <Stack.Screen name="MainMenu" component={MainMenu} />
         <Stack.Screen name="RegisterStaff" component={RegisterStaff} />
         <Stack.Screen name="ClockIn" component={ClockIn} />
+        <Stack.Screen name="Recents" component={Recents} />
         <Stack.Screen name="AdminLogin" component={AdminLogin} />
         <Stack.Screen name="AdminDashboard" component={AdminDashboard} />
+        <Stack.Screen name="InternLogin" component={InternLogin} />
+        <Stack.Screen name="InternDashboard" component={InternDashboard} />
+        <Stack.Screen name="InternAttendance" component={InternAttendance} />
+        <Stack.Screen name="InternApplications" component={InternApplications} />
+        <Stack.Screen name="InternPayroll" component={InternPayroll} />
+        <Stack.Screen name="InternReports" component={InternReports} />
+        <Stack.Screen name="InternAttendanceCorrections" component={InternAttendanceCorrections} />
+        <Stack.Screen name="InternRotationPlan" component={InternRotationPlan} />
+        <Stack.Screen name="UnifiedLogin" component={UnifiedLogin} />
       </Stack.Navigator>
     </NavigationContainer>
   );
@@ -118,6 +138,8 @@ function AppNavigator() {
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
+  const [userId, setUserId] = useState(null);
+  const [userType, setUserType] = useState(null);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -129,7 +151,9 @@ export default function App() {
   return (
     <SafeAreaProvider>
       <ThemeProvider>
-        {showSplash ? <FaceSplashScreen /> : <AppNavigator />}
+        <NotificationProvider recipientId={userId} recipientType={userType}>
+          {showSplash ? <FaceSplashScreen /> : <AppNavigator />}
+        </NotificationProvider>
       </ThemeProvider>
     </SafeAreaProvider>
   );

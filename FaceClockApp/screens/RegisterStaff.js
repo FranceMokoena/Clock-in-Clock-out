@@ -24,7 +24,6 @@ import { useTheme } from '../context/ThemeContext';
 import { getDeviceHeaders } from '../utils/deviceInfo';
 import { analyzeFrame, FaceDetectionFeedback, resetFrameAnalysis } from '../utils/faceDetectionFeedback';
 import { ProfessionalFeedback } from '../components/ProfessionalFeedback';
-import API_BASE_URL from '../config/api';
 
 /**
  * Professional Bank-Grade Feedback: Minimal, clean, enterprise-style messages
@@ -230,6 +229,7 @@ export default function RegisterStaff({ navigation, route }) {
   const [surname, setSurname] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [password, setPassword] = useState('');
   const [role, setRole] = useState('Staff');
   const [hostCompany, setHostCompany] = useState(userHostCompanyId || ''); // Auto-set for host company users
   const [showHostCompanyDropdown, setShowHostCompanyDropdown] = useState(false);
@@ -238,6 +238,7 @@ export default function RegisterStaff({ navigation, route }) {
   const [showDepartmentDropdown, setShowDepartmentDropdown] = useState(false);
   const [departments, setDepartments] = useState([]); // Will be fetched from backend
   const [filteredDepartments, setFilteredDepartments] = useState([]); // Filtered by company
+  // Mentor removed: field and related state cleaned up
   const [location, setLocation] = useState(''); // Predefined location key
   const [customAddress, setCustomAddress] = useState(''); // Custom address input
   const [useCustomAddress, setUseCustomAddress] = useState(false); // Toggle between dropdown and custom
@@ -332,10 +333,11 @@ export default function RegisterStaff({ navigation, route }) {
         }
       } else if (isHostCompany && userHostCompanyId) {
         // For host company users, set their company info
+        // NOTE: userInfo.name is the mentor name, userInfo.companyName is the company name
         setHostCompanies([{
           _id: userHostCompanyId,
-          name: userInfo.name,
-          companyName: userInfo.companyName
+          name: userInfo.name, // This is mentor name (for backend compatibility)
+          companyName: userInfo.companyName // This is the actual company name (for display)
         }]);
         setHostCompany(userHostCompanyId); // Auto-select their company
       }
@@ -353,6 +355,8 @@ export default function RegisterStaff({ navigation, route }) {
         console.warn('⚠️ Failed to fetch departments from backend:', error.message);
       }
       
+      // Mentors removed from registration form — skipping mentor fetch
+
       try {
         // Fetch all locations from backend
         const response = await axios.get(`${API_BASE_URL}/locations/all`);
@@ -413,6 +417,10 @@ export default function RegisterStaff({ navigation, route }) {
       }
     }
   }, [departments, hostCompany]);
+
+  // Mentors removed: no dynamic mentor fetching on hostCompany/department changes
+
+  // Mentors removed: no department mentor name fetch required
 
   // Filter locations based on search query
   useEffect(() => {
@@ -624,6 +632,42 @@ export default function RegisterStaff({ navigation, route }) {
     }
     
     const phoneValidation = validatePhoneNumber(phoneNumber.trim());
+    if (!phoneValidation.valid) {
+      showProfessionalMessage(
+        phoneValidation.error || 'Invalid Phone Number',
+        phoneValidation.details || 'Please check your phone number and try again.',
+        'error'
+      );
+      return;
+    }
+    
+    // Validate password for Staff and Intern roles
+    if (role === 'Staff' || role === 'Intern') {
+      if (!password.trim()) {
+        showProfessionalMessage(
+          'Password Required',
+          'Password is required for Staff and Intern roles. Please enter a password (minimum 6 characters).',
+          'warning'
+        );
+        return;
+      }
+      if (password.trim().length < 6) {
+        showProfessionalMessage(
+          'Password Too Short',
+          'Password must be at least 6 characters long. Please enter a stronger password.',
+          'error'
+        );
+        return;
+      }
+      if (password.trim().length > 128) {
+        showProfessionalMessage(
+          'Password Too Long',
+          'Password must be less than 128 characters. Please enter a shorter password.',
+          'error'
+        );
+        return;
+      }
+    }
     if (!phoneValidation.valid) {
       showProfessionalMessage(
         'Invalid Phone Number',
@@ -913,12 +957,17 @@ export default function RegisterStaff({ navigation, route }) {
       formData.append('idNumber', idNumber.trim());
       formData.append('phoneNumber', phoneNumber.trim());
       formData.append('role', role);
+      // Add password for Staff and Intern roles
+      if (role === 'Staff' || role === 'Intern') {
+        formData.append('password', password.trim());
+      }
       if (hostCompany) {
         formData.append('hostCompanyId', hostCompany);
       }
       if (department) {
         formData.append('department', department);
       }
+      // Mentor removed: no mentor fields appended to formData
       if (useCustomAddress) {
         formData.append('customAddress', customAddress.trim());
         // Don't send location if using custom address
@@ -1673,6 +1722,29 @@ export default function RegisterStaff({ navigation, route }) {
               ))}
             </View>
 
+            {/* Password field - only show for Staff and Intern roles */}
+            {(role === 'Staff' || role === 'Intern') && (
+              <>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
+                  <Text style={[styles.label, dynamicStyles.label]}>Password</Text>
+                  <Text style={{ color: '#ED3438', fontSize: 14, fontWeight: '600', marginLeft: 2 }}>*</Text>
+                </View>
+                <TextInput
+                  style={[styles.input, dynamicStyles.input]}
+                  placeholder="Enter password (min. 6 characters)"
+                  placeholderTextColor={theme.textTertiary}
+                  value={password}
+                  onChangeText={setPassword}
+                  secureTextEntry
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+                <Text style={[styles.hint, dynamicStyles.hint, { fontSize: 12, marginTop: -10, marginBottom: 8 }]}>
+                  Password is required for Staff and Intern roles (minimum 6 characters)
+                </Text>
+              </>
+            )}
+
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Text style={[styles.label, dynamicStyles.label]}>Company</Text>
               <Text style={{ color: '#ED3438', fontSize: 14, fontWeight: '600', marginLeft: 2 }}>*</Text>
@@ -1681,7 +1753,7 @@ export default function RegisterStaff({ navigation, route }) {
               // Host company users see their company (read-only)
               <View style={[styles.dropdownButton, dynamicStyles.dropdownButton, styles.dropdownButtonDisabled]}>
                 <Text style={[styles.dropdownButtonText, dynamicStyles.dropdownButtonText]}>
-                  {userInfo.name || 'Your Company'}
+                  {userInfo.companyName || userInfo.name || 'Your Company'}
                 </Text>
                 <Text style={[styles.hint, dynamicStyles.hint, { marginLeft: 8, fontSize: 12 }]}>
                   (Your Company)
@@ -1698,7 +1770,11 @@ export default function RegisterStaff({ navigation, route }) {
                   dynamicStyles.dropdownButtonText,
                   !hostCompany && styles.dropdownButtonPlaceholder
                 ]}>
-                  {hostCompany ? hostCompanies.find(c => c._id === hostCompany)?.name || hostCompany : 'Select Company *'}
+                  {hostCompany ? (() => {
+                    const selectedCompany = hostCompanies.find(c => c._id === hostCompany);
+                    // Display companyName (actual company name), not name (which is mentor name)
+                    return selectedCompany?.companyName || selectedCompany?.name || hostCompany;
+                  })() : 'Select Company *'}
                 </Text>
                 <Text style={[styles.dropdownArrow, dynamicStyles.dropdownArrow]}>▼</Text>
               </TouchableOpacity>
@@ -1740,11 +1816,11 @@ export default function RegisterStaff({ navigation, route }) {
                           }}
                         >
                           <Text style={{ fontSize: 14, fontWeight: '600', color: hostCompany === company._id ? '#3166AE' : '#2d3748', marginBottom: 2 }}>
-                            {company.name}
+                            {company.companyName || company.name}
                           </Text>
-                          {company.companyName && (
+                          {company.name && company.companyName && (
                             <Text style={{ fontSize: 12, color: '#718096' }}>
-                              {company.companyName}
+                              Mentor: {company.name}
                             </Text>
                           )}
                         </TouchableOpacity>
@@ -1838,7 +1914,9 @@ export default function RegisterStaff({ navigation, route }) {
               </View>
             </Modal>
 
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {/* Mentor field removed per request */}
+
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 16 }}>
               <Text style={[styles.label, dynamicStyles.label]}>Location</Text>
               <Text style={{ color: '#ED3438', fontSize: 14, fontWeight: '600', marginLeft: 2 }}>*</Text>
             </View>
@@ -2230,10 +2308,10 @@ export default function RegisterStaff({ navigation, route }) {
               style={[
                 styles.continueButton,
                 dynamicStyles.continueButton,
-                (!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || (!location && !customAddress.trim())) && [styles.continueButtonDisabled, dynamicStyles.continueButtonDisabled],
+                (!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || (!location && !customAddress.trim()) || ((role === 'Staff' || role === 'Intern') && !password.trim()) || ((role === 'Staff' || role === 'Intern') && password.trim().length < 6)) && [styles.continueButtonDisabled, dynamicStyles.continueButtonDisabled],
               ]}
               onPress={handleFormSubmit}
-              disabled={!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || (!location && !customAddress.trim()) || !idImageUri}
+              disabled={!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || (!location && !customAddress.trim()) || !idImageUri || ((role === 'Staff' || role === 'Intern') && (!password.trim() || password.trim().length < 6))}
               activeOpacity={0.8}
             >
               <Text style={styles.continueButtonText}>Continue to Camera</Text>

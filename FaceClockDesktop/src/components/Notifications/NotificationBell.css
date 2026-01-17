@@ -1,0 +1,117 @@
+.bell-container {
+  position: relative;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: transparent;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+  color: #3166AE;
+  font-size: 24px;
+  outline: none;
+}
+
+.bell-container:hover {
+  background-color: rgba(49, 102, 174, 0.1);
+  transform: scale(1.05);
+}
+
+.bell-icon {
+  width: 24px;
+  height: 24px;
+  transition: color 0.3s ease;
+}
+
+.notification-badge {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  background: linear-gradient(135deg, #ED3438, #FF5252);
+  color: white;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  min-width: 20px;
+  text-align: center;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  animation: bounceIn 0.4s ease-out;
+}
+
+/* Shake animation for new notifications */
+.bell-container.shake .bell-icon {
+  animation: shake 0.5s ease-in-out infinite;
+}
+
+@keyframes shake {
+  0% {
+    transform: rotate(0deg);
+  }
+  10% {
+    transform: rotate(-15deg);
+  }
+  20% {
+    transform: rotate(15deg);
+  }
+  30% {
+    transform: rotate(-15deg);
+  }
+  40% {
+    transform: rotate(15deg);
+  }
+  50% {
+    transform: rotate(-10deg);
+  }
+  60% {
+    transform: rotate(10deg);
+  }
+  70% {
+    transform: rotate(-5deg);
+  }
+  80% {
+    transform: rotate(5deg);
+  }
+  90% {
+    transform: rotate(-2deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.2);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .bell-container {
+    width: 36px;
+    height: 36px;
+    font-size: 20px;
+  }
+
+  .bell-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .notification-badge {
+    font-size: 10px;
+    padding: 1px 5px;
+    min-width: 18px;
+  }
+}

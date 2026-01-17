@@ -18,6 +18,11 @@ const departmentSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  mentorName: {
+    type: String,
+    required: false,
+    trim: true
+  },
   hostCompanyId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'HostCompany',

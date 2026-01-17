@@ -1,0 +1,251 @@
+/* Attendance Heatmap Calendar CSS */
+.attendance-heatmap {
+  background: white;
+  border-radius: 12px;
+  padding: 24px;
+  border: 1px solid #e5e7eb;
+}
+
+.heatmap-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.heatmap-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin: 0;
+}
+
+.heatmap-month {
+  font-size: 14px;
+  color: #64748b;
+}
+
+.heatmap-calendar {
+  margin-bottom: 24px;
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.weekday-header {
+  text-align: center;
+  font-weight: 600;
+  font-size: 12px;
+  color: #64748b;
+  padding: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.calendar-day {
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  border: 1px solid transparent;
+  position: relative;
+}
+
+.calendar-day:hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+.calendar-day.present {
+  background: #dcfce7;
+  color: #166534;
+  border-color: #86efac;
+}
+
+.calendar-day.present:hover {
+  background: #bbf7d0;
+}
+
+.calendar-day.late {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
+}
+
+.calendar-day.late:hover {
+  background: #fde68a;
+}
+
+.calendar-day.absent {
+  background: #fee2e2;
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+
+.calendar-day.absent:hover {
+  background: #fecaca;
+}
+
+.calendar-day.empty {
+  background: #f3f4f6;
+  color: transparent;
+  cursor: default;
+}
+
+.calendar-day.empty:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.calendar-day::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  color: white;
+  padding: 6px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+  z-index: 10;
+  margin-bottom: 4px;
+}
+
+.calendar-day:hover::after {
+  opacity: 1;
+}
+
+.heatmap-legend {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  margin-bottom: 24px;
+  padding: 16px;
+  background: #f9fafb;
+  border-radius: 8px;
+  flex-wrap: wrap;
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.legend-color {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  border: 1px solid;
+}
+
+.legend-color.present {
+  background: #dcfce7;
+  border-color: #86efac;
+}
+
+.legend-color.late {
+  background: #fef3c7;
+  border-color: #fcd34d;
+}
+
+.legend-color.absent {
+  background: #fee2e2;
+  border-color: #fca5a5;
+}
+
+.legend-label {
+  font-size: 13px;
+  color: #475569;
+  font-weight: 500;
+}
+
+.heatmap-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 16px;
+}
+
+.stat-card {
+  background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  border: 1px solid #e2e8f0;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.stat-card:hover {
+  background: linear-gradient(135deg, #f0f4f8 0%, #e8f0f7 100%);
+  box-shadow: 0 4px 12px rgba(49, 102, 174, 0.1);
+  transform: translateY(-2px);
+}
+
+.stat-card .stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: #3166AE;
+  margin-bottom: 4px;
+}
+
+.stat-card .stat-label {
+  font-size: 12px;
+  color: #64748b;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.stat-card.present .stat-value {
+  color: #16a34a;
+}
+
+.stat-card.late .stat-value {
+  color: #f59e0b;
+}
+
+.stat-card.absent .stat-value {
+  color: #dc2626;
+}
+
+@media (max-width: 768px) {
+  .attendance-heatmap {
+    padding: 16px;
+  }
+
+  .calendar-grid {
+    gap: 4px;
+  }
+
+  .calendar-day {
+    font-size: 10px;
+  }
+
+  .heatmap-legend {
+    gap: 12px;
+    padding: 12px;
+  }
+
+  .legend-color {
+    width: 20px;
+    height: 20px;
+  }
+
+  .heatmap-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}

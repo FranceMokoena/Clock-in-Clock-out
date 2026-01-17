@@ -50,8 +50,10 @@ function isConfigured() {
     return credentialsValid;
   }
 
-  // Return true if we have any credential source
-  return hasEnvCredentials || hasProfile || true; // Default provider chain will try to find credentials
+  // Return true only if we have explicit credential sources
+  // Note: We don't return true for default provider chain here because
+  // credentials may not actually be available, and we want to avoid unnecessary API calls
+  return hasEnvCredentials || hasProfile;
 }
 
 /**

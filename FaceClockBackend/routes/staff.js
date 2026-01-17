@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const mongoose = require('mongoose');
+const { ObjectId } = require('mongodb');
 const sharp = require('sharp');
 const Staff = require('../models/Staff');
 const ClockLog = require('../models/ClockLog');
@@ -9,6 +10,9 @@ const Department = require('../models/Department');
 const HostCompany = require('../models/HostCompany');
 const staffCache = require('../utils/staffCache');
 const rekognition = require('../utils/rekognitionClient');
+const AttendanceCorrection = require('../models/AttendanceCorrection');
+const LeaveApplication = require('../models/LeaveApplication');
+const { logAction } = require('../utils/actionLogger');
 
 // ONNX Runtime is MANDATORY - face-api.js has been removed
 // Using SCRFD (face detection) + ArcFace (face recognition) for maximum accuracy
@@ -60,7 +64,6 @@ async function resizeImage(buffer, maxSize = 1024) {
       .jpeg({ quality: 85 }) // Compress to JPEG
       .toBuffer();
     
-    console.log(`💾 Resized image: ${metadata.width}x${metadata.height} → ${(await sharp(resized).metadata()).width}x${(await sharp(resized).metadata()).height} (${Math.round(resized.length/1024)}KB)`);
     return resized;
   } catch (error) {
     console.warn('⚠️ Image resize failed, using original:', error.message);
@@ -99,52 +102,14 @@ router.post('/register', upload.fields([
   { name: 'image4', maxCount: 1 },
   { name: 'image5', maxCount: 1 },
   { name: 'idImage', maxCount: 1 } // 🏦 BANK-GRADE Phase 5: ID document image
-]), (req, res, next) => {
-  // Log multer parsing results IMMEDIATELY
-  process.stdout.write(`\n📦 [MULTER] Files parsed: ${req.files ? Object.keys(req.files).length : 0} field(s)\n`);
-  if (req.files) {
-    Object.keys(req.files).forEach(key => {
-      process.stdout.write(`📦 [MULTER] Field "${key}": ${req.files[key].length} file(s)\n`);
-      req.files[key].forEach((file, idx) => {
-        process.stdout.write(`   📦 File ${idx + 1}: ${file.originalname || 'unnamed'}, ${file.size} bytes, ${file.mimetype || 'no type'}\n`);
-      });
-    });
-  } else {
-    process.stdout.write(`📦 [MULTER] req.files is null/undefined\n`);
-  }
-  process.stdout.write(`📦 [MULTER] req.body keys: ${Object.keys(req.body || {}).join(', ')}\n`);
-  next();
-}, handleMulterError, async (req, res) => {
-  // Log IMMEDIATELY when route handler is called
-  console.log('🚀 ========== REGISTRATION ROUTE HANDLER CALLED ==========');
-  console.log('🚀 This log should appear IMMEDIATELY when request arrives');
-  console.log('🚀 ======================================================');
-  
-  console.log('🚀 ========== REGISTRATION REQUEST RECEIVED ==========');
-  console.log('   📥 Request method:', req.method);
-  console.log('   📥 Request URL:', req.url);
-  console.log('   📥 Request body keys:', Object.keys(req.body || {}));
-  console.log('   📥 Request files:', req.files ? Object.keys(req.files) : 'none');
-  console.log('   📥 Number of image files:', req.files ? Object.values(req.files).flat().length : 0);
-  
-  // Detailed file logging
-  if (req.files) {
-    console.log('   📦 Detailed files info:');
-    Object.keys(req.files).forEach(key => {
-      console.log(`      ${key}: ${req.files[key].length} file(s)`);
-      req.files[key].forEach((file, idx) => {
-        console.log(`         File ${idx + 1}: ${file.originalname || 'unnamed'}, ${file.size} bytes`);
-      });
-    });
-  } else {
-    console.log('   ❌ req.files is null or undefined - multer did not parse files!');
-    console.log('   📋 Content-Type header:', req.headers['content-type']);
-    console.log('   📋 Request body type:', typeof req.body);
-    console.log('   📋 Request body:', JSON.stringify(Object.keys(req.body || {})));
+]), handleMulterError, async (req, res) => {
+  // Log only if files are missing (error case)
+  if (!req.files || Object.values(req.files).flat().length === 0) {
+    console.warn('⚠️ Registration request received with no files');
   }
   
   try {
-    const { name, surname, idNumber, phoneNumber, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime } = req.body;
+    const { name, surname, idNumber, phoneNumber, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime, password } = req.body;
     const registrationFingerprintResult = generateDeviceFingerprint(req.headers, { includeMeta: true });
     const registrationDeviceFingerprint = typeof registrationFingerprintResult === 'string'
       ? registrationFingerprintResult
@@ -152,11 +117,24 @@ router.post('/register', upload.fields([
     const registrationDeviceInfo = typeof registrationFingerprintResult === 'object'
       ? registrationFingerprintResult?.deviceInfo
       : null;
-    console.log('   📋 Extracted form data:', { name, surname, idNumber, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime });
-    
     // Validate required fields
     if (!name || !surname || !idNumber || !phoneNumber || !role || !department) {
       return res.status(400).json({ error: 'Name, surname, ID number, phone number, role, and department are required' });
+    }
+    
+    // 🔐 Validate password for Staff and Intern roles
+    if (role === 'Staff' || role === 'Intern') {
+      if (!password || !password.trim()) {
+        return res.status(400).json({ error: 'Password is required for Staff and Intern roles' });
+      }
+      // Validate password strength (minimum 6 characters)
+      if (password.trim().length < 6) {
+        return res.status(400).json({ error: 'Password must be at least 6 characters long' });
+      }
+      // Optional: Add more password strength requirements
+      if (password.trim().length > 128) {
+        return res.status(400).json({ error: 'Password must be less than 128 characters' });
+      }
     }
     
     // Validate hostCompanyId if provided (should be valid ObjectId)
@@ -222,7 +200,6 @@ router.post('/register', upload.fields([
     
     if (customAddress && customAddress.trim().length > 0) {
       // Custom address provided - geocode it using API
-      console.log(`🌍 Geocoding custom address: "${customAddress.trim()}"...`);
       isCustomAddress = true;
       try {
         const geocodeResult = await geocodeLocationWithRetry(customAddress.trim(), 'South Africa', 2);
@@ -230,7 +207,6 @@ router.post('/register', upload.fields([
         locationLongitude = geocodeResult.longitude;
         locationName = customAddress.trim();
         locationAddress = geocodeResult.address;
-        console.log(`✅ Custom address geocoded: ${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)}`);
       } catch (geocodeError) {
         console.error(`❌ Failed to geocode custom address: "${customAddress.trim()}"`, geocodeError.message);
         return res.status(400).json({ 
@@ -262,7 +238,6 @@ router.post('/register', upload.fields([
       locationLongitude = locationData.longitude;
       locationName = locationData.name;
       locationAddress = locationData.address || locationData.name;
-      console.log(`✅ Location from dataset: ${locationName} (${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)})`);
     } else {
       return res.status(400).json({ error: 'Location or custom address is required' });
     }
@@ -291,8 +266,6 @@ router.post('/register', upload.fields([
       });
     }
     
-    console.log(`   📸 Processing ${images.length} images for registration (enterprise-grade accuracy)`);
-    
     // ⚡ OPTIMIZED: Use lean() for faster query (returns plain JS object, not Mongoose document)
     const existingStaff = await Staff.findOne({ idNumber: idNumber.trim(), isActive: true }).lean();
     if (existingStaff) {
@@ -300,9 +273,28 @@ router.post('/register', upload.fields([
     }
     
     console.log(`📸 Processing registration for ${name.trim()} ${surname.trim()} (ID: ${idNumber.trim()})`);
-    console.log(`   Role: ${role}, Phone: ${phoneNumber.trim()}, Location: ${locationName}`);
-    console.log(`   Location coordinates: ${locationLatitude.toFixed(6)}, ${locationLongitude.toFixed(6)}`);
-    console.log(`   ⚡ ENTERPRISE: Processing ${images.length} face images SEQUENTIALLY (ONNX Runtime requires sequential inference)...`);
+    
+    // 🌐 AWS Rekognition: PRIMARY validation (validate faces FIRST before ONNX processing)
+    // This provides early quality checks and ensures we only process high-quality images
+    if (rekognition.isConfigured()) {
+      try {
+        for (let i = 0; i < images.length; i++) {
+          const image = images[i];
+          try {
+            const analysis = await rekognition.detectFaceAttributes(image.buffer);
+            if (!analysis || analysis.faceCount === 0) {
+              console.warn(`⚠️ [Rekognition] Image ${i + 1}: No face detected`);
+            } else if (analysis.faceCount > 1) {
+              console.warn(`⚠️ [Rekognition] Image ${i + 1}: Multiple faces detected (${analysis.faceCount})`);
+            }
+          } catch (rekError) {
+            console.warn(`⚠️ [Rekognition] Image ${i + 1} validation failed: ${rekError.message}`);
+          }
+        }
+      } catch (awsErr) {
+        console.warn(`⚠️ [Rekognition] Primary validation failed, using ONNX only: ${awsErr.message}`);
+      }
+    }
     
     // ⚡ ENTERPRISE: Process images SEQUENTIALLY to avoid ONNX Runtime concurrency issues
     // ONNX Runtime sessions are not thread-safe for concurrent inference
@@ -312,15 +304,12 @@ router.post('/register', upload.fields([
       const embeddingQualities = []; // 🏦 BANK-GRADE: Store quality metadata per embedding
     
     // Validate images before processing
-    console.log(`   📋 Validating ${images.length} images before processing...`);
     for (let i = 0; i < images.length; i++) {
       const img = images[i];
-      console.log(`   📸 Image ${i + 1}: buffer size = ${img?.buffer?.length || 0} bytes, mimetype = ${img?.mimetype || 'unknown'}`);
       if (!img || !img.buffer || img.buffer.length === 0) {
         throw new Error(`Image ${i + 1} is invalid or empty`);
       }
     }
-    console.log(`   ✅ All images validated`);
     
     try {
       // Process images sequentially to avoid ONNX Runtime concurrency issues
@@ -329,13 +318,8 @@ router.post('/register', upload.fields([
       
       for (let i = 0; i < images.length; i++) {
         const image = images[i];
-        console.log(`   ⚡ Processing image ${i + 1}/${images.length} (sequential)...`);
-        console.log(`   📦 Image ${i + 1} buffer size: ${image.buffer.length} bytes`);
         try {
-          console.log(`   🚀 Calling generateEmbedding for image ${i + 1}...`);
-          process.stdout.write(`\n📸 [REGISTER] Processing image ${i + 1}/${images.length}\n`);
           const result = await generateEmbedding(image.buffer);
-          process.stdout.write(`\n✅ [REGISTER] Image ${i + 1} processed successfully\n`);
           
           const embedding = result.embedding || result;
           const quality = result.quality || {};
@@ -371,37 +355,12 @@ router.post('/register', upload.fields([
             detectionScore: qualityMetadata.detectionScore || qualityMetadata.score || 0.75,
             createdAt: new Date(),
           });
-          
-          const qualityScore = qualityMetadata.score || 0.75;
-          console.log(`   ✅ Image ${i + 1} processed - Quality: ${(qualityScore * 100).toFixed(1)}%`);
         } catch (imageError) {
           // Track failed images
           failedImageNumbers.push(i + 1);
           const errorMsg = imageError?.message || String(imageError) || 'Unknown error';
           errorDetails.push({ image: i + 1, error: errorMsg });
-          
-          // IMMEDIATE error logging to stderr
-          process.stderr.write(`\n❌ ========== ERROR PROCESSING IMAGE ${i + 1} ==========\n`);
-          process.stderr.write(`❌ Error message: ${errorMsg}\n`);
-          process.stderr.write(`❌ Error name: ${imageError.name}\n`);
-          if (imageError.stack) {
-            process.stderr.write(`❌ Error stack: ${imageError.stack}\n`);
-          }
-          if (imageError.cause) {
-            process.stderr.write(`❌ Error cause: ${imageError.cause}\n`);
-          }
-          process.stderr.write(`❌ ===============================================\n`);
-          
-          // Also log to console.error
-          console.error(`   ❌ ========== ERROR PROCESSING IMAGE ${i + 1} ==========`);
-          console.error(`   ❌ Error message: ${errorMsg}`);
-          console.error(`   ❌ Error name: ${imageError.name}`);
-          console.error(`   ❌ Error stack: ${imageError.stack}`);
-          if (imageError.cause) {
-            console.error(`   ❌ Error cause: ${imageError.cause}`);
-          }
-          console.error(`   ❌ Full error object:`, JSON.stringify(imageError, Object.getOwnPropertyNames(imageError)));
-          console.error(`   ❌ ===============================================`);
+          console.error(`❌ Error processing image ${i + 1}: ${errorMsg}`);
           // Continue with other images even if one fails
           continue;
         }
@@ -480,30 +439,8 @@ router.post('/register', upload.fields([
       }
       
       const sequentialProcessingTime = Date.now() - registrationStartTime;
-      console.log(`   ⚡⚡⚡ Sequential processing completed in ${sequentialProcessingTime}ms - ${embeddingResults.length} embeddings generated`);
     } catch (error) {
-      // IMMEDIATE error logging to stderr
-      process.stderr.write(`\n❌ ========== ERROR PROCESSING IMAGES ==========\n`);
-      process.stderr.write(`❌ Error message: ${error.message}\n`);
-      process.stderr.write(`❌ Error name: ${error.name}\n`);
-      if (error.stack) {
-        process.stderr.write(`❌ Error stack: ${error.stack}\n`);
-      }
-      if (error.cause) {
-        process.stderr.write(`❌ Error cause: ${error.cause}\n`);
-      }
-      process.stderr.write(`❌ ===============================================\n`);
-      
-      // Also log to console.error
-      console.error('   ❌ ========== ERROR PROCESSING IMAGES ==========');
-      console.error('   ❌ Error message:', error.message);
-      console.error('   ❌ Error name:', error.name);
-      console.error('   ❌ Error stack:', error.stack);
-      console.error('   ❌ Error details:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
-      if (error.cause) {
-        console.error('   ❌ Error cause:', error.cause);
-      }
-      console.error('   ❌ ===============================================');
+      console.error('❌ Error processing registration images:', error.message);
       return res.status(500).json({ error: `Failed to process images: ${error.message}` });
     }
     
@@ -516,12 +453,10 @@ router.post('/register', upload.fields([
     let centroidEmbedding;
     try {
       centroidEmbedding = computeCentroidTemplate(embeddingResults, embeddingQualities);
-      console.log(`   🏦 Centroid template computed from ${embeddingResults.length} embeddings`);
     } catch (centroidError) {
-      console.warn(`   ⚠️ Failed to compute centroid template: ${centroidError.message}`);
+      console.warn(`⚠️ Failed to compute centroid template: ${centroidError.message}`);
       // Fallback: use first embedding as centroid
       centroidEmbedding = embeddingResults[0];
-      console.log(`   ⚠️ Using first embedding as centroid (fallback)`);
     }
     
     // 🏦 BANK-GRADE Phase 5: Process ID document image (REQUIRED for bank-grade accuracy)
@@ -536,10 +471,21 @@ router.post('/register', upload.fields([
     let idEmbedding = undefined;
     let idEmbeddingQuality = undefined;
     
+    // 🌐 AWS Rekognition: PRIMARY validation for ID document (validate FIRST before ONNX)
+    if (rekognition.isConfigured()) {
+      try {
+        const idAnalysis = await rekognition.detectFaceAttributes(idImage.buffer);
+        if (!idAnalysis || idAnalysis.faceCount === 0) {
+          console.warn(`⚠️ [Rekognition] ID document: No face detected`);
+        } else if (idAnalysis.faceCount > 1) {
+          console.warn(`⚠️ [Rekognition] ID document: Multiple faces detected (${idAnalysis.faceCount})`);
+        }
+      } catch (rekError) {
+        console.warn(`⚠️ [Rekognition] ID document validation failed, using ONNX only: ${rekError.message}`);
+      }
+    }
+    
     try {
-      console.log(`   🆔 Processing ID document image (${idImage.buffer.length} bytes)...`);
-      process.stdout.write(`\n📸 [REGISTER] Processing ID document image (REQUIRED)\n`);
-      
       const idEmbeddingResult = await generateIDEmbedding(idImage.buffer);
       
       if (idEmbeddingResult && idEmbeddingResult.embedding) {
@@ -552,10 +498,6 @@ router.post('/register', upload.fields([
           detectionScore: 0.75,
           createdAt: new Date()
         };
-        
-        const qualityScore = idEmbeddingQuality.score || 0.75;
-        process.stdout.write(`\n✅ [REGISTER] ID document image processed successfully\n`);
-        console.log(`   ✅ ID embedding generated with quality: ${(qualityScore * 100).toFixed(1)}%`);
       } else {
         throw new Error('Invalid embedding result from ID document');
       }
@@ -581,6 +523,7 @@ router.post('/register', upload.fields([
       role: role,
       department: department.trim(), // Department (required)
       hostCompanyId: validatedHostCompanyId, // Host company ID (optional)
+      // Note: mentorId and mentorName removed - mentors are not assigned during registration
       location: location || customAddress || locationName, // Store location key or custom address
       locationLatitude: locationLatitude, // Store geocoded coordinates
       locationLongitude: locationLongitude,
@@ -593,6 +536,8 @@ router.post('/register', upload.fields([
       // ⏰ EXTRA HOURS: Store extra hours availability (optional)
       extraHoursStartTime: extraHoursStartTime && extraHoursStartTime.trim() ? extraHoursStartTime.trim() : undefined,
       extraHoursEndTime: extraHoursEndTime && extraHoursEndTime.trim() ? extraHoursEndTime.trim() : undefined,
+      // 🔐 Password (required for Staff and Intern roles only)
+      password: (role === 'Staff' || role === 'Intern') && password ? password.trim() : undefined,
       faceEmbedding: primaryEmbedding, // Primary embedding (for backward compatibility)
       faceEmbeddings: embeddingResults, // 🏦 BANK-GRADE: ALL embeddings (3-5) for centroid fusion
       embeddingQualities: embeddingQualities, // 🏦 BANK-GRADE: Quality metadata per embedding
@@ -605,6 +550,17 @@ router.post('/register', upload.fields([
     // ⚡ OPTIMIZED: Save staff record
     const saveStartTime = Date.now();
     await staff.save();
+
+    // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+    await logAction('STAFF_REGISTERED', {
+      staffId: staff._id?.toString(),
+      staffName: `${staff.name} ${staff.surname}`,
+      role: staff.role,
+      idNumber: staff.idNumber,
+      hostCompanyId: staff.hostCompanyId?.toString(),
+      departmentId: staff.department?.toString(),
+      email: staff.email
+    }, null);
 
     // 🌐 AWS Rekognition integration (collection-based indexing)
     // This runs AFTER ONNX registration succeeds. Rekognition is best-effort:
@@ -628,7 +584,6 @@ router.post('/register', upload.fields([
               const s3Result = await rekognition.uploadToS3(s3Key, image.buffer, image.mimetype || 'image/jpeg');
               if (s3Result) {
                 s3Uploads.push(s3Result);
-                console.log(`[S3] Uploaded image ${i + 1} to: ${s3Result.key}`);
               }
             }
             // Store S3 keys in staff record for reference
@@ -637,7 +592,7 @@ router.post('/register', upload.fields([
               staff.s3Bucket = process.env.S3_BUCKET;
             }
           } catch (s3Error) {
-            console.warn('[S3] Failed to upload images to S3 (non-critical):', s3Error.message);
+            console.warn('⚠️ [S3] Failed to upload images to S3 (non-critical):', s3Error.message);
             // Continue with Rekognition indexing even if S3 upload fails
           }
         }
@@ -655,21 +610,11 @@ router.post('/register', upload.fields([
         staff.rekognitionLastSyncedAt = new Date();
 
         await staff.save().catch(err => {
-          console.warn(
-            '[Rekognition] Failed to save Rekognition fields on staff:',
-            err.message
-          );
+          console.warn('⚠️ [Rekognition] Failed to save Rekognition fields on staff:', err.message);
         });
       } catch (awsError) {
-        console.warn(
-          '[Rekognition] Registration succeeded with ONNX, but Rekognition indexing failed:',
-          awsError.message
-        );
+        console.warn('⚠️ [Rekognition] Registration succeeded with ONNX, but Rekognition indexing failed:', awsError.message);
       }
-    } else {
-      console.warn(
-        '[Rekognition] AWS Rekognition not configured – registration will use ONNX only (no cloud identification)'
-      );
     }
 
     if (registrationDeviceFingerprint) {
@@ -688,10 +633,7 @@ router.post('/register', upload.fields([
     const saveTime = Date.now() - saveStartTime;
     
     const totalRegistrationTime = Date.now() - registrationStartTime;
-    console.log(`✅ Staff registered: ${fullName} - ID: ${idNumber.trim()}, Role: ${role}`);
-    console.log(`   Face quality: ${(avgQuality * 100).toFixed(1)}% (${qualityDetails})`);
-    console.log(`   Total embeddings: ${embeddingResults.length} (ENTERPRISE-GRADE)`);
-    console.log(`   ⚡⚡⚡ TOTAL REGISTRATION TIME: ${totalRegistrationTime}ms (DB save: ${saveTime}ms)`);
+    console.log(`✅ Staff registered: ${fullName} - ID: ${idNumber.trim()}, Role: ${role}, Embeddings: ${embeddingResults.length}, Time: ${totalRegistrationTime}ms`);
     
     // ⚡ OPTIMIZED: Invalidate cache asynchronously (don't wait for it)
     staffCache.invalidate(); // This triggers async refresh, doesn't block response
@@ -740,7 +682,23 @@ router.post('/register', upload.fields([
   }
 });
 
-// Clock in/out
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+// Clock in/out\\\\\\\\\\\\\\f0r clockin request
 router.post('/clock', upload.single('image'), async (req, res) => {
   const requestStartTime = Date.now();
   try {
@@ -748,11 +706,12 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     console.log('Request body:', req.body);
     console.log('Request file:', req.file ? `File received (${req.file.size} bytes)` : 'No file');
     
-    const { type, latitude, longitude } = req.body; // 'in', 'out', 'break_start', or 'break_end'
+    const { type, latitude, longitude } = req.body; // 'in', 'out', 'break_start', 'break_end', 'extra_shift_in', 'extra_shift_out', 'lunch_start', 'lunch_end'
     
-    if (!type || !['in', 'out', 'break_start', 'break_end'].includes(type)) {
+    const validClockTypes = ['in', 'out', 'break_start', 'break_end', 'extra_shift_in', 'extra_shift_out', 'lunch_start', 'lunch_end'];
+    if (!type || !validClockTypes.includes(type)) {
       console.error('❌ Invalid clock type:', type);
-      return res.status(400).json({ error: 'Clock type must be "in", "out", "break_start", or "break_end"' });
+      return res.status(400).json({ error: `Clock type must be one of: ${validClockTypes.join(', ')}` });
     }
     
     if (!req.file) {
@@ -774,8 +733,6 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       return res.status(400).json({ error: 'Invalid location coordinates. Please ensure GPS is enabled.' });
     }
     
-    console.log(`✅ Processing ${type} request for staff member`);
-    console.log(`   User location: ${userLat}, ${userLon}`);
     
     // 💾 MEMORY OPTIMIZATION: Resize image before processing to reduce memory usage
     let processedImageBuffer = req.file.buffer;
@@ -878,15 +835,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       // Generate embedding from captured image (now returns object with embedding, quality, etc.)
       // Pass device fingerprint for adaptive quality thresholds
       try {
-        const embeddingStartTime = Date.now();
-        process.stdout.write(`\n🕐 [CLOCK] Starting ONNX embedding generation (Rekognition fallback)...\n`);
-        console.log(`⏱️ [PERF] Embedding generation started at ${new Date().toISOString()}`);
-        
         embeddingResult = await generateEmbedding(processedImageBuffer, deviceFingerprint);
-      
-        const embeddingTime = Date.now() - embeddingStartTime;
-        process.stdout.write(`\n✅ [CLOCK] Embedding generation complete (${embeddingTime}ms)\n`);
-        console.log(`⏱️ [PERF] Embedding generation took ${embeddingTime}ms (${(embeddingTime/1000).toFixed(1)}s)`);
         
         // Validate embedding result
         if (!embeddingResult) {
@@ -909,16 +858,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         processedImageBuffer = null;
         req.file.buffer = null;
       } catch (embeddingError) {
-          // IMMEDIATE error logging to stderr
-        process.stderr.write(`\n❌ [CLOCK] Error generating embedding: ${errorMsg}\n`);
-        if (embeddingError.stack) {
-          process.stderr.write(`❌ [CLOCK] Error stack: ${embeddingError.stack}\n`);
-        }
-        // Also log to console.error
+        const errorMsg = embeddingError?.message || String(embeddingError) || 'Unknown error';
         console.error('❌ Error generating embedding:', errorMsg);
-        if (embeddingError.stack) {
-          console.error('❌ Error stack:', embeddingError.stack);
-        }
         
         // ENTERPRISE: Provide user-friendly error messages
         let userFriendlyError = errorMsg;
@@ -952,10 +893,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     }
     
     // Get all active staff members from cache (FAST PATH - no DB query!)
-    const cacheStartTime = Date.now();
     const staffWithEmbeddings = await staffCache.getStaff();
-    const cacheTime = Date.now() - cacheStartTime;
-    console.log(`⏱️ [PERF] Staff cache retrieval took ${cacheTime}ms`);
     
     if (!staffWithEmbeddings || staffWithEmbeddings.length === 0) {
       // Free buffer before returning
@@ -980,7 +918,6 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       console.log(`   - Staff members to compare: ${staffWithEmbeddings.length}`);
       
       const matchingStartTime = Date.now();
-      console.log(`⏱️ [PERF] Starting face matching with ${staffWithEmbeddings.length} staff members...`);
       
       // 🏦 BANK-GRADE Phase 3: Pass device fingerprint and location to matching
       // Note: Location validation happens after matching, so we pass locationValid: true initially
@@ -991,7 +928,6 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         useType: 'daily',
       });
       const matchingTime = Date.now() - matchingStartTime;
-      console.log(`⏱️ [PERF] Face matching took ${matchingTime}ms (${(matchingTime/1000).toFixed(1)}s)`);
     }
     
     // Decide final staff using Rekognition as primary, ONNX as fallback
@@ -1096,6 +1032,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
               { name: 1, surname: 1 }
             ).lean();
           } catch (deviceLookupError) {
+            
             console.warn('⚠️ Failed to look up fingerprint ownership:', deviceLookupError.message);
           }
 
@@ -1303,9 +1240,17 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     } else if (type === 'out') {
       clockTypeText = 'Clocked Out';
     } else if (type === 'break_start') {
-      clockTypeText = 'Started Break';
+      clockTypeText = 'Started Tea Time';
     } else if (type === 'break_end') {
-      clockTypeText = 'Ended Break';
+      clockTypeText = 'Ended Tea Time';
+    } else if (type === 'extra_shift_in') {
+      clockTypeText = 'Started Extra Shift';
+    } else if (type === 'extra_shift_out') {
+      clockTypeText = 'Ended Extra Shift';
+    } else if (type === 'lunch_start') {
+      clockTypeText = 'Started Lunch';
+    } else if (type === 'lunch_end') {
+      clockTypeText = 'Ended Lunch';
     }
     
     console.log(`✅ Success: ${staff.name} ${clockTypeText} on ${shortDateString} at ${timeString}`);
@@ -1476,7 +1421,20 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         
         await Promise.race([savePromise, timeoutPromise]);
         const saveTime = Date.now() - saveStartTime;
-        console.log(`✅ Clock log saved successfully for ${staff.name} (${saveTime}ms)`);
+        console.log(`✅ Clock log saved for ${staff.name}`);
+
+        // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+        await logAction('CLOCK_IN', {
+          staffId: staff._id.toString(),
+          staffName: staff.name,
+          timestamp: timestamp,
+          hostCompanyId: staff.hostCompanyId?.toString(),
+          departmentId: staff.department?.toString(),
+          clockLogId: clockLog._id?.toString(),
+          location: req.body.location || 'Unknown',
+          type: type,
+          confidence: confidence
+        }, req.user?._id);
         
         // 🏦 BANK-GRADE Phase 4: Track device quality after successful clock-in
         if (deviceFingerprint && embeddingResult.qualityMetrics) {
@@ -1577,19 +1535,65 @@ router.get('/verify-clock', async (req, res) => {
 // Get all staff members
 router.get('/list', async (req, res) => {
   try {
-    const { hostCompanyId } = req.query;
-    const filter = { isActive: true };
+    const { hostCompanyId, departmentId } = req.query;
+    let filter = { isActive: true };
     
     // Filter by host company if provided
     if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid host company ID format' 
+        });
+      }
       filter.hostCompanyId = hostCompanyId;
     }
     
-    const staff = await Staff.find(filter).select('name createdAt').sort({ createdAt: -1 });
+    // Filter by department if provided
+    // Department can be stored as department ID (string) or department name
+    if (departmentId) {
+      if (!mongoose.Types.ObjectId.isValid(departmentId)) {
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid department ID format' 
+        });
+      }
+      
+      // Try to find the department to get its name as well
+      const Department = require('../models/Department');
+      const department = await Department.findById(departmentId).select('_id name').lean();
+      
+      if (department) {
+        // Match both department ID (as string) and department name
+        // Staff.department field can store either format
+        // Combine with existing filters using $and to avoid conflicts
+        const departmentFilter = {
+          $or: [
+            { department: departmentId.toString() },
+            { department: department.name }
+          ]
+        };
+        
+        // Merge with existing filter using $and
+        const baseFilter = { ...filter };
+        filter = {
+          $and: [
+            baseFilter,
+            departmentFilter
+          ]
+        };
+      } else {
+        // Department not found, but still try to match by ID
+        filter.department = departmentId.toString();
+      }
+    }
+    
+    // Include all necessary fields for mentor selection: name, surname, role, department, mentorName
+    const staff = await Staff.find(filter).select('name surname role department mentorName hostCompanyId createdAt').sort({ createdAt: -1 });
     res.json({ success: true, staff });
   } catch (error) {
     console.error('Error fetching staff list:', error);
-    res.status(500).json({ error: 'Failed to fetch staff list' });
+    res.status(500).json({ success: false, error: 'Failed to fetch staff list' });
   }
 });
 
@@ -1690,9 +1694,12 @@ router.post('/login', async (req, res) => {
     
     if (username.toLowerCase() === ADMIN_USERNAME.toLowerCase() && password === ADMIN_PASSWORD) {
       console.log('🔐 ✅ Admin login successful');
+      // Use a fixed MongoDB ObjectId for admin (24 hex chars)
+      const ADMIN_OBJECT_ID = '000000000000000000000001';
       return res.json({
         success: true,
         user: {
+          id: ADMIN_OBJECT_ID, // ✅ Valid MongoDB ObjectId format
           type: 'admin',
           username: ADMIN_USERNAME,
           name: 'System Administrator'
@@ -1739,6 +1746,940 @@ router.post('/login', async (req, res) => {
     res.status(500).json({ 
       success: false,
       error: 'Login failed. Please try again.' 
+    });
+  }
+});
+
+// Intern login with face recognition
+router.post('/intern/login', upload.single('image'), async (req, res) => {
+  try {
+    const { idNumber, password } = req.body;
+    
+    if (!idNumber) {
+      return res.status(400).json({
+        success: false,
+        error: 'ID number is required'
+      });
+    }
+
+    // For test accounts, allow password-only login (bypass face recognition)
+    const TEST_ACCOUNTS = {
+      'intern1': { password: 'intern123', idNumber: '0000000000001' },
+      'intern2': { password: 'intern123', idNumber: '0000000000002' },
+      'test': { password: 'test123', idNumber: '0000000000003' }
+    };
+
+    const testAccount = TEST_ACCOUNTS[idNumber.trim().toLowerCase()];
+    const isTestAccount = testAccount && password === testAccount.password;
+    
+    let intern;
+    
+    if (isTestAccount) {
+      // For test accounts, find by the mapped ID number
+      intern = await Staff.findOne({
+        idNumber: testAccount.idNumber,
+        role: 'Intern',
+        isActive: true
+      });
+      
+      // If test intern doesn't exist, create a mock response for testing
+      if (!intern) {
+        console.log('⚠️ Test account login - intern not found in database, using mock data');
+        // Return mock intern data for testing
+        return res.json({
+          success: true,
+          user: {
+            type: 'intern',
+            id: 'test_intern_id',
+            idNumber: testAccount.idNumber,
+            name: 'Test',
+            surname: 'Intern',
+            fullName: 'Test Intern',
+            hostCompanyId: null,
+            department: 'Testing',
+          }
+        });
+      }
+    } else {
+      // Find intern by ID number (normal flow) - select password field for verification
+      intern = await Staff.findOne({
+        idNumber: idNumber.trim(),
+        role: 'Intern',
+        isActive: true
+      }).select('+password'); // Select password field (normally excluded)
+
+      if (!intern) {
+        return res.status(401).json({
+          success: false,
+          error: 'Intern not found or inactive'
+        });
+      }
+    }
+
+    // Check password authentication if password is provided
+    let isPasswordValid = false;
+    if (password && intern.password) {
+      // Use comparePassword method if available, otherwise use bcrypt directly
+      if (typeof intern.comparePassword === 'function') {
+        isPasswordValid = await intern.comparePassword(password);
+      } else {
+        const bcrypt = require('bcryptjs');
+        isPasswordValid = await bcrypt.compare(password, intern.password);
+      }
+      
+      if (!isPasswordValid) {
+        return res.status(401).json({
+          success: false,
+          error: 'Invalid password. Please check your credentials.'
+        });
+      }
+    }
+
+    // If it's a test account with valid password, skip face recognition
+    if (isTestAccount && password && isPasswordValid) {
+      console.log('✅ Test account login (password-only):', idNumber);
+      // Continue to device tracking and return success
+    } else if (password && isPasswordValid) {
+      // Regular password login (password verified above)
+      console.log('✅ Password login successful for intern:', idNumber);
+      // Continue to device tracking and return success
+    } else if (req.file) {
+      // If image is provided, verify face
+      const processedImageBuffer = await resizeImage(req.file.buffer, 1024);
+      const embedding = await generateEmbedding(processedImageBuffer);
+      const match = await findMatchingStaff(embedding, { threshold: 0.65 });
+
+      if (!match || match.staff._id.toString() !== intern._id.toString()) {
+        return res.status(401).json({
+          success: false,
+          error: 'Face recognition failed. Please ensure you are the registered person.'
+        });
+      }
+    } else {
+      // No image and no valid password - require face recognition or password
+      return res.status(401).json({
+        success: false,
+        error: 'Face recognition or valid password is required for login.'
+      });
+    }
+
+    // Track device info
+    const deviceFingerprintResult = generateDeviceFingerprint(req.headers, { includeMeta: true });
+    const deviceFingerprint = typeof deviceFingerprintResult === 'string'
+      ? deviceFingerprintResult
+      : deviceFingerprintResult?.fingerprint;
+    const deviceInfo = typeof deviceFingerprintResult === 'object'
+      ? deviceFingerprintResult?.deviceInfo
+      : null;
+
+    // Save or update device info
+    if (deviceFingerprint && deviceInfo) {
+      const DeviceInfo = require('../models/DeviceInfo');
+      await DeviceInfo.findOneAndUpdate(
+        { userId: intern._id, deviceFingerprint },
+        {
+          userId: intern._id,
+          userName: `${intern.name} ${intern.surname}`,
+          deviceFingerprint,
+          deviceName: deviceInfo.modelName || 'Unknown Device',
+          platform: deviceInfo.platform || 'unknown',
+          brand: deviceInfo.brand,
+          manufacturer: deviceInfo.manufacturer,
+          modelName: deviceInfo.modelName,
+          osVersion: deviceInfo.osVersion,
+          appVersion: deviceInfo.appVersion,
+          buildNumber: deviceInfo.buildNumber,
+          language: deviceInfo.language,
+          timezone: deviceInfo.timezone,
+          deviceId: deviceInfo.deviceId,
+          screenWidth: deviceInfo.screenWidth,
+          screenHeight: deviceInfo.screenHeight,
+          screenScale: deviceInfo.screenScale,
+          deviceType: deviceInfo.deviceType,
+          hostCompanyId: intern.hostCompanyId,
+          lastSeenAt: new Date(),
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    // Fetch host company info
+    let hostCompanyName = null;
+    if (intern.hostCompanyId) {
+      const HostCompany = require('../models/HostCompany');
+      const hostCompany = await HostCompany.findById(intern.hostCompanyId).lean();
+      if (hostCompany) {
+        hostCompanyName = hostCompany.companyName || hostCompany.name;
+      }
+    }
+
+    // Fetch mentor info if assigned
+    let mentorName = null;
+    if (intern.mentorId) {
+      const mentor = await Staff.findById(intern.mentorId).select('name surname').lean();
+      if (mentor) {
+        mentorName = `${mentor.name} ${mentor.surname}`.trim();
+      }
+    }
+
+    console.log('✅ Intern login successful:', intern.name);
+    res.json({
+      success: true,
+      user: {
+        type: 'intern',
+        id: intern._id,
+        idNumber: intern.idNumber,
+        name: intern.name,
+        surname: intern.surname,
+        fullName: `${intern.name} ${intern.surname}`,
+        hostCompanyId: intern.hostCompanyId,
+        hostCompanyName: hostCompanyName,
+        mentorName: mentorName,
+        department: intern.department,
+      }
+    });
+  } catch (error) {
+    console.error('❌ Intern login error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Login failed. Please try again.'
+    });
+  }
+});
+
+// ========== INTERN DASHBOARD ROUTES ==========
+
+// Get intern dashboard data (attendance summary)
+router.get('/intern/dashboard', async (req, res) => {
+  try {
+    const { internId, period = 'today' } = req.query;
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Intern ID is required'
+      });
+    }
+
+    // Handle test accounts - return mock dashboard data
+    if (internId === 'test_intern_id') {
+      return res.json({
+        success: true,
+        attendance: [],
+        stats: {
+          totalHours: '0.0',
+          daysPresent: '0',
+          attendanceRate: '0'
+        }
+      });
+    }
+
+    // Find intern
+    const intern = await Staff.findById(internId).lean();
+    if (!intern) {
+      return res.status(404).json({
+        success: false,
+        error: 'Intern not found'
+      });
+    }
+
+    // Calculate date range based on period
+    const now = new Date();
+    let startDate, endDate;
+
+    if (period === 'today') {
+      startDate = new Date(now);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(now);
+      endDate.setHours(23, 59, 59, 999);
+    } else if (period === 'weekly') {
+      // Get start of week (Monday)
+      const dayOfWeek = now.getDay();
+      const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1); // Adjust for Sunday
+      startDate = new Date(now.setDate(diff));
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(startDate);
+      endDate.setDate(endDate.getDate() + 6);
+      endDate.setHours(23, 59, 59, 999);
+    } else if (period === 'monthly') {
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      startDate.setHours(0, 0, 0, 0);
+      endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+      endDate.setHours(23, 59, 59, 999);
+    } else {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid period. Use: today, weekly, or monthly'
+      });
+    }
+
+    // Get clock logs for the period
+    const logs = await ClockLog.find({
+      staffId: internId,
+      timestamp: { $gte: startDate, $lte: endDate }
+    }).sort({ timestamp: 1 }).lean();
+
+    // Group logs by date
+    const attendanceByDate = {};
+    logs.forEach(log => {
+      const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+      if (!attendanceByDate[dateKey]) {
+        attendanceByDate[dateKey] = {
+          date: dateKey,
+          clockIn: null,
+          clockOut: null,
+          breakStart: null,
+          breakEnd: null,
+          lunchStart: null,
+          lunchEnd: null,
+          extraShiftIn: null,
+          extraShiftOut: null,
+        };
+      }
+
+      const timeStr = log.timestamp;
+      if (log.clockType === 'in') {
+        attendanceByDate[dateKey].clockIn = timeStr;
+      } else if (log.clockType === 'out') {
+        attendanceByDate[dateKey].clockOut = timeStr;
+      } else if (log.clockType === 'break_start') {
+        attendanceByDate[dateKey].breakStart = timeStr;
+      } else if (log.clockType === 'break_end') {
+        attendanceByDate[dateKey].breakEnd = timeStr;
+      } else if (log.clockType === 'lunch_start') {
+        attendanceByDate[dateKey].lunchStart = timeStr;
+      } else if (log.clockType === 'lunch_end') {
+        attendanceByDate[dateKey].lunchEnd = timeStr;
+      } else if (log.clockType === 'extra_shift_in') {
+        attendanceByDate[dateKey].extraShiftIn = timeStr;
+      } else if (log.clockType === 'extra_shift_out') {
+        attendanceByDate[dateKey].extraShiftOut = timeStr;
+      }
+    });
+
+    // Calculate hours for each day
+    const attendanceData = Object.values(attendanceByDate).map(day => {
+      let hoursWorked = 0;
+
+      // Calculate regular hours (clock in to clock out, excluding breaks and lunch)
+      if (day.clockIn && day.clockOut) {
+        const clockInTime = new Date(day.clockIn).getTime();
+        const clockOutTime = new Date(day.clockOut).getTime();
+        let totalMinutes = (clockOutTime - clockInTime) / (1000 * 60);
+
+        // Subtract break duration
+        if (day.breakStart && day.breakEnd) {
+          const breakStart = new Date(day.breakStart).getTime();
+          const breakEnd = new Date(day.breakEnd).getTime();
+          const breakMinutes = (breakEnd - breakStart) / (1000 * 60);
+          totalMinutes -= breakMinutes;
+        }
+
+        // Subtract lunch duration
+        if (day.lunchStart && day.lunchEnd) {
+          const lunchStart = new Date(day.lunchStart).getTime();
+          const lunchEnd = new Date(day.lunchEnd).getTime();
+          const lunchMinutes = (lunchEnd - lunchStart) / (1000 * 60);
+          totalMinutes -= lunchMinutes;
+        }
+
+        hoursWorked = Math.max(0, totalMinutes / 60);
+      }
+
+      // Add extra shift hours
+      if (day.extraShiftIn && day.extraShiftOut) {
+        const extraStart = new Date(day.extraShiftIn).getTime();
+        const extraEnd = new Date(day.extraShiftOut).getTime();
+        const extraMinutes = (extraEnd - extraStart) / (1000 * 60);
+        hoursWorked += extraMinutes / 60;
+      }
+
+      return {
+        date: day.date,
+        clockIn: day.clockIn,
+        clockOut: day.clockOut,
+        hoursWorked: hoursWorked.toFixed(1)
+      };
+    });
+
+    // Calculate stats
+    const totalHours = attendanceData.reduce((sum, day) => sum + parseFloat(day.hoursWorked || 0), 0);
+    const daysPresent = attendanceData.filter(day => day.clockIn).length;
+    
+    // Calculate expected days based on period
+    let expectedDays = 1;
+    if (period === 'weekly') {
+      expectedDays = 5; // Weekdays only
+    } else if (period === 'monthly') {
+      // Count weekdays in the month
+      const currentDate = new Date(startDate);
+      let weekdayCount = 0;
+      while (currentDate <= endDate) {
+        const dayOfWeek = currentDate.getDay();
+        if (dayOfWeek >= 1 && dayOfWeek <= 5) { // Monday to Friday
+          weekdayCount++;
+        }
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+      expectedDays = weekdayCount;
+    }
+
+    const attendanceRate = expectedDays > 0 ? Math.round((daysPresent / expectedDays) * 100) : 0;
+
+    const stats = {
+      totalHours: totalHours.toFixed(1),
+      daysPresent: daysPresent.toString(),
+      attendanceRate: attendanceRate.toString()
+    };
+
+    res.json({
+      success: true,
+      attendance: attendanceData,
+      stats: stats
+    });
+  } catch (error) {
+    console.error('❌ Intern dashboard error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load dashboard data'
+    });
+  }
+});
+
+// Get detailed intern attendance with comprehensive stats
+router.get('/intern/stipend', async (req, res) => {
+  try {
+    const { internId } = req.query;
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Intern ID is required'
+      });
+    }
+
+    if (internId === 'test_intern_id') {
+      return res.json({
+        success: true,
+        stipendAmount: null
+      });
+    }
+
+    const intern = await Staff.findById(internId).select('stipendAmount role').lean();
+    if (!intern) {
+      return res.status(404).json({
+        success: false,
+        error: 'Intern not found'
+      });
+    }
+
+    return res.json({
+      success: true,
+      stipendAmount: intern.stipendAmount ?? null
+    });
+  } catch (error) {
+    console.error('Error fetching intern stipend:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch stipend'
+    });
+  }
+});
+
+// Get intern working hours (expected hours for payroll)
+router.get('/intern/working-hours', async (req, res) => {
+  try {
+    const { internId, month, year } = req.query;
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Intern ID is required'
+      });
+    }
+
+    if (internId === 'test_intern_id') {
+      return res.json({
+        success: true,
+        workingHours: null
+      });
+    }
+
+    const intern = await Staff.findById(internId)
+      .select([
+        'hostCompanyId',
+        'clockInTime',
+        'clockOutTime',
+        'breakStartTime',
+        'breakEndTime',
+        'expectedWorkingDaysPerWeek',
+        'expectedWorkingDaysPerMonth',
+        'expectedHoursPerDay',
+        'expectedWeeklyHours',
+        'expectedMonthlyHours'
+      ])
+      .lean();
+
+    if (!intern) {
+      return res.status(404).json({
+        success: false,
+        error: 'Intern not found'
+      });
+    }
+
+    const now = new Date();
+    const resolvedYear = year ? Number(year) : now.getFullYear();
+    const resolvedMonth = month ? Number(month) : now.getMonth() + 1;
+
+    if (!Number.isFinite(resolvedYear) || !Number.isFinite(resolvedMonth) || resolvedMonth < 1 || resolvedMonth > 12) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid month or year'
+      });
+    }
+
+    const countWeekdaysInMonth = (yearValue, monthValue) => {
+      const monthIndex = monthValue - 1;
+      const cursor = new Date(yearValue, monthIndex, 1);
+      let count = 0;
+      while (cursor.getMonth() === monthIndex) {
+        const day = cursor.getDay();
+        if (day >= 1 && day <= 5) {
+          count += 1;
+        }
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      return count;
+    };
+
+    const parseTimeToMinutes = (timeString) => {
+      if (!timeString || typeof timeString !== 'string') return null;
+      const parts = timeString.split(':');
+      if (parts.length !== 2) return null;
+      const hours = Number(parts[0]);
+      const minutes = Number(parts[1]);
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+      if (hours < 0 || hours > 23 || minutes < 0 || minutes > 59) return null;
+      return (hours * 60) + minutes;
+    };
+
+    const computeHoursPerDayFromTimes = (clockIn, clockOut, breakStart, breakEnd) => {
+      const clockInMinutes = parseTimeToMinutes(clockIn);
+      const clockOutMinutes = parseTimeToMinutes(clockOut);
+      if (clockInMinutes === null || clockOutMinutes === null) {
+        return null;
+      }
+      let totalMinutes = clockOutMinutes - clockInMinutes;
+      if (totalMinutes <= 0) {
+        return null;
+      }
+      if (breakStart && breakEnd) {
+        const breakStartMinutes = parseTimeToMinutes(breakStart);
+        const breakEndMinutes = parseTimeToMinutes(breakEnd);
+        if (breakStartMinutes !== null && breakEndMinutes !== null && breakEndMinutes > breakStartMinutes) {
+          totalMinutes -= (breakEndMinutes - breakStartMinutes);
+        }
+      }
+      if (totalMinutes <= 0) {
+        return null;
+      }
+      return totalMinutes / 60;
+    };
+
+    const resolveClockTimes = async () => {
+      if (intern.clockInTime && intern.clockOutTime) {
+        return {
+          clockInTime: intern.clockInTime,
+          clockOutTime: intern.clockOutTime,
+          breakStartTime: intern.breakStartTime,
+          breakEndTime: intern.breakEndTime,
+          source: 'registration'
+        };
+      }
+
+      if (intern.hostCompanyId) {
+        const hostCompany = await HostCompany.findById(intern.hostCompanyId)
+          .select('defaultClockInTime defaultClockOutTime defaultBreakStartTime defaultBreakEndTime')
+          .lean();
+        if (hostCompany && hostCompany.defaultClockInTime && hostCompany.defaultClockOutTime) {
+          return {
+            clockInTime: hostCompany.defaultClockInTime,
+            clockOutTime: hostCompany.defaultClockOutTime,
+            breakStartTime: hostCompany.defaultBreakStartTime,
+            breakEndTime: hostCompany.defaultBreakEndTime,
+            source: 'hostCompany'
+          };
+        }
+      }
+
+      return null;
+    };
+
+    const workingDaysPerWeekDefault = 5;
+    const workingDaysPerMonthDefault = countWeekdaysInMonth(resolvedYear, resolvedMonth);
+
+    const assignedFields = [
+      intern.expectedWorkingDaysPerWeek,
+      intern.expectedWorkingDaysPerMonth,
+      intern.expectedHoursPerDay,
+      intern.expectedWeeklyHours,
+      intern.expectedMonthlyHours
+    ];
+
+    const hasAssignedWorkingHours = assignedFields.some(value => value !== null && value !== undefined);
+    const hasAssignedHoursOnly = [
+      intern.expectedHoursPerDay,
+      intern.expectedWeeklyHours,
+      intern.expectedMonthlyHours
+    ].some(value => value !== null && value !== undefined);
+
+    const workingDaysPerWeek = Number.isFinite(intern.expectedWorkingDaysPerWeek)
+      ? intern.expectedWorkingDaysPerWeek
+      : workingDaysPerWeekDefault;
+    const workingDaysPerMonth = Number.isFinite(intern.expectedWorkingDaysPerMonth)
+      ? intern.expectedWorkingDaysPerMonth
+      : workingDaysPerMonthDefault;
+
+    let hoursPerDay = Number.isFinite(intern.expectedHoursPerDay) ? intern.expectedHoursPerDay : null;
+    let weeklyHours = Number.isFinite(intern.expectedWeeklyHours) ? intern.expectedWeeklyHours : null;
+    let monthlyHours = Number.isFinite(intern.expectedMonthlyHours) ? intern.expectedMonthlyHours : null;
+
+    let source = hasAssignedWorkingHours ? 'staff' : null;
+
+    if (!hasAssignedHoursOnly) {
+      const clockTimes = await resolveClockTimes();
+      if (clockTimes) {
+        const derivedHoursPerDay = computeHoursPerDayFromTimes(
+          clockTimes.clockInTime,
+          clockTimes.clockOutTime,
+          clockTimes.breakStartTime,
+          clockTimes.breakEndTime
+        );
+        if (hoursPerDay === null && derivedHoursPerDay !== null) {
+          hoursPerDay = derivedHoursPerDay;
+        }
+        if (!source) {
+          source = clockTimes.source;
+        }
+      }
+    }
+
+    if (hoursPerDay === null) {
+      if (weeklyHours !== null && workingDaysPerWeek > 0) {
+        hoursPerDay = weeklyHours / workingDaysPerWeek;
+      } else if (monthlyHours !== null && workingDaysPerMonth > 0) {
+        hoursPerDay = monthlyHours / workingDaysPerMonth;
+      }
+    }
+
+    if (weeklyHours === null && hoursPerDay !== null && workingDaysPerWeek > 0) {
+      weeklyHours = hoursPerDay * workingDaysPerWeek;
+    }
+
+    if (monthlyHours === null && hoursPerDay !== null && workingDaysPerMonth > 0) {
+      monthlyHours = hoursPerDay * workingDaysPerMonth;
+    }
+
+    const roundValue = (value) => {
+      if (!Number.isFinite(value)) return null;
+      return Math.round(value * 100) / 100;
+    };
+
+    return res.json({
+      success: true,
+      workingHours: {
+        workingDaysPerWeek: roundValue(workingDaysPerWeek),
+        workingDaysPerMonth: roundValue(workingDaysPerMonth),
+        hoursPerDay: roundValue(hoursPerDay),
+        weeklyHours: roundValue(weeklyHours),
+        monthlyHours: roundValue(monthlyHours),
+        source: source || 'none'
+      },
+      period: {
+        month: resolvedMonth,
+        year: resolvedYear
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching working hours:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to fetch working hours'
+    });
+  }
+});
+
+router.get('/intern/attendance/detailed', async (req, res) => {
+  try {
+    const { internId, period = 'monthly', startDate, endDate } = req.query;
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Intern ID is required'
+      });
+    }
+
+    // Handle test accounts
+    if (internId === 'test_intern_id') {
+      return res.json({
+        success: true,
+        attendance: [],
+        stats: {
+          totalHours: 0,
+          totalMinutes: 0,
+          daysPresent: 0,
+          daysAbsent: 0,
+          missingClockIns: 0,
+          missingClockOuts: 0,
+          submittedCorrections: 0,
+          attendanceRate: 0
+        },
+        period: period
+      });
+    }
+
+    // Find intern
+    const intern = await Staff.findById(internId).lean();
+    if (!intern) {
+      return res.status(404).json({
+        success: false,
+        error: 'Intern not found'
+      });
+    }
+
+    // Calculate date range
+    let start, end;
+    if (startDate && endDate) {
+      start = new Date(startDate);
+      start.setHours(0, 0, 0, 0);
+      end = new Date(endDate);
+      end.setHours(23, 59, 59, 999);
+    } else {
+      const now = new Date();
+      if (period === 'today') {
+        start = new Date(now);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(now);
+        end.setHours(23, 59, 59, 999);
+      } else if (period === 'weekly') {
+        const dayOfWeek = now.getDay();
+        const diff = now.getDate() - dayOfWeek + (dayOfWeek === 0 ? -6 : 1);
+        start = new Date(now.setDate(diff));
+        start.setHours(0, 0, 0, 0);
+        end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        end.setHours(23, 59, 59, 999);
+      } else if (period === 'monthly') {
+        start = new Date(now.getFullYear(), now.getMonth(), 1);
+        start.setHours(0, 0, 0, 0);
+        end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        end.setHours(23, 59, 59, 999);
+      } else {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid period. Use: today, weekly, or monthly'
+        });
+      }
+    }
+
+    // Get clock logs
+    const logs = await ClockLog.find({
+      staffId: internId,
+      timestamp: { $gte: start, $lte: end }
+    }).sort({ timestamp: 1 }).lean();
+
+    // Get attendance corrections count
+    const correctionsCount = await AttendanceCorrection.countDocuments({
+      internId: internId,
+      createdAt: { $gte: start, $lte: end }
+    });
+
+    // Group logs by date
+    const attendanceByDate = {};
+    logs.forEach(log => {
+      const dateKey = new Date(log.timestamp).toISOString().split('T')[0];
+      if (!attendanceByDate[dateKey]) {
+        attendanceByDate[dateKey] = {
+          date: dateKey,
+          clockIn: null,
+          clockOut: null,
+          breakStart: null,
+          breakEnd: null,
+          lunchStart: null,
+          lunchEnd: null,
+          extraShiftIn: null,
+          extraShiftOut: null,
+        };
+      }
+
+      if (log.clockType === 'in') {
+        attendanceByDate[dateKey].clockIn = log.timestamp;
+      } else if (log.clockType === 'out') {
+        attendanceByDate[dateKey].clockOut = log.timestamp;
+      } else if (log.clockType === 'break_start') {
+        attendanceByDate[dateKey].breakStart = log.timestamp;
+      } else if (log.clockType === 'break_end') {
+        attendanceByDate[dateKey].breakEnd = log.timestamp;
+      } else if (log.clockType === 'lunch_start') {
+        attendanceByDate[dateKey].lunchStart = log.timestamp;
+      } else if (log.clockType === 'lunch_end') {
+        attendanceByDate[dateKey].lunchEnd = log.timestamp;
+      } else if (log.clockType === 'extra_shift_in') {
+        attendanceByDate[dateKey].extraShiftIn = log.timestamp;
+      } else if (log.clockType === 'extra_shift_out') {
+        attendanceByDate[dateKey].extraShiftOut = log.timestamp;
+      }
+    });
+
+    // Calculate stats and process attendance
+    let totalMinutes = 0;
+    let daysPresent = 0;
+    let daysAbsent = 0;
+    let missingClockIns = 0;
+    let missingClockOuts = 0;
+
+    // Generate all dates in range for comprehensive analysis
+    const allDates = [];
+    const currentDate = new Date(start);
+    while (currentDate <= end) {
+      const dateKey = currentDate.toISOString().split('T')[0];
+      const dayOfWeek = currentDate.getDay();
+      // Only count weekdays
+      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+        allDates.push(dateKey);
+        const dayData = attendanceByDate[dateKey] || { date: dateKey, clockIn: null, clockOut: null };
+        
+        if (dayData.clockIn) {
+          daysPresent++;
+          
+          // Calculate hours for the day
+          let dayMinutes = 0;
+          if (dayData.clockIn && dayData.clockOut) {
+            const clockInTime = new Date(dayData.clockIn).getTime();
+            const clockOutTime = new Date(dayData.clockOut).getTime();
+            dayMinutes = (clockOutTime - clockInTime) / (1000 * 60);
+
+            // Subtract breaks
+            if (dayData.breakStart && dayData.breakEnd) {
+              const breakStart = new Date(dayData.breakStart).getTime();
+              const breakEnd = new Date(dayData.breakEnd).getTime();
+              dayMinutes -= (breakEnd - breakStart) / (1000 * 60);
+            }
+
+            if (dayData.lunchStart && dayData.lunchEnd) {
+              const lunchStart = new Date(dayData.lunchStart).getTime();
+              const lunchEnd = new Date(dayData.lunchEnd).getTime();
+              dayMinutes -= (lunchEnd - lunchStart) / (1000 * 60);
+            }
+
+            // Add extra shift
+            if (dayData.extraShiftIn && dayData.extraShiftOut) {
+              const extraStart = new Date(dayData.extraShiftIn).getTime();
+              const extraEnd = new Date(dayData.extraShiftOut).getTime();
+              dayMinutes += (extraEnd - extraStart) / (1000 * 60);
+            }
+          } else {
+            // Has clock in but no clock out
+            if (dayData.clockIn && !dayData.clockOut) {
+              missingClockOuts++;
+            }
+          }
+          totalMinutes += Math.max(0, dayMinutes);
+        } else {
+          daysAbsent++;
+          if (!dayData.clockIn && !dayData.clockOut) {
+            missingClockIns++;
+          }
+        }
+
+        // Check for missing clock out on present days
+        if (dayData.clockIn && !dayData.clockOut) {
+          missingClockOuts++;
+        }
+      }
+      currentDate.setDate(currentDate.getDate() + 1);
+    }
+
+    const totalHours = Math.floor(totalMinutes / 60);
+    const remainingMinutes = Math.round(totalMinutes % 60);
+    const expectedDays = allDates.length;
+    const attendanceRate = expectedDays > 0 ? Math.round((daysPresent / expectedDays) * 100) : 0;
+
+    // Format attendance data for response
+    const attendanceData = Object.values(attendanceByDate)
+      .filter(day => allDates.includes(day.date))
+      .map(day => {
+        let dayMinutes = 0;
+        if (day.clockIn && day.clockOut) {
+          const clockInTime = new Date(day.clockIn).getTime();
+          const clockOutTime = new Date(day.clockOut).getTime();
+          dayMinutes = (clockOutTime - clockInTime) / (1000 * 60);
+
+          if (day.breakStart && day.breakEnd) {
+            const breakStart = new Date(day.breakStart).getTime();
+            const breakEnd = new Date(day.breakEnd).getTime();
+            dayMinutes -= (breakEnd - breakStart) / (1000 * 60);
+          }
+
+          if (day.lunchStart && day.lunchEnd) {
+            const lunchStart = new Date(day.lunchStart).getTime();
+            const lunchEnd = new Date(day.lunchEnd).getTime();
+            dayMinutes -= (lunchEnd - lunchStart) / (1000 * 60);
+          }
+
+          if (day.extraShiftIn && day.extraShiftOut) {
+            const extraStart = new Date(day.extraShiftIn).getTime();
+            const extraEnd = new Date(day.extraShiftOut).getTime();
+            dayMinutes += (extraEnd - extraStart) / (1000 * 60);
+          }
+        }
+
+        const hours = Math.floor(Math.max(0, dayMinutes) / 60);
+        const mins = Math.round(Math.max(0, dayMinutes) % 60);
+
+        return {
+          date: day.date,
+          clockIn: day.clockIn,
+          clockOut: day.clockOut,
+          breakStart: day.breakStart,
+          breakEnd: day.breakEnd,
+          lunchStart: day.lunchStart,
+          lunchEnd: day.lunchEnd,
+          extraShiftIn: day.extraShiftIn,
+          extraShiftOut: day.extraShiftOut,
+          hoursWorked: Math.max(0, dayMinutes) / 60,
+          hoursWorkedFormatted: `${hours}h ${mins}m`,
+          hasClockIn: !!day.clockIn,
+          hasClockOut: !!day.clockOut,
+        };
+      })
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.json({
+      success: true,
+      attendance: attendanceData,
+      stats: {
+        totalHours,
+        totalMinutes: Math.round(totalMinutes),
+        totalHoursFormatted: `${totalHours}h ${remainingMinutes}m`,
+        daysPresent,
+        daysAbsent,
+        missingClockIns,
+        missingClockOuts,
+        submittedCorrections: correctionsCount,
+        attendanceRate,
+        expectedDays,
+      },
+      period: period,
+      startDate: start,
+      endDate: end
+    });
+  } catch (error) {
+    console.error('❌ Detailed attendance error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load detailed attendance data'
     });
   }
 });
@@ -1892,9 +2833,24 @@ router.get('/admin/staff', async (req, res) => {
     // Check if full data is requested
     const { fullData, department } = req.query;
     
-    // Add department filter if provided
+    // Add department filter if provided - handle both name and ObjectId matching
     if (department) {
-      staffFilter.department = department;
+      // First, try to find if the department parameter is a name or ObjectId
+      const mongoose = require('mongoose');
+      if (mongoose.Types.ObjectId.isValid(department) && department.length === 24) {
+        // It's an ObjectId - fetch the department name first
+        const deptDoc = await Department.findById(department).select('name').lean();
+        if (deptDoc) {
+          // Match by name (case-insensitive)
+          staffFilter.department = { $regex: new RegExp(`^${deptDoc.name}$`, 'i') };
+        } else {
+          // Invalid ObjectId, also try as ObjectId match for backward compatibility
+          staffFilter.department = department;
+        }
+      } else {
+        // It's a department name - use case-insensitive regex match
+        staffFilter.department = { $regex: new RegExp(`^${department}$`, 'i') };
+      }
     }
     
     // OPTIMIZATION: Fetch staff and logs in parallel, then group in memory
@@ -2092,6 +3048,12 @@ router.get('/admin/staff', async (req, res) => {
         // Otherwise, it's already a name string, use it as-is
       }
 
+      // Extract company name from populated hostCompany object
+      let hostCompanyName = null;
+      if (hostCompany) {
+        hostCompanyName = hostCompany.companyName || hostCompany.name;
+      }
+
       return {
         _id: member._id,
         name: member.name,
@@ -2102,6 +3064,7 @@ router.get('/admin/staff', async (req, res) => {
         department: departmentName, // 🔧 FIX: Use resolved department name instead of ID
         location: member.location,
         hostCompanyId: hostCompanyIdValue, // Include hostCompanyId (as ID)
+        hostCompanyName: hostCompanyName, // 🔧 FIX: Extract company name from populated object
         hostCompany: hostCompany, // Populated hostCompany object (if populated)
         createdAt: member.createdAt,
         timesheet
@@ -2208,7 +3171,7 @@ router.get('/admin/not-accountable', async (req, res) => {
     }
 
     // OPTIMIZATION: Fetch logs and staff in parallel, use lean() for speed
-    // Include hostCompanyId and working hours fields for staff
+    // Include hostCompanyId, role, and department fields for staff
     const [allLogs, allStaff] = await Promise.all([
       ClockLog.find(clockLogFilter)
         .select('staffId staffName clockType timestamp')
@@ -2216,9 +3179,41 @@ router.get('/admin/not-accountable', async (req, res) => {
         .lean(), // Use lean() - we don't need Mongoose documents
       
       Staff.find(staffFilter)
-        .select('_id name hostCompanyId clockInTime clockOutTime breakStartTime breakEndTime')
+        .select('_id name role department hostCompanyId clockInTime clockOutTime breakStartTime breakEndTime')
         .lean()
     ]);
+
+    // Fetch host company names for all staff
+    const hostCompanyIds = [...new Set(allStaff.map(s => s.hostCompanyId).filter(Boolean))];
+    const hostCompanyMap = {};
+    if (hostCompanyIds.length > 0) {
+      const HostCompany = require('../models/HostCompany');
+      const hostCompanies = await HostCompany.find({ _id: { $in: hostCompanyIds } })
+        .select('_id companyName name')
+        .lean();
+      hostCompanies.forEach(hc => {
+        hostCompanyMap[hc._id.toString()] = hc.companyName || hc.name;
+      });
+    }
+
+    // Resolve department IDs to names
+    const departmentIds = [...new Set(allStaff.map(s => {
+      const dept = s.department;
+      if (dept && typeof dept === 'string' && mongoose.Types.ObjectId.isValid(dept) && dept.length === 24) {
+        return dept;
+      }
+      return null;
+    }).filter(Boolean))];
+    
+    const departmentNameMap = {};
+    if (departmentIds.length > 0) {
+      const departments = await Department.find({ _id: { $in: departmentIds } })
+        .select('_id name')
+        .lean();
+      departments.forEach(dept => {
+        departmentNameMap[dept._id.toString()] = dept.name;
+      });
+    }
 
     // Create staff map for quick lookup
     const staffMap = new Map(allStaff.map(s => [s._id.toString(), s.name]));
@@ -2255,6 +3250,18 @@ router.get('/admin/not-accountable', async (req, res) => {
         continue;
       }
       
+      // Resolve department name if needed
+      let departmentName = staff.department;
+      if (staff.department && typeof staff.department === 'string') {
+        const deptId = staff.department;
+        if (mongoose.Types.ObjectId.isValid(deptId) && deptId.length === 24) {
+          departmentName = departmentNameMap[deptId] || staff.department;
+        }
+      }
+      
+      // Get host company name
+      const hostCompanyName = staff.hostCompanyId ? hostCompanyMap[staff.hostCompanyId.toString()] : null;
+      
       // Helper to format expected time for display
       const formatExpectedTime = (hour, minute) => {
         const time = new Date(targetDate);
@@ -2266,16 +3273,26 @@ router.get('/admin/not-accountable', async (req, res) => {
         });
       };
       
+      // Helper to add standard fields to notAccountable entries
+      const createNotAccountableEntry = (baseEntry) => {
+        return {
+          ...baseEntry,
+          staffId: staff._id,
+          role: staff.role,
+          department: departmentName,
+          hostCompanyName: hostCompanyName
+        };
+      };
+      
       // Check if clock-in exists and is at wrong time
       const clockInLog = logs.find(log => log.clockType === 'in');
       if (!clockInLog) {
-        notAccountable.push({
-          staffId: staff._id,
+        notAccountable.push(createNotAccountableEntry({
           staffName: staff.name,
           reason: 'No clock-in recorded',
           details: 'Staff member did not clock in',
           expectedClockIn: workingHours.clockIn ? formatExpectedTime(workingHours.clockIn.hour, workingHours.clockIn.minute) : 'N/A'
-        });
+        }));
       } else if (workingHours.clockIn) {
         const clockInTime = new Date(clockInLog.timestamp);
         const expectedTime = new Date(targetDate);
@@ -2291,15 +3308,14 @@ router.get('/admin/not-accountable', async (req, res) => {
             hour12: true
           });
           const expectedTimeStr = formatExpectedTime(workingHours.clockIn.hour, workingHours.clockIn.minute);
-          notAccountable.push({
-            staffId: staff._id,
+          notAccountable.push(createNotAccountableEntry({
             staffName: staff.name,
             reason: `Clock-in at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
             details: `Clocked in at ${actualTime} instead of ${expectedTimeStr}`,
             clockInTime: actualTime,
             clockInTimestamp: clockInLog.timestamp,
             expectedClockIn: expectedTimeStr
-          });
+          }));
         }
       }
 
@@ -2319,15 +3335,14 @@ router.get('/admin/not-accountable', async (req, res) => {
             hour12: true
           });
           const expectedTimeStr = formatExpectedTime(workingHours.startBreak.hour, workingHours.startBreak.minute);
-          notAccountable.push({
-            staffId: staff._id,
+          notAccountable.push(createNotAccountableEntry({
             staffName: staff.name,
             reason: `Start break at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
             details: `Started break at ${actualTime} instead of ${expectedTimeStr}`,
             breakStartTime: actualTime,
             breakStartTimestamp: breakStartLog.timestamp,
             expectedBreakStart: expectedTimeStr
-          });
+          }));
         }
       }
 
@@ -2347,15 +3362,14 @@ router.get('/admin/not-accountable', async (req, res) => {
             hour12: true
           });
           const expectedTimeStr = formatExpectedTime(workingHours.endBreak.hour, workingHours.endBreak.minute);
-          notAccountable.push({
-            staffId: staff._id,
+          notAccountable.push(createNotAccountableEntry({
             staffName: staff.name,
             reason: `End break at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
             details: `Ended break at ${actualTime} instead of ${expectedTimeStr}`,
             breakEndTime: actualTime,
             breakEndTimestamp: breakEndLog.timestamp,
             expectedBreakEnd: expectedTimeStr
-          });
+          }));
         }
       }
 
@@ -2375,15 +3389,14 @@ router.get('/admin/not-accountable', async (req, res) => {
             hour12: true
           });
           const expectedTimeStr = formatExpectedTime(workingHours.clockOut.hour, workingHours.clockOut.minute);
-          notAccountable.push({
-            staffId: staff._id,
+          notAccountable.push(createNotAccountableEntry({
             staffName: staff.name,
             reason: `Clock-out at wrong time: ${actualTime} (Expected: ${expectedTimeStr})`,
             details: `Clocked out at ${actualTime} instead of ${expectedTimeStr}`,
             clockOutTime: actualTime,
             clockOutTimestamp: clockOutLog.timestamp,
             expectedClockOut: expectedTimeStr
-          });
+          }));
         }
       }
     }
@@ -2535,7 +3548,6 @@ router.post('/validate-preview', upload.single('image'), async (req, res) => {
     }
 
     console.log('🔍 Preview validation request received');
-    console.log(`   📦 Image size: ${req.file.size} bytes`);
     
     // Run lightweight validation (detection only, no embedding)
     const validationResult = await validatePreview(req.file.buffer);
@@ -2564,6 +3576,749 @@ router.post('/validate-preview', upload.single('image'), async (req, res) => {
       issues: ['validation_error'],
       feedback: 'Unable to analyze image. Please try again.',
       error: error.message
+    });
+  }
+});
+
+// ========== INTERN ATTENDANCE CORRECTIONS & LEAVE APPLICATIONS ==========
+
+// Create attendance correction
+router.post('/intern/attendance-corrections', async (req, res) => {
+  try {
+    const { internId, internName, date, correctionType, requestedChange, hostCompanyId } = req.body;
+
+    if (!internId || !internName || !date || !correctionType || !requestedChange?.description || !hostCompanyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'internId, internName, date, correctionType, description, and hostCompanyId are required',
+      });
+    }
+
+    const parsedDate = new Date(date);
+    if (isNaN(parsedDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid date format',
+      });
+    }
+
+    // Handle test accounts - return success without saving to database
+    if (internId === 'test_intern_id') {
+      return res.status(201).json({
+        success: true,
+        correction: {
+          internId: 'test_intern_id',
+          internName,
+          date: parsedDate,
+          correctionType,
+          requestedChange,
+          hostCompanyId: null,
+          status: 'pending',
+          createdAt: new Date(),
+        },
+        message: 'Test account - correction not saved to database',
+      });
+    }
+
+    const correction = new AttendanceCorrection({
+      internId,
+      internName,
+      date: parsedDate,
+      correctionType,
+      requestedChange,
+      hostCompanyId,
+    });
+
+    await correction.save();
+
+    // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+    await logAction('ATTENDANCE_CORRECTION_REQUEST', {
+      staffId: internId,
+      staffName: internName,
+      date: parsedDate,
+      correctionType: correctionType,
+      description: requestedChange?.description,
+      originalTime: requestedChange?.originalTime,
+      correctedTime: requestedChange?.requestedTime,
+      reason: requestedChange?.reason,
+      hostCompanyId: hostCompanyId?.toString(),
+      attendanceCorrectionId: correction._id?.toString()
+    }, null);
+
+    res.status(201).json({
+      success: true,
+      correction,
+    });
+  } catch (error) {
+    console.error('❌ Create attendance correction error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to submit attendance correction',
+    });
+  }
+});
+
+// List attendance corrections for an intern
+router.get('/intern/attendance-corrections', async (req, res) => {
+  try {
+    const { internId } = req.query;
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'internId is required',
+      });
+    }
+
+    // Handle test accounts - return empty array
+    if (internId === 'test_intern_id') {
+      return res.json({
+        success: true,
+        corrections: [],
+      });
+    }
+
+    const corrections = await AttendanceCorrection.find({ internId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      corrections,
+    });
+  } catch (error) {
+    console.error('❌ List attendance corrections error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load attendance corrections',
+    });
+  }
+});
+
+// Get attendance corrections for admin or host company
+router.get('/admin/attendance-corrections', async (req, res) => {
+  try {
+    const { hostCompanyId, status, reviewerRole } = req.query;
+
+    // Build filter - admin can see all, host company only sees their own
+    const filter = {};
+    if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid host company ID format',
+        });
+      }
+      filter.hostCompanyId = hostCompanyId;
+    }
+
+    // Filter by status if provided
+    if (status && ['pending', 'approved', 'rejected'].includes(status)) {
+      filter.status = status;
+    }
+
+    const corrections = await AttendanceCorrection.find(filter)
+      .populate('internId', 'name surname idNumber department hostCompanyId phoneNumber location')
+      .populate('hostCompanyId', 'name companyName')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const annotated = corrections.map(corr => {
+      const belongsToHost =
+        hostCompanyId && corr.hostCompanyId && corr.hostCompanyId._id && corr.hostCompanyId._id.toString() === hostCompanyId;
+      const adminOwns = !corr.hostCompanyId || !corr.hostCompanyId._id; // Admin-registered interns have no host company
+      const canReview =
+        reviewerRole === 'hostCompany' ? belongsToHost : reviewerRole === 'admin' ? adminOwns : true; // Admin can review all
+
+      const hostCompanyName =
+        corr.hostCompanyId && (corr.hostCompanyId.companyName || corr.hostCompanyId.name)
+          ? (corr.hostCompanyId.companyName || corr.hostCompanyId.name)
+          : null;
+
+      const internName = corr.internId
+        ? `${corr.internId.name || ''} ${corr.internId.surname || ''}`.trim() || corr.internName
+        : corr.internName;
+
+      return {
+        ...corr,
+        canReview,
+        hostCompanyName,
+        internName,
+      };
+    });
+
+    res.json({
+      success: true,
+      corrections: annotated,
+    });
+  } catch (error) {
+    console.error('❌ Get attendance corrections error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load attendance corrections',
+    });
+  }
+});
+
+// Approve or reject attendance correction
+router.put('/admin/attendance-corrections/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, rejectionReason, reviewedBy, reviewerRole, reviewerHostCompanyId } = req.body;
+
+    if (!action || !['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: 'action is required and must be "approve" or "reject"',
+      });
+    }
+
+    if (action === 'reject' && (!rejectionReason || !rejectionReason.trim())) {
+      return res.status(400).json({
+        success: false,
+        error: 'rejectionReason is required when rejecting a correction',
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid correction ID format',
+      });
+    }
+
+    const correction = await AttendanceCorrection.findById(id);
+    if (!correction) {
+      return res.status(404).json({
+        success: false,
+        error: 'Attendance correction not found',
+      });
+    }
+
+    // Permission check
+    const belongsToHost =
+      reviewerHostCompanyId &&
+      correction.hostCompanyId &&
+      correction.hostCompanyId.toString() === reviewerHostCompanyId;
+    const adminOwns = !correction.hostCompanyId; // Admin-created interns have no host
+
+    const canReview =
+      reviewerRole === 'hostCompany'
+        ? belongsToHost
+        : reviewerRole === 'admin'
+        ? true // Admin can review all
+        : false;
+
+    if (!canReview) {
+      return res.status(403).json({
+        success: false,
+        error: 'You are not allowed to approve/reject this correction',
+      });
+    }
+
+    // Update correction status
+    correction.status = action === 'approve' ? 'approved' : 'rejected';
+    correction.reviewedAt = new Date();
+    
+    if (reviewedBy && mongoose.Types.ObjectId.isValid(reviewedBy)) {
+      correction.reviewedBy = reviewedBy;
+    }
+
+    if (action === 'reject') {
+      correction.rejectionReason = rejectionReason.trim();
+    } else {
+      correction.rejectionReason = undefined;
+    }
+
+    await correction.save();
+
+    // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+    const actionType = action === 'approve' ? 'CORRECTION_APPROVED' : 'CORRECTION_REJECTED';
+    await logAction(actionType, {
+      staffId: correction.internId?.toString(),
+      staffName: correction.internName,
+      date: correction.date,
+      correctionType: correction.correctionType,
+      originalTime: correction.requestedChange?.originalTime,
+      correctedTime: correction.requestedChange?.requestedTime,
+      attendanceCorrectionId: correction._id?.toString(),
+      hostCompanyId: correction.hostCompanyId?.toString(),
+      rejectionReason: action === 'reject' ? rejectionReason : undefined,
+      reviewedBy: reviewedBy,
+      reviewerRole: reviewerRole
+    }, reviewedBy);
+
+    res.json({
+      success: true,
+      correction,
+      message: `Attendance correction ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+    });
+  } catch (error) {
+    console.error('❌ Update attendance correction error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update attendance correction',
+    });
+  }
+});
+
+// Create leave application
+router.post('/intern/leave-applications', async (req, res) => {
+  try {
+    const {
+      internId,
+      internName,
+      leaveType,
+      startDate,
+      endDate,
+      reason,
+      hostCompanyId,
+      supportingDocuments = [],
+      createdByRole = 'intern',
+      createdById
+    } = req.body;
+
+    console.log('📝 Leave application request:', {
+      internId,
+      internName,
+      leaveType,
+      startDate,
+      endDate,
+      reason: reason ? 'provided' : 'missing',
+      hostCompanyId,
+      createdByRole,
+      createdById,
+      supportingDocumentsCount: supportingDocuments.length
+    });
+
+    if (!internId || !internName || !leaveType || !startDate || !endDate || !reason) {
+      return res.status(400).json({
+        success: false,
+        error: 'internId, internName, leaveType, startDate, endDate, and reason are required',
+      });
+    }
+
+    // Validate internId is a valid ObjectId
+    if (!mongoose.Types.ObjectId.isValid(internId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid intern ID format',
+      });
+    }
+
+    // Fetch the intern record to get their hostCompanyId if not provided
+    const Staff = require('../models/Staff');
+    const intern = await Staff.findById(internId);
+    
+    if (!intern) {
+      return res.status(404).json({
+        success: false,
+        error: 'Intern not found',
+      });
+    }
+
+    // Use the intern's hostCompanyId from their record (the company that registered them)
+    let validatedHostCompanyId = hostCompanyId || intern.hostCompanyId;
+    
+    // Validate hostCompanyId if provided (should be valid ObjectId)
+    if (validatedHostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(validatedHostCompanyId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid host company ID format',
+        });
+      }
+    }
+    
+    console.log('📝 Using hostCompanyId:', validatedHostCompanyId, '(from:', hostCompanyId ? 'request' : 'intern record', ')');
+
+    const parsedStart = new Date(startDate);
+    const parsedEnd = new Date(endDate);
+
+    if (isNaN(parsedStart.getTime()) || isNaN(parsedEnd.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid startDate or endDate format',
+      });
+    }
+
+    if (parsedEnd < parsedStart) {
+      return res.status(400).json({
+        success: false,
+        error: 'endDate cannot be before startDate',
+      });
+    }
+
+    // Auto-calculate number of days (inclusive calendar days)
+    const msPerDay = 1000 * 60 * 60 * 24;
+    const numberOfDays = Math.max(1, Math.round((parsedEnd - parsedStart) / msPerDay) + 1);
+
+    // Validate supporting documents for sick leave
+    if (leaveType === 'Sick' && (!Array.isArray(supportingDocuments) || supportingDocuments.length === 0)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Supporting document is required for Sick leave',
+      });
+    }
+
+    // Map and sanitize supporting documents
+    const normalizedDocs = Array.isArray(supportingDocuments)
+      ? supportingDocuments
+          .filter(doc => doc && doc.fileName && doc.fileUrl && doc.fileType)
+          .map(doc => ({
+            fileName: doc.fileName,
+            fileUrl: doc.fileUrl,
+            fileType: doc.fileType,
+            uploadedAt: new Date()
+          }))
+      : [];
+
+    // Handle test accounts - return success without saving to database
+    if (internId === 'test_intern_id') {
+      return res.status(201).json({
+        success: true,
+        application: {
+          internId: 'test_intern_id',
+          internName,
+          leaveType,
+          startDate: parsedStart,
+          endDate: parsedEnd,
+          numberOfDays,
+          reason,
+          hostCompanyId: validatedHostCompanyId,
+          status: 'pending',
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          supportingDocuments: normalizedDocs
+        },
+        message: 'Test account - application not saved to database',
+      });
+    }
+
+    const application = new LeaveApplication({
+      internId,
+      internName,
+      leaveType,
+      startDate: parsedStart,
+      endDate: parsedEnd,
+      numberOfDays,
+      reason,
+      hostCompanyId: validatedHostCompanyId,
+      supportingDocuments: normalizedDocs,
+      createdByRole,
+      createdById: mongoose.Types.ObjectId.isValid(createdById) ? createdById : undefined
+    });
+
+    await application.save();
+
+    // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+    await logAction('LEAVE_REQUEST', {
+      staffId: internId,
+      staffName: internName,
+      leaveType: leaveType,
+      startDate: parsedStart,
+      endDate: parsedEnd,
+      numberOfDays: numberOfDays,
+      reason: reason,
+      hostCompanyId: validatedHostCompanyId?.toString(),
+      leaveApplicationId: application._id?.toString()
+    }, createdById);
+
+    res.status(201).json({
+      success: true,
+      application,
+    });
+  } catch (error) {
+    console.error('❌ Create leave application error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to submit leave application',
+    });
+  }
+});
+
+// List leave applications for an intern
+router.get('/intern/leave-applications', async (req, res) => {
+  try {
+    const { internId } = req.query;
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'internId is required',
+      });
+    }
+
+    // Handle test accounts - return empty array
+    if (internId === 'test_intern_id') {
+      return res.json({
+        success: true,
+        applications: [],
+      });
+    }
+
+    const applications = await LeaveApplication.find({ internId })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    res.json({
+      success: true,
+      applications,
+    });
+  } catch (error) {
+    console.error('❌ List leave applications error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load leave applications',
+    });
+  }
+});
+
+// Upload intern profile picture
+router.post('/intern/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
+  try {
+    const { internId } = req.query;
+    
+    console.log('📸 Profile picture upload request received');
+    console.log('📸 Intern ID from query:', internId);
+    console.log('📸 File info:', req.file ? { name: req.file.originalname, size: req.file.size } : 'No file');
+
+    if (!internId) {
+      return res.status(400).json({
+        success: false,
+        error: 'Intern ID is required',
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(internId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid intern ID format',
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image provided',
+      });
+    }
+
+    // Find the staff member (intern)
+    const intern = await Staff.findById(internId);
+    if (!intern) {
+      return res.status(404).json({
+        success: false,
+        error: 'Intern not found',
+      });
+    }
+
+    // Process and optimize image
+    const processedImage = await sharp(req.file.buffer)
+      .resize(256, 256, {
+        fit: 'cover',
+        position: 'center',
+      })
+      .jpeg({ quality: 90, progressive: true })
+      .toBuffer();
+
+    // Convert to base64 for storage
+    const base64Image = processedImage.toString('base64');
+    const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+
+    // Update staff record with profile picture
+    intern.profilePicture = dataUrl;
+    await intern.save();
+
+    // Log the action (wrapped in try-catch to not break upload on logging failure)
+    try {
+      await logAction({
+        userId: internId,
+        action: 'PROFILE_PICTURE_UPLOAD',
+        message: `Profile picture uploaded: ${req.file.originalname}`,
+        details: {
+          fileName: req.file.originalname,
+          fileSize: req.file.size,
+        },
+        status: 'success',
+      });
+    } catch (logError) {
+      console.warn('⚠️ Action logging failed (non-critical):', logError.message);
+    }
+
+    console.log(`✅ Profile picture uploaded for intern ${internId}`);
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      profilePicture: dataUrl,
+    });
+  } catch (error) {
+    console.error('❌ Profile picture upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload profile picture',
+    });
+  }
+});
+
+// Get leave applications for admin or host company
+router.get('/admin/leave-applications', async (req, res) => {
+  try {
+    const { hostCompanyId, status, reviewerRole } = req.query;
+
+    // Build filter - admin can see all, host company only sees their own
+    const filter = {};
+    if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid host company ID format',
+        });
+      }
+      filter.hostCompanyId = hostCompanyId;
+    }
+
+    // Filter by status if provided
+    if (status && ['pending', 'approved', 'rejected'].includes(status)) {
+      filter.status = status;
+    }
+
+    const applications = await LeaveApplication.find(filter)
+      .populate('internId', 'name surname idNumber department hostCompanyId phoneNumber location')
+      .populate('hostCompanyId', 'name companyName')
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const annotated = applications.map(app => {
+      const belongsToHost =
+        hostCompanyId && app.hostCompanyId && app.hostCompanyId._id && app.hostCompanyId._id.toString() === hostCompanyId;
+      const adminOwns = !app.hostCompanyId || !app.hostCompanyId._id; // Admin-registered interns have no host company
+      const canReview =
+        reviewerRole === 'hostCompany' ? belongsToHost : reviewerRole === 'admin' ? adminOwns : false;
+
+      const hostCompanyName =
+        app.hostCompanyId && (app.hostCompanyId.companyName || app.hostCompanyId.name)
+          ? (app.hostCompanyId.companyName || app.hostCompanyId.name)
+          : null;
+
+      return {
+        ...app,
+        canReview,
+        hostCompanyName,
+      };
+    });
+
+    res.json({
+      success: true,
+      applications: annotated,
+    });
+  } catch (error) {
+    console.error('❌ Get leave applications error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to load leave applications',
+    });
+  }
+});
+
+// Approve or reject leave application
+router.put('/admin/leave-applications/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { action, rejectionReason, reviewedBy, reviewerRole, reviewerHostCompanyId } = req.body;
+
+    if (!action || !['approve', 'reject'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: 'action is required and must be "approve" or "reject"',
+      });
+    }
+
+    if (action === 'reject' && (!rejectionReason || !rejectionReason.trim())) {
+      return res.status(400).json({
+        success: false,
+        error: 'rejectionReason is required when rejecting an application',
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid application ID format',
+      });
+    }
+
+    const application = await LeaveApplication.findById(id);
+    if (!application) {
+      return res.status(404).json({
+        success: false,
+        error: 'Leave application not found',
+      });
+    }
+
+    // Permission check
+    const belongsToHost =
+      reviewerHostCompanyId &&
+      application.hostCompanyId &&
+      application.hostCompanyId.toString() === reviewerHostCompanyId;
+    const adminOwns = !application.hostCompanyId; // Admin-created interns have no host
+
+    const canReview =
+      reviewerRole === 'hostCompany'
+        ? belongsToHost
+        : reviewerRole === 'admin'
+        ? adminOwns
+        : false;
+
+    if (!canReview) {
+      return res.status(403).json({
+        success: false,
+        error: 'You are not allowed to approve/reject this application',
+      });
+    }
+
+    // Update application status
+    application.status = action === 'approve' ? 'approved' : 'rejected';
+    application.reviewedAt = new Date();
+    
+    if (reviewedBy && mongoose.Types.ObjectId.isValid(reviewedBy)) {
+      application.reviewedBy = reviewedBy;
+    }
+
+    if (action === 'reject') {
+      application.rejectionReason = rejectionReason.trim();
+    } else {
+      application.rejectionReason = undefined;
+    }
+
+    await application.save();
+
+    // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+    const actionType = action === 'approve' ? 'LEAVE_APPROVED' : 'LEAVE_REJECTED';
+    await logAction(actionType, {
+      staffId: application.internId?.toString(),
+      staffName: application.internName,
+      leaveType: application.leaveType,
+      startDate: application.startDate,
+      endDate: application.endDate,
+      leaveApplicationId: application._id?.toString(),
+      hostCompanyId: application.hostCompanyId?.toString(),
+      rejectionReason: action === 'reject' ? rejectionReason : undefined,
+      reviewedBy: reviewedBy,
+      reviewerRole: reviewerRole
+    }, reviewedBy);
+
+    res.json({
+      success: true,
+      application,
+      message: `Leave application ${action === 'approve' ? 'approved' : 'rejected'} successfully`,
+    });
+  } catch (error) {
+    console.error('❌ Update leave application error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update leave application',
     });
   }
 });
@@ -2963,6 +4718,156 @@ router.get('/admin/departments/all', async (req, res) => {
   }
 });
 
+// 🎯 STRATEGIC ENDPOINT: Get all departments WITH intern counts
+// This endpoint efficiently calculates intern counts for each department
+router.get('/admin/departments-with-counts', async (req, res) => {
+  try {
+    const { hostCompanyId } = req.query;
+    
+    // Build filter - host company users can only see their own departments
+    const filter = {};
+    if (hostCompanyId) {
+      if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+        return res.status(400).json({ error: 'Invalid host company ID format' });
+      }
+      filter.hostCompanyId = hostCompanyId;
+    }
+    
+    const departments = await Department.find(filter)
+      .sort({ name: 1 })
+      .lean();
+    
+    // 🔧 Efficiently count interns for each department
+    const departmentsWithCounts = await Promise.all(
+      departments.map(async (dept) => {
+        try {
+          // First, get all interns in the system (active only)
+          const allInterns = await Staff.find({
+            role: 'Intern',
+            isActive: true
+          }).select('department').lean();
+          
+          // Normalize department name for matching
+          const normalizedDeptName = dept.name.trim().toLowerCase();
+          
+          // Count interns where department matches (normalized)
+          const internCount = allInterns.filter(staff => {
+            if (!staff.department) return false;
+            const normalizedStaffDept = staff.department.trim().toLowerCase();
+            return normalizedStaffDept === normalizedDeptName;
+          }).length;
+          
+          if (internCount > 0 || dept.name === 'HR & ADMIN') {
+            console.log(`📊 Department "${dept.name}": ${internCount} interns (normalized match)`);
+          }
+          
+          return {
+            ...dept,
+            internCount
+          };
+        } catch (error) {
+          console.error(`❌ Error counting interns for department "${dept.name}":`, error.message);
+          return {
+            ...dept,
+            internCount: 0
+          };
+        }
+      })
+    );
+    
+    const totalInterns = departmentsWithCounts.reduce((sum, d) => sum + (d.internCount || 0), 0);
+    console.log(`📊 Fetched ${departmentsWithCounts.length} departments with ${totalInterns} total interns`);
+    
+    res.json({
+      success: true,
+      departments: departmentsWithCounts
+    });
+  } catch (error) {
+    console.error('❌ Error fetching departments with counts:', error.message);
+    res.status(500).json({ error: 'Failed to fetch departments with counts' });
+  }
+});
+
+// 🔍 DIAGNOSTIC ENDPOINT: Get data structure info for debugging
+// This helps understand the actual department/staff data format
+router.get('/admin/debug/department-staff-mapping', async (req, res) => {
+  try {
+    console.log('🔍 Running diagnostic: Department-Staff mapping');
+    
+    // Get all departments
+    const departments = await Department.find().select('name').lean();
+    console.log(`📋 Total departments: ${departments.length}`);
+    
+    // Get all interns
+    const allStaff = await Staff.find({ isActive: true }).select('name role department').lean();
+    const interns = allStaff.filter(s => s.role === 'Intern');
+    console.log(`👥 Total interns (active): ${interns.length}`);
+    
+    // Group interns by department
+    const internsByDept = {};
+    interns.forEach(intern => {
+      const dept = intern.department || 'UNASSIGNED';
+      if (!internsByDept[dept]) {
+        internsByDept[dept] = [];
+      }
+      internsByDept[dept].push(intern.name);
+    });
+    
+    console.log('📊 Interns by department:');
+    Object.keys(internsByDept).forEach(dept => {
+      console.log(`  - "${dept}": ${internsByDept[dept].length} interns`);
+    });
+    
+    res.json({
+      success: true,
+      departments: departments.map(d => d.name),
+      internsByDepartment: internsByDept,
+      totalDepartments: departments.length,
+      totalInterns: interns.length
+    });
+  } catch (error) {
+    console.error('❌ Error in diagnostic:', error.message);
+    res.status(500).json({ error: 'Failed to run diagnostic' });
+  }
+});
+
+// Get single department by ID
+router.get('/admin/departments/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid department ID format' 
+      });
+    }
+    
+    const department = await Department.findById(id).lean();
+    
+    if (!department) {
+      return res.status(404).json({ 
+        success: false,
+        error: 'Department not found' 
+      });
+    }
+    
+    // Note: Department has mentorName field separately, which is correct
+    // But if it's empty, we might need to get from the host company
+    // For now, return as-is since departments have their own mentorName field
+    res.json({
+      success: true,
+      department
+    });
+  } catch (error) {
+    console.error('Error fetching department:', error);
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch department' 
+    });
+  }
+});
+
 // Create new department
 router.post('/admin/departments', async (req, res) => {
   try {
@@ -3349,10 +5254,21 @@ router.get('/admin/host-companies', async (req, res) => {
 router.get('/admin/host-companies/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ 
+        success: false,
+        error: 'Invalid host company ID format' 
+      });
+    }
+    
     const company = await HostCompany.findById(id).select('-password').lean();
     
     if (!company) {
-      return res.status(404).json({ error: 'Host company not found' });
+      return res.status(404).json({ 
+        success: false,
+        error: 'Host company not found' 
+      });
     }
     
     // Get statistics
@@ -3373,17 +5289,23 @@ router.get('/admin/host-companies/:id', async (req, res) => {
       isActive: true
     });
     
+    // IMPORTANT: 'name' field is the mentor name, 'companyName' is the actual company name
+    // Return name as mentorName for frontend compatibility
     res.json({
       success: true,
       company: {
         ...company,
+        mentorName: company.name, // name field IS the mentor name
         departmentCount,
         internCount
       }
     });
   } catch (error) {
     console.error('Error fetching host company:', error);
-    res.status(500).json({ error: 'Failed to fetch host company' });
+    res.status(500).json({ 
+      success: false,
+      error: 'Failed to fetch host company' 
+    });
   }
 });
 
@@ -3661,37 +5583,77 @@ router.put('/admin/host-companies/:id', async (req, res) => {
   }
 });
 
-// Delete host company (soft delete)
+// Delete host company - FULL CASCADE DELETE (removes company, departments, and all staff/interns)
 router.delete('/admin/host-companies/:id', async (req, res) => {
   try {
     const { id } = req.params;
+    const { cascade } = req.query; // If cascade=true, delete everything including staff
     
     const company = await HostCompany.findById(id);
     if (!company) {
       return res.status(404).json({ error: 'Host company not found' });
     }
     
-    // Check if any departments are using this company
-    const departmentCount = await Department.countDocuments({
-      hostCompanyId: id,
-      isActive: true
-    });
+    // Get counts for confirmation
+    const departmentCount = await Department.countDocuments({ hostCompanyId: id });
+    const staffCount = await Staff.countDocuments({ hostCompanyId: id });
     
-    if (departmentCount > 0) {
-      return res.status(400).json({
-        error: `Cannot delete host company. ${departmentCount} department(s) are assigned to this company. Please reassign them first.`
+    if (cascade === 'true') {
+      // FULL CASCADE DELETE - Delete everything related to this host company
+      console.log(`🗑️ CASCADE DELETE: Deleting host company "${company.name}" with ${departmentCount} departments and ${staffCount} staff/interns`);
+      
+      // 1. Delete all staff/interns belonging to this host company (hard delete)
+      const staffDeleteResult = await Staff.deleteMany({ hostCompanyId: id });
+      console.log(`   ✓ Deleted ${staffDeleteResult.deletedCount} staff/interns`);
+      
+      // 2. Delete all departments belonging to this host company (hard delete)
+      const deptDeleteResult = await Department.deleteMany({ hostCompanyId: id });
+      console.log(`   ✓ Deleted ${deptDeleteResult.deletedCount} departments`);
+      
+      // 3. Delete all leave applications for staff of this company
+      const leaveDeleteResult = await LeaveApplication.deleteMany({ hostCompanyId: id });
+      console.log(`   ✓ Deleted ${leaveDeleteResult.deletedCount} leave applications`);
+      
+      // 4. Delete all attendance corrections for staff of this company
+      const correctionDeleteResult = await AttendanceCorrection.deleteMany({ hostCompanyId: id });
+      console.log(`   ✓ Deleted ${correctionDeleteResult.deletedCount} attendance corrections`);
+      
+      // 5. Delete the host company itself (hard delete)
+      await HostCompany.findByIdAndDelete(id);
+      console.log(`   ✓ Deleted host company "${company.name}"`);
+      
+      res.json({
+        success: true,
+        message: `Host company "${company.name}" and all related data deleted successfully`,
+        deleted: {
+          company: company.name,
+          departments: deptDeleteResult.deletedCount,
+          staff: staffDeleteResult.deletedCount,
+          leaveApplications: leaveDeleteResult.deletedCount,
+          attendanceCorrections: correctionDeleteResult.deletedCount
+        }
+      });
+    } else {
+      // NON-CASCADE: Only allow delete if no departments/staff exist
+      if (departmentCount > 0 || staffCount > 0) {
+        return res.status(400).json({
+          error: `Cannot delete host company. This company has ${departmentCount} department(s) and ${staffCount} staff/intern(s). Use cascade delete to remove all related data.`,
+          requiresCascade: true,
+          counts: {
+            departments: departmentCount,
+            staff: staffCount
+          }
+        });
+      }
+      
+      // Safe to delete - no related data
+      await HostCompany.findByIdAndDelete(id);
+      
+      res.json({
+        success: true,
+        message: 'Host company deleted successfully'
       });
     }
-    
-    // Soft delete
-    company.isActive = false;
-    company.updatedAt = Date.now();
-    await company.save();
-    
-    res.json({
-      success: true,
-      message: 'Host company deleted successfully'
-    });
   } catch (error) {
     console.error('Error deleting host company:', error);
     res.status(500).json({ error: 'Failed to delete host company' });
@@ -3833,5 +5795,359 @@ router.get('/admin/diagnostics/:id', async (req, res) => {
   }
 });
 
-module.exports = router;
+// Remove (delete) a staff member
+router.put('/admin/staff/:staffId/stipend', async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const { stipendAmount } = req.body;
+    const hostCompanyId = req.query.hostCompanyId || req.body.hostCompanyId;
 
+    if (!mongoose.Types.ObjectId.isValid(staffId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid staff ID format'
+      });
+    }
+
+    const staff = await Staff.findById(staffId);
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: 'Staff member not found'
+      });
+    }
+
+    if (hostCompanyId) {
+      if (!staff.hostCompanyId || staff.hostCompanyId.toString() !== hostCompanyId.toString()) {
+        return res.status(403).json({
+          success: false,
+          error: 'You can only update stipend for staff in your company'
+        });
+      }
+    }
+
+    let normalizedAmount = null;
+    if (stipendAmount !== null && stipendAmount !== undefined && String(stipendAmount).trim() !== '') {
+      const parsedAmount = Number(stipendAmount);
+      if (Number.isNaN(parsedAmount) || parsedAmount < 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Stipend amount must be a non-negative number'
+        });
+      }
+      normalizedAmount = parsedAmount;
+    }
+
+    staff.stipendAmount = normalizedAmount;
+    await staff.save();
+    staffCache.invalidate();
+
+    return res.json({
+      success: true,
+      staffId: staff._id,
+      stipendAmount: staff.stipendAmount ?? null
+    });
+  } catch (error) {
+    console.error('Error updating stipend amount:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update stipend amount'
+    });
+  }
+});
+
+router.put('/admin/staff/:staffId/working-hours', async (req, res) => {
+  try {
+    const { staffId } = req.params;
+    const hostCompanyId = req.query.hostCompanyId || req.body.hostCompanyId;
+    const {
+      expectedWorkingDaysPerWeek,
+      expectedWorkingDaysPerMonth,
+      expectedHoursPerDay,
+      expectedWeeklyHours,
+      expectedMonthlyHours
+    } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(staffId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid staff ID format'
+      });
+    }
+
+    const staff = await Staff.findById(staffId);
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: 'Staff member not found'
+      });
+    }
+
+    if (hostCompanyId) {
+      if (!staff.hostCompanyId || staff.hostCompanyId.toString() !== hostCompanyId.toString()) {
+        return res.status(403).json({
+          success: false,
+          error: 'You can only update working hours for staff in your company'
+        });
+      }
+    }
+
+    const parseOptionalNumber = (value, label) => {
+      if (value === null || value === undefined) return null;
+      if (typeof value === 'string' && value.trim() === '') return null;
+      const parsedValue = Number(value);
+      if (!Number.isFinite(parsedValue) || parsedValue < 0) {
+        throw new Error(`${label} must be a non-negative number`);
+      }
+      return parsedValue;
+    };
+
+    try {
+      staff.expectedWorkingDaysPerWeek = parseOptionalNumber(expectedWorkingDaysPerWeek, 'Working days per week');
+      staff.expectedWorkingDaysPerMonth = parseOptionalNumber(expectedWorkingDaysPerMonth, 'Working days per month');
+      staff.expectedHoursPerDay = parseOptionalNumber(expectedHoursPerDay, 'Hours per day');
+      staff.expectedWeeklyHours = parseOptionalNumber(expectedWeeklyHours, 'Weekly hours');
+      staff.expectedMonthlyHours = parseOptionalNumber(expectedMonthlyHours, 'Monthly hours');
+    } catch (error) {
+      return res.status(400).json({
+        success: false,
+        error: error.message || 'Invalid working hours input'
+      });
+    }
+
+    await staff.save();
+    staffCache.invalidate();
+
+    return res.json({
+      success: true,
+      staffId: staff._id,
+      workingHours: {
+        expectedWorkingDaysPerWeek: staff.expectedWorkingDaysPerWeek ?? null,
+        expectedWorkingDaysPerMonth: staff.expectedWorkingDaysPerMonth ?? null,
+        expectedHoursPerDay: staff.expectedHoursPerDay ?? null,
+        expectedWeeklyHours: staff.expectedWeeklyHours ?? null,
+        expectedMonthlyHours: staff.expectedMonthlyHours ?? null
+      }
+    });
+  } catch (error) {
+    console.error('Error updating working hours:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'Failed to update working hours'
+    });
+  }
+});
+
+router.delete('/admin/staff/:staffId', async (req, res) => {
+  try {
+    const { staffId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(staffId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid staff ID format',
+      });
+    }
+
+    const staff = await Staff.findById(staffId);
+    if (!staff) {
+      return res.status(404).json({
+        success: false,
+        error: 'Staff member not found',
+      });
+    }
+
+    const staffName = `${staff.name} ${staff.surname}`;
+    const staffIdString = staff._id?.toString();
+    const hostCompanyId = staff.hostCompanyId?.toString();
+
+    // Delete the staff member
+    await Staff.findByIdAndDelete(staffId);
+
+    // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
+    await logAction('STAFF_REMOVED', {
+      staffId: staffIdString,
+      staffName: staffName,
+      role: staff.role,
+      idNumber: staff.idNumber,
+      hostCompanyId: hostCompanyId,
+      departmentId: staff.department?.toString()
+    }, null);
+
+    res.json({
+      success: true,
+      message: `Staff member "${staffName}" has been removed successfully`,
+      staffId: staffIdString,
+      staffName: staffName
+    });
+  } catch (error) {
+    console.error('❌ Error removing staff member:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to remove staff member',
+    });
+  }
+});
+
+// ============================================
+// 🏦 DEVICE MANAGEMENT ENDPOINTS
+// ============================================
+
+// Get all devices with pending approvals
+router.get('/admin/devices', async (req, res) => {
+  try {
+    const hostCompanyId = req.query.hostCompanyId;
+    const filterStatus = req.query.status;
+
+    // Build query
+    let query = {};
+    if (hostCompanyId) {
+      query.hostCompanyId = ObjectId.isValid(hostCompanyId) ? new ObjectId(hostCompanyId) : hostCompanyId;
+    }
+
+    // Get all staff and their devices
+    const staff = await Staff.find(query).select('_id name idNumber email role hostCompanyId department trustedDevices').lean();
+
+    // Flatten devices with staff info
+    const devices = [];
+    for (const staffMember of staff) {
+      if (Array.isArray(staffMember.trustedDevices)) {
+        for (const device of staffMember.trustedDevices) {
+          // Filter by status if specified
+          if (filterStatus && device.status !== filterStatus) {
+            continue;
+          }
+
+          devices.push({
+            _id: device._id || `${staffMember._id}_${device.fingerprint}`,
+            staffId: staffMember._id.toString(),
+            staffName: staffMember.name,
+            staffEmail: staffMember.email,
+            staffIdNumber: staffMember.idNumber,
+            staffRole: staffMember.role,
+            fingerprint: device.fingerprint,
+            status: device.status || 'unknown',
+            label: device.label,
+            registeredAt: device.registeredAt || device.createdAt || new Date(),
+            lastSeenAt: device.lastSeenAt,
+            deviceInfo: device.deviceInfo || {},
+            hostCompanyId: staffMember.hostCompanyId,
+          });
+        }
+      }
+    }
+
+    // Sort by registration date (newest first)
+    devices.sort((a, b) => new Date(b.registeredAt) - new Date(a.registeredAt));
+
+    res.json({
+      success: true,
+      devices: devices,
+      count: devices.length,
+    });
+  } catch (error) {
+    console.error('Error fetching devices:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to fetch devices',
+    });
+  }
+});
+
+// Update device status (approve/reject/revoke)
+router.patch('/admin/devices/:deviceId', async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { action } = req.body; // approve, reject, revoke
+
+    if (!['approve', 'reject', 'revoke'].includes(action)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid action. Must be approve, reject, or revoke',
+      });
+    }
+
+    console.log(`🔐 Device update request: deviceId=${deviceId}, action=${action}`);
+
+    // Search through all staff to find the device
+    let staff = null;
+    let targetDevice = null;
+
+    const allStaff = await Staff.find({}).select('_id name trustedDevices hostCompanyId').lean();
+    
+    for (const s of allStaff) {
+      if (Array.isArray(s.trustedDevices)) {
+        const device = s.trustedDevices.find(d => {
+          // Try matching by _id or fingerprint
+          const deviceIdStr = d._id ? d._id.toString() : null;
+          return deviceIdStr === deviceId || d.fingerprint === deviceId;
+        });
+        
+        if (device) {
+          staff = s;
+          targetDevice = device;
+          break;
+        }
+      }
+    }
+
+    if (!staff || !targetDevice) {
+      console.warn(`⚠️ Device not found: ${deviceId}`);
+      return res.status(404).json({
+        success: false,
+        error: 'Device not found',
+      });
+    }
+
+    console.log(`✅ Found device for staff: ${staff.name}, current status: ${targetDevice.status}`);
+
+    // Update device status
+    const newStatus = action === 'approve' ? 'trusted' : 'revoked';
+    
+    // Get the staff document with all fields to update
+    const staffToUpdate = await Staff.findById(staff._id);
+    const deviceIndex = staffToUpdate.trustedDevices.findIndex(d => 
+      (d._id && d._id.toString() === deviceId) || d.fingerprint === deviceId
+    );
+
+    if (deviceIndex !== -1) {
+      staffToUpdate.trustedDevices[deviceIndex].status = newStatus;
+      staffToUpdate.trustedDevices[deviceIndex].updatedAt = new Date();
+      await staffToUpdate.save();
+      staffCache.invalidate();
+      
+      console.log(`✅ Device status updated: ${staffToUpdate.name} - ${targetDevice.fingerprint.substring(0, 8)}... → ${newStatus}`);
+
+      // 🔔 LOG ACTION
+      await logAction(action === 'approve' ? 'DEVICE_APPROVED' : 'DEVICE_REVOKED', {
+        staffId: staff._id.toString(),
+        staffName: staff.name,
+        deviceFingerprint: targetDevice.fingerprint,
+        deviceModel: targetDevice.deviceInfo?.modelName || 'Unknown',
+        action: action,
+        hostCompanyId: staff.hostCompanyId?.toString(),
+      }, null).catch(err => {
+        console.warn('⚠️ Failed to log device action:', err.message);
+      });
+    }
+
+    res.json({
+      success: true,
+      message: `Device ${action === 'approve' ? 'approved' : 'revoked'} successfully`,
+      device: {
+        _id: targetDevice._id,
+        fingerprint: targetDevice.fingerprint,
+        status: newStatus,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Error updating device:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to update device status: ' + error.message,
+    });
+  }
+});
+
+// Export router
+module.exports = router;

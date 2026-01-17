@@ -20,6 +20,7 @@ class StaffCache {
     this.ttl = 2 * 60 * 1000; // 2 minutes TTL (reduced for fresher data in admin dashboard)
     this.isLoading = false;
     this.loadPromise = null;
+    this._isBackgroundRefresh = false; // Flag to reduce logging for background refreshes
   }
 
   /**
@@ -59,7 +60,10 @@ class StaffCache {
    * @private
    */
   async _loadFromDatabase() {
-    console.log('🔄 Loading staff from database (cache refresh)...');
+    // Only log if it's not a background refresh (to reduce log spam)
+    if (!this._isBackgroundRefresh) {
+      console.log('🔄 Loading staff from database (cache refresh)...');
+    }
     const startTime = Date.now();
     
     try {
@@ -145,7 +149,10 @@ class StaffCache {
       this.lastUpdate = Date.now();
       
       const loadTime = Date.now() - startTime;
-      console.log(`✅ Staff cache refreshed: ${staffWithEmbeddings.length} staff members loaded in ${loadTime}ms`);
+      // Only log if it's not a background refresh (to reduce log spam)
+      if (!this._isBackgroundRefresh) {
+        console.log(`✅ Staff cache refreshed: ${staffWithEmbeddings.length} staff members loaded in ${loadTime}ms`);
+      }
       
       return staffWithEmbeddings;
     } catch (error) {
@@ -163,7 +170,10 @@ class StaffCache {
    * Invalidate cache (force refresh on next request)
    */
   invalidate() {
-    console.log('🔄 Invalidating staff cache...');
+    // Only log if it's not a background refresh (to reduce log spam)
+    if (!this._isBackgroundRefresh) {
+      console.log('🔄 Invalidating staff cache...');
+    }
     this.data = null;
     this.lastUpdate = null;
   }
@@ -204,9 +214,12 @@ class StaffCache {
     setInterval(() => {
       if (this.data) {
         // Only refresh if cache exists (don't spam on startup)
+        this._isBackgroundRefresh = true; // Flag to reduce logging
         this.invalidate();
         this.getStaff().catch(err => {
           console.error('⚠️ Background cache refresh failed:', err.message);
+        }).finally(() => {
+          this._isBackgroundRefresh = false;
         });
       }
     }, this.ttl);

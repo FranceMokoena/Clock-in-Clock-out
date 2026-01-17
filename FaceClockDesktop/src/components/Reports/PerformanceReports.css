@@ -1,0 +1,136 @@
+/* Performance Reports CSS - Government style */
+.performance-reports {
+  background: #ffffff;
+  padding: 16px;
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+}
+
+.performance-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.performance-cards .card {
+  background: #ffffff;
+  padding: 12px;
+  border-left: 4px solid var(--gov-primary);
+  border: 1px solid var(--gov-border);
+  text-align: left;
+  border-radius: 0;
+}
+
+.card .label {
+  font-size: 12px;
+  color: var(--gov-text-muted);
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: 0;
+  margin-bottom: 6px;
+}
+
+.card .value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--gov-text-main);
+}
+
+.supervisor-validation {
+  background: #ffffff;
+  padding: 12px;
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+  margin-bottom: 16px;
+}
+
+.supervisor-validation h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--gov-text-main);
+  margin: 0 0 12px 0;
+}
+
+.validation-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+}
+
+.validation-stats .stat {
+  background: #ffffff;
+  padding: 10px;
+  text-align: left;
+  border-left: 4px solid var(--gov-primary);
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+}
+
+.stat .stat-value {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  color: var(--gov-text-main);
+}
+
+.stat .stat-label {
+  font-size: 12px;
+  color: var(--gov-text-muted);
+  font-weight: 500;
+  text-transform: none;
+}
+
+.stat.confirmed { border-left-color: var(--gov-success); }
+.stat.confirmed .stat-value { color: var(--gov-success); }
+.stat.pending { border-left-color: var(--gov-warning); }
+.stat.pending .stat-value { color: var(--gov-warning); }
+.stat.rejected { border-left-color: var(--gov-danger); }
+.stat.rejected .stat-value { color: var(--gov-danger); }
+
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  min-height: 300px;
+}
+
+.spinner-large {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--gov-border);
+  border-top-color: var(--gov-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.loading-container p {
+  color: var(--gov-text-muted);
+  font-size: 13px;
+  margin-top: 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--gov-text-muted);
+}
+
+.empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .performance-reports { padding: 12px; }
+  .performance-cards { grid-template-columns: repeat(2, 1fr); }
+  .validation-stats { grid-template-columns: 1fr; }
+}
+

@@ -1,0 +1,227 @@
+/* Compliance Reports - conservative styles */
+.compliance-reports,
+.performance-reports,
+.risk-alert-reports,
+.institutional-reports {
+  background: #ffffff;
+  padding: 24px;
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+}
+
+.compliance-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  margin-bottom: 20px;
+}
+
+/* Violations Section - flat, panel-like */
+.violations-section {
+  background: #ffffff;
+  padding: 18px;
+  margin-bottom: 20px;
+  border: 1px solid var(--gov-border);
+  border-radius: 0;
+}
+
+.violations-section .section-header h2 {
+  margin: 0 0 6px 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.violations-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.violation-card {
+  border: 1px solid var(--gov-border);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #ffffff;
+}
+
+.violation-header {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.severity-icon {
+  font-size: 18px;
+  color: var(--gov-text-main);
+}
+
+.violation-title h4 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.severity-label {
+  font-size: 12px;
+  color: var(--gov-text-main);
+  background: #F3F4F6;
+  padding: 4px 8px;
+  border: 1px solid var(--gov-border);
+  border-radius: 2px;
+  margin-left: 8px;
+  font-weight: 500;
+}
+
+.violation-details .detail-row {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.violation-description {
+  margin: 8px 0 0 0;
+  color: var(--gov-text-muted);
+}
+
+.violation-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--gov-text-muted);
+}
+
+.violation-footer .immutable-badge {
+  font-weight: 600;
+  color: var(--gov-text-main);
+}
+
+/* Manipulation risks */
+.manipulation-section {
+  padding: 18px;
+  border: 1px solid var(--gov-border);
+  background: #ffffff;
+  margin-bottom: 18px;
+}
+
+.risk-card {
+  border: 1px solid var(--gov-border);
+  padding: 10px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  background: #ffffff;
+}
+
+/* Audit Trail */
+.audit-trail-section {
+  padding: 18px;
+  border: 1px solid var(--gov-border);
+  background: #ffffff;
+}
+
+.audit-trail-section h2 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 8px 0;
+  color: var(--gov-text-main);
+}
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 12px;
+}
+
+.audit-table thead th {
+  background: #E5EDF5;
+  font-weight: 600;
+  text-transform: uppercase;
+  font-size: 12px;
+  color: var(--gov-text-main);
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gov-border);
+}
+
+.audit-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--gov-border);
+  font-size: 13px;
+  color: var(--gov-text-main);
+}
+
+.audit-table tbody tr:nth-child(even) {
+  background: #FBFCFD;
+}
+
+.mono {
+  font-family: 'Courier New', monospace;
+  font-size: 11px;
+  background: #F3F4F6;
+  padding: 2px 6px;
+  border-radius: 2px;
+  color: var(--gov-text-muted);
+}
+
+/* Loading & Empty */
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  min-height: 300px;
+}
+
+.spinner-large {
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--gov-border);
+  border-top-color: var(--gov-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 12px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.loading-container p {
+  color: var(--gov-text-muted);
+  font-size: 13px;
+  margin-top: 0;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--gov-text-muted);
+}
+
+.empty-state p {
+  font-size: 14px;
+  margin: 0;
+}
+
+@media (max-width: 768px) {
+  .compliance-reports,
+  .performance-reports,
+  .risk-alert-reports,
+  .institutional-reports {
+    padding: 16px;
+  }
+
+  .compliance-summary {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .audit-table th,
+  .audit-table td {
+    padding: 8px 10px;
+  }
+}

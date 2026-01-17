@@ -2,10 +2,15 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const http = require('http');
+const socketIO = require('socket.io');
 
 const staffRoutes = require('./routes/staff');
 const locationsRoutes = require('./routes/locations');
+const internReportsRoutes = require('./routes/internReports');
+const notificationsRoutes = require('./routes/notifications');
 const staffCache = require('./utils/staffCache');
+const eventEmitter = require('./utils/eventEmitter');
 const API_BASE_URL = process.env.API_BASE_URL;
 
 
@@ -21,10 +26,28 @@ try {
 
 const app = express();
 
+// Create HTTP server for Socket.IO
+const server = http.createServer(app);
+
+// Initialize Socket.IO with CORS
+const io = socketIO(server, {
+  cors: {
+    origin: '*',
+    methods: ['GET', 'POST'],
+    credentials: true
+  },
+  transports: ['websocket', 'polling'],
+  pingInterval: 25000,
+  pingTimeout: 60000
+});
+
+// Register Socket.IO with event emitter for real-time delivery
+eventEmitter.registerSocketIO(io);
+
 // CORS - allow all origins and methods
 app.use(cors({
   origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-device-*']
 }));
 
@@ -64,8 +87,16 @@ const mongoConnectPromise = mongoose.connect(MONGO_URI, mongoOptions)
   });
 
 // Register routes
+console.log('Registering routes...');
+try {
+  console.log('staffRoutes type:', typeof staffRoutes, Object.keys(staffRoutes || {}));
+} catch (e) {
+  console.warn('Could not inspect staffRoutes:', e.message);
+}
 app.use('/api/staff', staffRoutes);
 app.use('/api/locations', locationsRoutes);
+app.use('/api/intern-reports', internReportsRoutes);
+app.use('/api/notifications', notificationsRoutes);
 
 // Health check - supports GET, POST, OPTIONS
 const healthHandler = (req, res) => {
@@ -77,6 +108,10 @@ const healthHandler = (req, res) => {
       heapUsed: Math.round(used.heapUsed / 1024 / 1024) + 'MB',
       heapTotal: Math.round(used.heapTotal / 1024 / 1024) + 'MB',
       rss: Math.round(used.rss / 1024 / 1024) + 'MB'
+    },
+    websocket: {
+      status: 'ready',
+      activeConnections: eventEmitter.getActiveConnections()
     }
   });
 };
@@ -104,7 +139,11 @@ const apiRootHandler = (req, res) => {
       adminHostCompanies: 'GET /api/staff/admin/host-companies',
       adminDepartments: 'GET /api/staff/admin/departments/all',
       adminNotAccountable: 'GET /api/staff/admin/not-accountable',
-      adminTimesheet: 'GET /api/staff/admin/staff/:staffId/timesheet'
+      adminTimesheet: 'GET /api/staff/admin/staff/:staffId/timesheet',
+      internReportsCreate: 'POST /api/intern-reports',
+      internReportsGet: 'GET /api/intern-reports',
+      internReportsDetail: 'GET /api/intern-reports/:reportId',
+      internReportsUpdate: 'PATCH /api/intern-reports/:reportId'
     }
   });
 };
@@ -131,7 +170,11 @@ app.all('/', (req, res) => {
       adminHostCompanies: 'GET /api/staff/admin/host-companies',
       adminDepartments: 'GET /api/staff/admin/departments/all',
       adminNotAccountable: 'GET /api/staff/admin/not-accountable',
-      adminTimesheet: 'GET /api/staff/admin/staff/:staffId/timesheet'
+      adminTimesheet: 'GET /api/staff/admin/staff/:staffId/timesheet',
+      internReportsCreate: 'POST /api/intern-reports',
+      internReportsGet: 'GET /api/intern-reports',
+      internReportsDetail: 'GET /api/intern-reports/:reportId',
+      internReportsUpdate: 'PATCH /api/intern-reports/:reportId'
     }
   });
 });
@@ -157,7 +200,11 @@ app.use((req, res) => {
       'GET /api/staff/admin/host-companies',
       'GET /api/staff/admin/departments/all',
       'GET /api/staff/admin/not-accountable',
-      'GET /api/staff/admin/staff/:staffId/timesheet'
+      'GET /api/staff/admin/staff/:staffId/timesheet',
+      'POST /api/intern-reports',
+      'GET /api/intern-reports',
+      'GET /api/intern-reports/:reportId',
+      'PATCH /api/intern-reports/:reportId'
     ]
   });
 });
@@ -177,9 +224,10 @@ async function startServer() {
   staffCache.startBackgroundRefresh();
 
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, '0.0.0.0', () => {
+  server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
     console.log(`🌐 API Base URL: https://clock-in.duckdns.org/api`);
+    console.log(`📡 WebSocket ready for real-time notifications`);
   });
 }
 

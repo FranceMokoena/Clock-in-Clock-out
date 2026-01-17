@@ -13,6 +13,11 @@ const hostCompanySchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  mentorName: {
+    type: String,
+    required: false,
+    trim: true
+  },
   registrationNumber: {
     type: String,
     required: false,
@@ -90,7 +95,7 @@ const hostCompanySchema = new mongoose.Schema({
     type: String,
     required: false,
     trim: true,
-    enum: ['Pty Ltd', 'LLC', 'Sole Proprietor', 'NGO', 'Partnership', 'Corporation', 'Other', '']
+    enum: ['Pty Ltd', 'LLC', 'Sole Proprietor', 'NGO', 'Partnership', 'Corporation', 'Manufacturing', 'Other', '']
   },
   industry: {
     type: String,
