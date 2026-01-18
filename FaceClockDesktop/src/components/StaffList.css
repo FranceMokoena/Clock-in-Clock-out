@@ -50,6 +50,35 @@
   gap: 16px;
 }
 
+.profile-avatar-cell {
+  width: 64px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.profile-avatar-cell img,
+.modal-avatar img {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid #e2e8f0;
+}
+
+.profile-avatar-cell span,
+.modal-avatar span {
+  display: inline-flex;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  background: #eef2ff;
+  color: #1e3a8a;
+  font-weight: 700;
+}
+
 .staff-filters {
   display: flex;
   gap: 12px;
@@ -238,8 +267,38 @@
 }
 
 .staff-table th:nth-child(6),
-.staff-table th:nth-child(7) {
+.staff-table th:nth-child(7),
+.staff-table th:nth-child(8) {
   text-align: center;
+}
+
+.modal-avatar-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.modal-avatar {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: #eef2ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid #e5e7eb;
+}
+
+.modal-avatar span {
+  font-size: 18px;
+  font-weight: 700;
+  color: #1d4ed8;
+}
+
+.modal-avatar-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: #475569;
 }
 
 .payroll-link {
@@ -387,5 +446,74 @@
 
 .error-text {
   color: #b91c1c;
+}
+.rotation-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  background: #fff;
+}
+.rotation-current {
+  padding: 16px;
+  border-bottom: 1px solid #e5e7eb;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rotation-form {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rotation-select,
+.rotation-textarea {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 10px;
+  font-size: 14px;
+  font-family: inherit;
+}
+.rotation-textarea {
+  min-height: 80px;
+  resize: vertical;
+}
+.rotation-history {
+  padding: 16px;
+  border-top: 1px solid #e5e7eb;
+  background: #f8fafc;
+  border-radius: 0 0 12px 12px;
+}
+.rotation-history h5 {
+  margin-bottom: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: #0f172a;
+}
+.rotation-history-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 0;
+  border-bottom: 1px solid #e2e8f0;
+}
+.rotation-history-item:last-child {
+  border-bottom: none;
+}
+.history-dept {
+  font-weight: 600;
+  color: #1d4ed8;
+}
+.history-dates {
+  font-size: 12px;
+  color: #64748b;
+}
+.history-status {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #e0f2fe;
+  color: #0369a1;
+  font-weight: 600;
 }
 

@@ -95,7 +95,7 @@ function Dashboard() {
           ...(isHostCompany && hostCompanyId ? { hostCompanyId } : {}),
         });
         setPendingLeaveCount(leaveRes.success && Array.isArray(leaveRes.applications) ? leaveRes.applications.length : 0);
-      } catch {}
+      } catch { }
 
       // Pending corrections
       try {
@@ -105,7 +105,7 @@ function Dashboard() {
           ...(isHostCompany && hostCompanyId ? { hostCompanyId } : {}),
         });
         setPendingCorrectionsCount(corrRes.success && Array.isArray(corrRes.corrections) ? corrRes.corrections.length : 0);
-      } catch {}
+      } catch { }
     } catch (error) {
       console.error('Dashboard load error:', error);
     } finally {
@@ -125,16 +125,16 @@ function Dashboard() {
 
     const attendancePieData = stats
       ? [
-          { label: 'Present', value: stats.currentlyIn || 0, color: '#4CAF50' },
-          { label: 'Absent', value: Math.max(0, (stats.totalStaff || 0) - (stats.currentlyIn || 0)), color: '#F44336' },
-        ]
+        { label: 'Present', value: stats.currentlyIn || 0, color: '#4CAF50' },
+        { label: 'Absent', value: Math.max(0, (stats.totalStaff || 0) - (stats.currentlyIn || 0)), color: '#F44336' },
+      ]
       : [];
 
     const statusPieData = stats
       ? [
-          { label: 'On Time', value: Math.max(0, (stats.clockInsToday || 0) - (stats.lateArrivals || 0)), color: '#2196F3' },
-          { label: 'Late', value: stats.lateArrivals || 0, color: '#FF9800' },
-        ]
+        { label: 'On Time', value: Math.max(0, (stats.clockInsToday || 0) - (stats.lateArrivals || 0)), color: '#2196F3' },
+        { label: 'Late', value: stats.lateArrivals || 0, color: '#FF9800' },
+      ]
       : [];
 
     return (
@@ -208,14 +208,14 @@ function Dashboard() {
             <div className="notification-bell-container" style={{ position: 'relative' }}>
               <NotificationBell onClick={() => setShowNotifications(prev => !prev)} />
               {showNotifications && (
-                <NotificationList 
-                  onClose={() => setShowNotifications(false)} 
+                <NotificationList
+                  onClose={() => setShowNotifications(false)}
                   onSelect={(n) => {
                     setShowNotifications(false);
                     // Use the navigateTo field from notification utils
                     const view = n.navigateTo || 'overview';
                     setActiveView(view);
-                  }} 
+                  }}
                 />
               )}
             </div>
@@ -232,32 +232,32 @@ function Dashboard() {
         <div className="dashboard-content">
           <aside className={`dashboard-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
             <nav className="sidebar-nav">
-              <SidebarButton icon={<MdDashboard />} label="Overview" active={activeView==='overview'} onClick={() => setActiveView('overview')} />
-              <SidebarButton icon={<MdHistory />} label="Recents" active={activeView==='recents'} onClick={() => setActiveView('recents')} />
-              <SidebarButton icon={<MdPeople />} label="Staff & Interns" active={activeView==='staff'} onClick={() => setActiveView('staff')} />
-              <SidebarButton icon={<MdAssignment />} label="Leave Applications" badge={pendingLeaveCount} active={activeView==='leaveApplications'} onClick={() => setActiveView('leaveApplications')} />
-              <SidebarButton icon={<MdEdit />} label="Attendance Corrections" badge={pendingCorrectionsCount} active={activeView==='attendanceCorrections'} onClick={() => setActiveView('attendanceCorrections')} />
-              {isAdmin && <SidebarButton icon={<MdBusiness />} label="Host Companies" active={activeView==='companies'} onClick={() => setActiveView('companies')} />}
-              <SidebarButton icon={<MdFolder />} label="Departments" active={activeView==='departments'} onClick={() => setActiveView('departments')} />
-              <SidebarButton icon={<MdWarning />} label="Not Accountable" active={activeView==='notAccountable'} onClick={() => setActiveView('notAccountable')} />
-              <SidebarButton icon={<MdAutoAwesome />} label="Rotation Plan" active={activeView==='rotationPlan'} onClick={() => setActiveView('rotationPlan')} />
-              <SidebarButton icon={<MdBarChart />} label="Reports and Compliance" active={activeView==='reports'} onClick={() => setActiveView('reports')} />
-              <SidebarButton icon={<MdPhoneAndroid />} label="Devices" active={activeView==='devices'} onClick={() => setActiveView('devices')} />
+              <SidebarButton icon={<MdDashboard />} label="Overview" active={activeView === 'overview'} onClick={() => setActiveView('overview')} />
+              <SidebarButton icon={<MdHistory />} label="Recents" active={activeView === 'recents'} onClick={() => setActiveView('recents')} />
+              <SidebarButton icon={<MdPeople />} label="Staff & Interns" active={activeView === 'staff'} onClick={() => setActiveView('staff')} />
+              <SidebarButton icon={<MdAssignment />} label="Leave Applications" badge={pendingLeaveCount} active={activeView === 'leaveApplications'} onClick={() => setActiveView('leaveApplications')} />
+              <SidebarButton icon={<MdEdit />} label="Attendance Corrections" badge={pendingCorrectionsCount} active={activeView === 'attendanceCorrections'} onClick={() => setActiveView('attendanceCorrections')} />
+              {isAdmin && <SidebarButton icon={<MdBusiness />} label="Host Companies" active={activeView === 'companies'} onClick={() => setActiveView('companies')} />}
+              <SidebarButton icon={<MdFolder />} label="Departments" active={activeView === 'departments'} onClick={() => setActiveView('departments')} />
+              <SidebarButton icon={<MdWarning />} label="Not Accountable" active={activeView === 'notAccountable'} onClick={() => setActiveView('notAccountable')} />
+              <SidebarButton icon={<MdAutoAwesome />} label="Rotation Plan" active={activeView === 'rotationPlan'} onClick={() => setActiveView('rotationPlan')} />
+              <SidebarButton icon={<MdBarChart />} label="Case Logs" active={activeView === 'reports'} onClick={() => setActiveView('reports')} />
+              <SidebarButton icon={<MdPhoneAndroid />} label="Devices" active={activeView === 'devices'} onClick={() => setActiveView('devices')} />
             </nav>
           </aside>
 
           <main className="dashboard-main">
-            {activeView==='overview' && renderOverview()}
-            {activeView==='recents' && <Recents isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
-            {activeView==='staff' && <StaffList hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
-            {activeView==='leaveApplications' && <LeaveApplications isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} onSwitchToCorrections={() => setActiveView('attendanceCorrections')} />}
-            {activeView==='attendanceCorrections' && <AttendanceCorrections isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} onSwitchToLeave={() => setActiveView('leaveApplications')} />}
-            {activeView==='companies' && <HostCompanies isAdmin={isAdmin} />}
-            {activeView==='departments' && <Departments isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
-            {activeView==='devices' && <Devices isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
-            {activeView==='notAccountable' && <NotAccountable isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
-            {activeView==='rotationPlan' && <RotationPlan isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
-            {activeView==='reports' && <Reports isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'overview' && renderOverview()}
+            {activeView === 'recents' && <Recents isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'staff' && <StaffList hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'leaveApplications' && <LeaveApplications isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} onSwitchToCorrections={() => setActiveView('attendanceCorrections')} />}
+            {activeView === 'attendanceCorrections' && <AttendanceCorrections isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} onSwitchToLeave={() => setActiveView('leaveApplications')} />}
+            {activeView === 'companies' && <HostCompanies isAdmin={isAdmin} />}
+            {activeView === 'departments' && <Departments isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'devices' && <Devices isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'notAccountable' && <NotAccountable isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'rotationPlan' && <RotationPlan isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'reports' && <Reports isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
           </main>
         </div>
       </div>
@@ -266,7 +266,7 @@ function Dashboard() {
 }
 
 // Helper components
-const StatCard = ({ icon, value, label, warning=false, clickable=false, onClick }) => (
+const StatCard = ({ icon, value, label, warning = false, clickable = false, onClick }) => (
   <div className={`stat-card ${warning ? 'stat-card-warning' : ''} ${clickable ? 'clickable-stat-card' : ''}`} onClick={clickable ? onClick : undefined}>
     <div className="stat-icon">{icon}</div>
     <div className="stat-content">
@@ -280,7 +280,7 @@ const ActionCard = ({ label, icon, badge, onClick }) => (
   <button className="action-card" onClick={onClick}>
     <span className="action-icon">{icon}</span>
     <span className="action-label">{label}</span>
-    {badge>0 && <span className="action-badge">{badge}</span>}
+    {badge > 0 && <span className="action-badge">{badge}</span>}
   </button>
 );
 
@@ -288,30 +288,30 @@ const SidebarButton = ({ icon, label, badge, active, onClick }) => (
   <button className={`nav-item ${active ? 'active' : ''}`} onClick={onClick}>
     <span className="nav-icon">{icon}</span>
     <span className="nav-label">{label}</span>
-    {badge>0 && <span className="nav-badge">{badge}</span>}
+    {badge > 0 && <span className="nav-badge">{badge}</span>}
   </button>
 );
 
 // PieChart component
 function PieChart({ data, size = 200 }) {
   const total = (data || []).reduce((sum, item) => sum + (item.value || 0), 0);
-  if (!data || data.length === 0 || total===0) return <div className="pie-chart-empty"><span>No data</span></div>;
+  if (!data || data.length === 0 || total === 0) return <div className="pie-chart-empty"><span>No data</span></div>;
 
-  const radius = (size-24)/2;
+  const radius = (size - 24) / 2;
   const circumference = 2 * Math.PI * radius;
   let offsetAccumulator = 0;
 
   return (
     <div className="pie-chart">
       <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
-        <g transform={`translate(${size/2},${size/2})`}>
+        <g transform={`translate(${size / 2},${size / 2})`}>
           <circle r={radius} fill="none" stroke="#e5e7eb" strokeWidth="24" />
-          {data.map((slice,index)=>{
-            const fraction = slice.value/total;
-            const dash = `${fraction*circumference} ${circumference}`;
+          {data.map((slice, index) => {
+            const fraction = slice.value / total;
+            const dash = `${fraction * circumference} ${circumference}`;
             const offset = -offsetAccumulator;
-            offsetAccumulator += fraction*circumference;
-            if(slice.value<=0) return null;
+            offsetAccumulator += fraction * circumference;
+            if (slice.value <= 0) return null;
             return <circle key={index} r={radius} fill="none" stroke={slice.color} strokeWidth="24" strokeDasharray={dash} strokeDashoffset={offset} transform="rotate(-90)" />
           })}
         </g>
@@ -321,9 +321,9 @@ function PieChart({ data, size = 200 }) {
         <div className="pie-chart-label">Total</div>
       </div>
       <div className="pie-chart-legend">
-        {data.map((item,index)=>(
+        {data.map((item, index) => (
           <div key={index} className="pie-chart-legend-item">
-            <span className="pie-chart-legend-color" style={{backgroundColor:item.color}} />
+            <span className="pie-chart-legend-color" style={{ backgroundColor: item.color }} />
             <span className="pie-chart-legend-text">{item.label}: {item.value}</span>
           </div>
         ))}

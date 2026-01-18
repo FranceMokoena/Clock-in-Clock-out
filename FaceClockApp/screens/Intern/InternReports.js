@@ -103,7 +103,7 @@ function InternReports({ route, navigation }) {
     return (
       <View style={[styles.container, dynamicStyles.container, { justifyContent: 'center', alignItems: 'center' }]}>
         <ActivityIndicator size="large" color="#2196f3" />
-        <Text style={[styles.loadingText, dynamicStyles.text]}>Loading reports...</Text>
+        <Text style={[styles.loadingText, dynamicStyles.text]}>Loading caselogs...</Text>
       </View>
     );
   }
@@ -128,7 +128,7 @@ function InternReports({ route, navigation }) {
         {reports.length === 0 ? (
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyIcon}>📋</Text>
-            <Text style={[styles.emptyText, dynamicStyles.text]}>No reports found</Text>
+            <Text style={[styles.emptyText, dynamicStyles.text]}>No caselogs found</Text>
           </View>
         ) : (
           reports.map((report) => (

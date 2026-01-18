@@ -30,6 +30,7 @@ export default function InternAttendance({ navigation, route }) {
   const [stats, setStats] = useState(null);
   const [exportingPDF, setExportingPDF] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
+  const [workingHours, setWorkingHours] = useState(null);
 
   useEffect(() => {
     loadAttendanceData();
@@ -38,16 +39,33 @@ export default function InternAttendance({ navigation, route }) {
   const loadAttendanceData = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/staff/intern/attendance/detailed`, {
-        params: {
-          internId: userInfo.id,
-          period: selectedPeriod,
-        },
-      });
+      const now = new Date();
+      const currentMonth = now.getMonth() + 1;
+      const currentYear = now.getFullYear();
 
-      if (response.data?.success) {
-        setAttendanceData(response.data.attendance || []);
-        setStats(response.data.stats || {});
+      const [attendanceResponse, hoursResponse] = await Promise.all([
+        axios.get(`${API_BASE_URL}/staff/intern/attendance/detailed`, {
+          params: {
+            internId: userInfo.id,
+            period: selectedPeriod,
+          },
+        }),
+        axios.get(`${API_BASE_URL}/staff/intern/working-hours`, {
+          params: {
+            internId: userInfo.id,
+            month: currentMonth,
+            year: currentYear,
+          },
+        }),
+      ]);
+
+      if (attendanceResponse.data?.success) {
+        setAttendanceData(attendanceResponse.data.attendance || []);
+        setStats(attendanceResponse.data.stats || {});
+      }
+
+      if (hoursResponse.data?.success) {
+        setWorkingHours(hoursResponse.data.workingHours || null);
       }
     } catch (error) {
       console.error('Error loading attendance:', error);
@@ -63,6 +81,7 @@ export default function InternAttendance({ navigation, route }) {
         submittedCorrections: 0,
         attendanceRate: 0,
       });
+      setWorkingHours(null);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -93,6 +112,11 @@ export default function InternAttendance({ navigation, route }) {
       minute: '2-digit',
       hour12: true,
     });
+  };
+
+  const formatAssignedDays = (value) => {
+    if (value === null || value === undefined || value === '') return 'Not assigned';
+    return `${value}`;
   };
 
   const formatDateOnly = (dateString) => {
@@ -547,24 +571,32 @@ export default function InternAttendance({ navigation, route }) {
                   <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
                     {stats.missingClockOuts || 0}
                   </Text>
-            </View>
+                </View>
                 <View style={styles.detailedStatsRow}>
                   <Text style={[styles.detailedStatLabel, dynamicStyles.textSecondary]}>
                     Submitted Corrections:
                   </Text>
                   <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
                     {stats.submittedCorrections || 0}
-              </Text>
-            </View>
+                  </Text>
+                </View>
                 <View style={styles.detailedStatsRow}>
                   <Text style={[styles.detailedStatLabel, dynamicStyles.textSecondary]}>
-                    Expected Days:
+                    Assigned Days (Weekly):
                   </Text>
                   <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
-                    {stats.expectedDays || 0}
-              </Text>
-            </View>
-          </View>
+                    {formatAssignedDays(workingHours?.workingDaysPerWeek)}
+                  </Text>
+                </View>
+                <View style={styles.detailedStatsRow}>
+                  <Text style={[styles.detailedStatLabel, dynamicStyles.textSecondary]}>
+                    Assigned Days (Monthly):
+                  </Text>
+                  <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
+                    {formatAssignedDays(workingHours?.workingDaysPerMonth)}
+                  </Text>
+                </View>
+              </View>
             )}
 
             {/* Timesheet Table Header */}

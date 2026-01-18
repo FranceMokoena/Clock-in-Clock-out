@@ -9,6 +9,7 @@ const staffRoutes = require('./routes/staff');
 const locationsRoutes = require('./routes/locations');
 const internReportsRoutes = require('./routes/internReports');
 const notificationsRoutes = require('./routes/notifications');
+const rotationsRoutes = require('./routes/rotations');
 const staffCache = require('./utils/staffCache');
 const eventEmitter = require('./utils/eventEmitter');
 const API_BASE_URL = process.env.API_BASE_URL;
@@ -97,6 +98,7 @@ app.use('/api/staff', staffRoutes);
 app.use('/api/locations', locationsRoutes);
 app.use('/api/intern-reports', internReportsRoutes);
 app.use('/api/notifications', notificationsRoutes);
+app.use('/api/rotations', rotationsRoutes);
 
 // Health check - supports GET, POST, OPTIONS
 const healthHandler = (req, res) => {
@@ -143,7 +145,15 @@ const apiRootHandler = (req, res) => {
       internReportsCreate: 'POST /api/intern-reports',
       internReportsGet: 'GET /api/intern-reports',
       internReportsDetail: 'GET /api/intern-reports/:reportId',
-      internReportsUpdate: 'PATCH /api/intern-reports/:reportId'
+      internReportsUpdate: 'PATCH /api/intern-reports/:reportId',
+      rotationRoster: 'GET /api/rotations/roster',
+      rotationTimeline: 'GET /api/rotations/users/:userId/timeline',
+      rotationDossier: 'GET /api/rotations/users/:userId/dossier',
+      rotationPlan: 'POST /api/rotations/users/:userId/plan',
+      rotationAssign: 'POST /api/rotations/users/:userId/assign',
+      rotationEvaluate: 'POST /api/rotations/assignments/:assignmentId/evaluate',
+      rotationStatus: 'PATCH /api/rotations/assignments/:assignmentId/status',
+      rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide'
     }
   });
 };
@@ -174,7 +184,15 @@ app.all('/', (req, res) => {
       internReportsCreate: 'POST /api/intern-reports',
       internReportsGet: 'GET /api/intern-reports',
       internReportsDetail: 'GET /api/intern-reports/:reportId',
-      internReportsUpdate: 'PATCH /api/intern-reports/:reportId'
+      internReportsUpdate: 'PATCH /api/intern-reports/:reportId',
+      rotationRoster: 'GET /api/rotations/roster',
+      rotationTimeline: 'GET /api/rotations/users/:userId/timeline',
+      rotationDossier: 'GET /api/rotations/users/:userId/dossier',
+      rotationPlan: 'POST /api/rotations/users/:userId/plan',
+      rotationAssign: 'POST /api/rotations/users/:userId/assign',
+      rotationEvaluate: 'POST /api/rotations/assignments/:assignmentId/evaluate',
+      rotationStatus: 'PATCH /api/rotations/assignments/:assignmentId/status',
+      rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide'
     }
   });
 });
@@ -204,7 +222,15 @@ app.use((req, res) => {
       'POST /api/intern-reports',
       'GET /api/intern-reports',
       'GET /api/intern-reports/:reportId',
-      'PATCH /api/intern-reports/:reportId'
+      'PATCH /api/intern-reports/:reportId',
+      'GET /api/rotations/roster',
+      'GET /api/rotations/users/:userId/timeline',
+      'GET /api/rotations/users/:userId/dossier',
+      'POST /api/rotations/users/:userId/plan',
+      'POST /api/rotations/users/:userId/assign',
+      'POST /api/rotations/assignments/:assignmentId/evaluate',
+      'PATCH /api/rotations/assignments/:assignmentId/status',
+      'POST /api/rotations/assignments/:assignmentId/decide'
     ]
   });
 });

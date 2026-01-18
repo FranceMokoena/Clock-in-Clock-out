@@ -393,6 +393,90 @@ const staffSchema = new mongoose.Schema({
     required: false,
     min: 0
   },
+  rotationPlan: {
+    currentDepartment: {
+      departmentId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Department',
+        required: false
+      },
+      departmentName: {
+        type: String,
+        trim: true
+      }
+    },
+    startDate: {
+      type: Date,
+      required: false
+    },
+    status: {
+      type: String,
+      enum: ['active', 'paused', 'completed'],
+      default: 'active'
+    },
+    notes: {
+      type: String,
+      trim: true,
+      required: false
+    },
+    history: {
+      type: [{
+        departmentId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Department',
+          required: false
+        },
+        departmentName: {
+          type: String,
+          trim: true
+        },
+        startDate: {
+          type: Date,
+          required: false
+        },
+        endDate: {
+          type: Date,
+          required: false
+        },
+        status: String,
+        notes: String,
+        recordedAt: {
+          type: Date,
+          default: Date.now
+        }
+      }],
+      default: []
+    },
+    approvals: {
+      type: [{
+        supervisorId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Staff',
+          required: false
+        },
+        adminId: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Staff',
+          required: false
+        },
+        status: {
+          type: String,
+          enum: ['pending', 'approved', 'denied'],
+          default: 'pending'
+        },
+        notes: {
+          type: String,
+          trim: true,
+          required: false
+        },
+        createdAt: {
+          type: Date,
+          default: Date.now
+        }
+      }],
+      default: []
+    }
+  },
   // 🔐 Password field (required for Staff and Intern roles only)
   password: {
     type: String,

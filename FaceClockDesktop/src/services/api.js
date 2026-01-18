@@ -138,6 +138,14 @@ export const staffAPI = {
     const response = await api.put(`/staff/admin/staff/${staffId}/working-hours`, data, { params });
     return response.data;
   },
+  getRotationPlan: async (staffId) => {
+    const response = await api.get(`/staff/admin/staff/${staffId}/rotation-plan`);
+    return response.data;
+  },
+  updateRotationPlan: async (staffId, data, params = {}) => {
+    const response = await api.put(`/staff/admin/staff/${staffId}/rotation-plan`, data, { params });
+    return response.data;
+  },
   getInternDashboard: async (internId, period = 'monthly') => {
     const response = await api.get('/staff/intern/dashboard', {
       params: { internId, period }
@@ -155,6 +163,42 @@ export const staffAPI = {
   deactivate: async (staffId) => {
     // Deactivate by setting isActive to false
     const response = await api.put(`/staff/admin/staff/${staffId}`, { isActive: false });
+    return response.data;
+  },
+};
+
+// Rotation API
+export const rotationAPI = {
+  getRoster: async (params = {}) => {
+    const response = await api.get('/rotations/roster', { params });
+    return response.data;
+  },
+  getTimeline: async (userId, params = {}) => {
+    const response = await api.get(`/rotations/users/${userId}/timeline`, { params });
+    return response.data;
+  },
+  getDossier: async (userId, params = {}) => {
+    const response = await api.get(`/rotations/users/${userId}/dossier`, { params });
+    return response.data;
+  },
+  createPlan: async (userId, data, params = {}) => {
+    const response = await api.post(`/rotations/users/${userId}/plan`, data, { params });
+    return response.data;
+  },
+  assign: async (userId, data, params = {}) => {
+    const response = await api.post(`/rotations/users/${userId}/assign`, data, { params });
+    return response.data;
+  },
+  evaluate: async (assignmentId, data, params = {}) => {
+    const response = await api.post(`/rotations/assignments/${assignmentId}/evaluate`, data, { params });
+    return response.data;
+  },
+  updateStatus: async (assignmentId, data, params = {}) => {
+    const response = await api.patch(`/rotations/assignments/${assignmentId}/status`, data, { params });
+    return response.data;
+  },
+  decide: async (assignmentId, data, params = {}) => {
+    const response = await api.post(`/rotations/assignments/${assignmentId}/decide`, data, { params });
     return response.data;
   },
 };

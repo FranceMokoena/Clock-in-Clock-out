@@ -22,22 +22,51 @@ router.get('/', async (req, res) => {
     const filter = {};
 
     // Build filter based on query params
+    // 🔒 CRITICAL FIX: Interns and Staff should ONLY receive notifications where:
+    // 1. recipientId matches their ID (direct recipient)
+    // 2. subjectUserId matches their ID (notification is about them)
+    // They should NOT receive 'All' broadcasts unless explicitly intended
     if (recipientId) {
-      filter.$or = [
-        { recipientId: new mongoose.Types.ObjectId(recipientId) },
-        { recipientType: 'All' }
-      ];
+      const recipientObjectId = new mongoose.Types.ObjectId(recipientId);
+      
+      // For Intern/Staff: strict filtering - only their own notifications
+      if (recipientType === 'Intern' || recipientType === 'Staff') {
+        filter.$or = [
+          { recipientId: recipientObjectId },
+          { subjectUserId: recipientObjectId } // Also include notifications about them
+        ];
+      } else {
+        // For Admin/HostCompany: can receive 'All' broadcasts
+        filter.$or = [
+          { recipientId: recipientObjectId },
+          { recipientType: 'All' }
+        ];
+      }
     }
 
     if (recipientType) {
       if (filter.$or) {
-        filter.$and = [
-          { $or: filter.$or },
-          { recipientType: { $in: [recipientType, 'All'] } }
-        ];
+        // For Intern/Staff: strict type matching (no 'All' broadcasts)
+        if (recipientType === 'Intern' || recipientType === 'Staff') {
+          filter.$and = [
+            { $or: filter.$or },
+            { recipientType: recipientType } // NO 'All' for Interns/Staff
+          ];
+        } else {
+          // For Admin/HostCompany: can receive 'All' broadcasts
+          filter.$and = [
+            { $or: filter.$or },
+            { recipientType: { $in: [recipientType, 'All'] } }
+          ];
+        }
         delete filter.$or;
       } else {
-        filter.recipientType = { $in: [recipientType, 'All'] };
+        // For Intern/Staff: strict type matching
+        if (recipientType === 'Intern' || recipientType === 'Staff') {
+          filter.recipientType = recipientType; // NO 'All'
+        } else {
+          filter.recipientType = { $in: [recipientType, 'All'] };
+        }
       }
     }
 
@@ -88,22 +117,43 @@ router.get('/unread-count', async (req, res) => {
 
     const filter = { isRead: false };
 
+    // 🔒 CRITICAL FIX: Apply same strict filtering for unread count
     if (recipientId) {
-      filter.$or = [
-        { recipientId: new mongoose.Types.ObjectId(recipientId) },
-        { recipientType: 'All' }
-      ];
+      const recipientObjectId = new mongoose.Types.ObjectId(recipientId);
+      
+      if (recipientType === 'Intern' || recipientType === 'Staff') {
+        filter.$or = [
+          { recipientId: recipientObjectId },
+          { subjectUserId: recipientObjectId }
+        ];
+      } else {
+        filter.$or = [
+          { recipientId: recipientObjectId },
+          { recipientType: 'All' }
+        ];
+      }
     }
 
     if (recipientType) {
       if (filter.$or) {
-        filter.$and = [
-          { $or: filter.$or },
-          { recipientType: { $in: [recipientType, 'All'] } }
-        ];
+        if (recipientType === 'Intern' || recipientType === 'Staff') {
+          filter.$and = [
+            { $or: filter.$or },
+            { recipientType: recipientType }
+          ];
+        } else {
+          filter.$and = [
+            { $or: filter.$or },
+            { recipientType: { $in: [recipientType, 'All'] } }
+          ];
+        }
         delete filter.$or;
       } else {
-        filter.recipientType = { $in: [recipientType, 'All'] };
+        if (recipientType === 'Intern' || recipientType === 'Staff') {
+          filter.recipientType = recipientType;
+        } else {
+          filter.recipientType = { $in: [recipientType, 'All'] };
+        }
       }
     }
 

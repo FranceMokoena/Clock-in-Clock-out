@@ -58,38 +58,38 @@ function Departments({ isAdmin, hostCompanyId, isHostCompany }) {
     setLoading(true);
     try {
       const params = isHostCompany && hostCompanyId ? { hostCompanyId } : {};
-      
+
       // Get all departments
       const deptResponse = await departmentAPI.getAll(params);
-      
+
       if (!deptResponse.success) {
         setDepartments([]);
         setLoading(false);
         return;
       }
-      
+
       const allDepartments = deptResponse.departments || [];
       console.log(`✅ Loaded ${allDepartments.length} departments`);
-      
+
       // For each department, fetch interns matching that department name
       const departmentsWithInterns = await Promise.all(
         allDepartments.map(async (dept) => {
           try {
             console.log(`📍 Fetching interns for department: "${dept.name}"`);
-            
+
             // Use the same approach as mobile app: query staff with department filter
             const staffResponse = await staffAPI.getAll({
               department: dept.name,
               fullData: 'true',
               ...(isHostCompany && hostCompanyId && { hostCompanyId })
             });
-            
-            const interns = staffResponse.success && Array.isArray(staffResponse.staff) 
+
+            const interns = staffResponse.success && Array.isArray(staffResponse.staff)
               ? staffResponse.staff.filter(s => s.role === 'Intern')
               : [];
-            
+
             console.log(`✅ Department "${dept.name}": ${interns.length} interns found`);
-            
+
             return {
               ...dept,
               internCount: interns.length
@@ -103,7 +103,7 @@ function Departments({ isAdmin, hostCompanyId, isHostCompany }) {
           }
         })
       );
-      
+
       setDepartments(departmentsWithInterns);
     } catch (error) {
       console.error('Error loading departments:', error);
@@ -189,11 +189,11 @@ function Departments({ isAdmin, hostCompanyId, isHostCompany }) {
         {(isAdmin || isHostCompany) && (
           <button className="add-button" onClick={() => {
             setEditingDepartment(null);
-            setFormData({ 
-              name: '', 
+            setFormData({
+              name: '',
               departmentCode: '',
-              companyName: '', 
-              description: '', 
+              companyName: '',
+              description: '',
               location: '',
               customAddress: '',
               hostCompanyId: hostCompanyId || '',
@@ -215,8 +215,8 @@ function Departments({ isAdmin, hostCompanyId, isHostCompany }) {
           </div>
         ) : (
           departments.map((dept) => (
-            <div 
-              key={dept._id} 
+            <div
+              key={dept._id}
               className="department-list-item"
               onClick={() => handleViewDetails(dept)}
             >
@@ -238,7 +238,7 @@ function Departments({ isAdmin, hostCompanyId, isHostCompany }) {
                 <span className={`status-badge ${dept.isActive ? 'active' : 'inactive'}`}>
                   {dept.isActive ? 'Active' : 'Inactive'}
                 </span>
-                <button 
+                <button
                   className="view-button"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -250,14 +250,14 @@ function Departments({ isAdmin, hostCompanyId, isHostCompany }) {
               </div>
               {(isAdmin || isHostCompany) && (
                 <div className="department-list-actions" onClick={(e) => e.stopPropagation()}>
-                  <button 
+                  <button
                     className="icon-btn edit-btn"
                     onClick={(e) => handleEdit(dept, e)}
                     title="Edit"
                   >
                     <MdEdit />
                   </button>
-                  <button 
+                  <button
                     className="icon-btn delete-btn"
                     onClick={(e) => handleDelete(dept, e)}
                     title="Delete"

@@ -12,6 +12,20 @@ const notificationSchema = new mongoose.Schema({
     required: false,
     index: true
   },
+  // 🔒 CRITICAL: Track who the notification is ABOUT (subject user)
+  subjectUserId: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: false,
+    index: true,
+    ref: 'Staff'
+  },
+  // 🔒 CRITICAL: Track who triggered/created this notification (actor)
+  actorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    required: false,
+    index: true,
+    ref: 'Staff'
+  },
   title: {
     type: String,
     required: true,

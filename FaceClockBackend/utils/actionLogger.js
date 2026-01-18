@@ -74,7 +74,14 @@ async function createNotification(actionType, payload, recipients, metadata, ini
         message,
         recipientType: 'Admin',
         recipientId: adminId,
+        subjectUserId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : (payload.internId ? new mongoose.Types.ObjectId(payload.internId) : null),
+        actorId: initiatedBy || null,
         priority: metadata.priority,
+        relatedEntities: {
+          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+        },
         data: {
           actionType,
           payload,
@@ -99,7 +106,14 @@ async function createNotification(actionType, payload, recipients, metadata, ini
         message,
         recipientType: 'HostCompany',
         recipientId: hostCompanyAdminId,
+        subjectUserId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : (payload.internId ? new mongoose.Types.ObjectId(payload.internId) : null),
+        actorId: initiatedBy || null,
         priority: metadata.priority,
+        relatedEntities: {
+          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+        },
         data: {
           actionType,
           payload,
@@ -124,7 +138,14 @@ async function createNotification(actionType, payload, recipients, metadata, ini
         message,
         recipientType: 'DepartmentManager',
         recipientId: deptManagerId,
+        subjectUserId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : (payload.internId ? new mongoose.Types.ObjectId(payload.internId) : null),
+        actorId: initiatedBy || null,
         priority: metadata.priority,
+        relatedEntities: {
+          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+        },
         data: {
           actionType,
           payload,
@@ -143,13 +164,23 @@ async function createNotification(actionType, payload, recipients, metadata, ini
 
     // Create for specific users
     for (const specificUserId of recipients.specific) {
+      // Determine recipient type based on payload (Intern or Staff)
+      const userRecipientType = payload.role === 'Staff' ? 'Staff' : 'Intern';
+
       const notif = new Notification({
         type: metadata.notificationType,
         title,
         message,
-        recipientType: 'Intern',
+        recipientType: userRecipientType,
         recipientId: specificUserId,
+        subjectUserId: payload.staffId || payload.internId || payload.requesterId || specificUserId, // Who it's about
+        actorId: initiatedBy || null, // Who triggered it
         priority: metadata.priority,
+        relatedEntities: {
+          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+        },
         data: {
           actionType,
           payload,
@@ -419,6 +450,67 @@ function getNotificationMessages(actionType, payload) {
     case 'REPORT_ACTION_TAKEN':
       title = '✅ Report Reviewed';
       message = `Action has been taken on the incident report regarding ${payload.staffName}`;
+      break;
+
+
+    case 'ROTATION_PLAN_CREATED':
+      title = 'Rotation Plan Created';
+      message = `A new rotation plan has been created for ${payload.staffName}.`;
+      break;
+
+    case 'ROTATION_PLAN_UPDATED':
+      title = 'Rotation Plan Updated';
+      message = `Rotation plan updated for ${payload.staffName}.`;
+      break;
+
+    case 'ROTATION_DUE_SOON':
+      title = 'Rotation Due Soon';
+      message = `${payload.staffName} rotation assignment is nearing its end date.`;
+      break;
+
+    case 'ROTATION_EVIDENCE_FAILED':
+      title = 'Rotation Evidence Failed';
+      message = `${payload.staffName} rotation evidence did not meet requirements.`;
+      break;
+
+    case 'ROTATION_EVALUATION_SUBMITTED':
+      title = 'Rotation Evaluation Submitted';
+      message = `Supervisor evaluation submitted for ${payload.staffName}.`;
+      break;
+
+    case 'ROTATION_APPROVAL_PENDING':
+      title = 'Rotation Approval Pending';
+      message = `Approval is pending for ${payload.staffName} rotation.`;
+      break;
+
+    case 'ROTATION_APPROVED':
+      title = 'Rotation Approved';
+      message = `${payload.staffName} rotation has been approved.`;
+      break;
+
+    case 'ROTATION_DENIED':
+      title = 'Rotation Denied';
+      message = `${payload.staffName} rotation was denied.`;
+      break;
+
+    case 'ROTATION_COMPLETED':
+      title = 'Rotation Completed';
+      message = `${payload.staffName} rotation assignment has been completed.`;
+      break;
+
+    case 'ROTATION_REGRESSED':
+      title = 'Rotation Regressed';
+      message = `${payload.staffName} rotation requires additional review.`;
+      break;
+
+    case 'ROTATION_DECLINED':
+      title = 'Rotation Declined';
+      message = `${payload.staffName} rotation was declined and requires action.`;
+      break;
+
+    case 'ROTATION_DEPARTMENT_CHANGED':
+      title = 'Rotation Department Changed';
+      message = `${payload.staffName} has been moved to a new rotation department.`;
       break;
 
     default:

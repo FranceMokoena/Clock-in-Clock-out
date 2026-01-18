@@ -13,6 +13,7 @@ import {
   Linking,
   Animated,
   Dimensions,
+  Image,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { MaterialIcons } from '@expo/vector-icons';
@@ -27,6 +28,7 @@ import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
 import { generateDashboardPDF } from '../utils/pdfGenerator';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 // Global helper function for correction type labels - defined outside component for maximum accessibility
 const getCorrectionTypeLabelGlobal = (type) => {
@@ -55,28 +57,28 @@ export default function AdminDashboard({ navigation, route }) {
   const isAdmin = userInfo.type === 'admin';
   const isHostCompany = userInfo.type === 'hostCompany';
   const hostCompanyId = isHostCompany ? userInfo.id : null;
-  
+
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'staff', 'notAccountable'
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
 
-  
+
   // Avatar dropdown and notifications
   const [showAvatarDropdown, setShowAvatarDropdown] = useState(false);
   const { unreadCount } = useNotifications();
   const [leaveNotificationViewed, setLeaveNotificationViewed] = useState(false);
   const [correctionsNotificationViewed, setCorrectionsNotificationViewed] = useState(false);
-  
+
   // Dashboard stats
   const [stats, setStats] = useState(null);
-  
+
   // Staff list with timesheets
   const [staff, setStaff] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
   const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
-  
+
   // Staff view states
   const [selectedStaff, setSelectedStaff] = useState(null);
   const [showStaffDetails, setShowStaffDetails] = useState(false);
@@ -89,6 +91,10 @@ export default function AdminDashboard({ navigation, route }) {
   const [showLeaveApplicationsExpanded, setShowLeaveApplicationsExpanded] = useState(false);
   const [showAttendanceCorrectionsExpanded, setShowAttendanceCorrectionsExpanded] = useState(false);
   const [showRecentAttendanceExpanded, setShowRecentAttendanceExpanded] = useState(false);
+  const [staffProfileModalVisible, setStaffProfileModalVisible] = useState(false);
+  const [staffProfileModalImage, setStaffProfileModalImage] = useState(null);
+  const [staffProfileModalName, setStaffProfileModalName] = useState('');
+  const [staffProfileCache, setStaffProfileCache] = useState({});
   const [stipendAmountInput, setStipendAmountInput] = useState('');
   const [savingStipend, setSavingStipend] = useState(false);
   const [workingHoursInput, setWorkingHoursInput] = useState({
@@ -99,11 +105,11 @@ export default function AdminDashboard({ navigation, route }) {
     monthlyHours: '',
   });
   const [savingWorkingHours, setSavingWorkingHours] = useState(false);
-  
+
   // Not accountable
   const [notAccountable, setNotAccountable] = useState([]);
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0]);
-  
+
   // PDF export
   const [exportingPDF, setExportingPDF] = useState(false);
   const [exportingDepartment, setExportingDepartment] = useState(false);
@@ -114,14 +120,14 @@ export default function AdminDashboard({ navigation, route }) {
   const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
   const [pendingCorrectionsCount, setPendingCorrectionsCount] = useState(0);
   const [reportsGeneratedCount, setReportsGeneratedCount] = useState(0);
-  
+
   // Attendance Corrections state
   const [attendanceCorrections, setAttendanceCorrections] = useState([]);
   const [correctionsStatusFilter, setCorrectionsStatusFilter] = useState('pending');
   const [selectedCorrection, setSelectedCorrection] = useState(null);
   const [showCorrectionModal, setShowCorrectionModal] = useState(false);
   const [correctionRejectionReason, setCorrectionRejectionReason] = useState('');
-  
+
   // Reports state
   const [selectedIntern, setSelectedIntern] = useState(null);
   const [availableInterns, setAvailableInterns] = useState([]);
@@ -142,7 +148,7 @@ export default function AdminDashboard({ navigation, route }) {
     adminNotes: ''
   });
   const [processingCorrection, setProcessingCorrection] = useState(false);
-  
+
   // Devices state
   const [devices, setDevices] = useState([]);
   const [filteredDevices, setFilteredDevices] = useState([]);
@@ -154,11 +160,11 @@ export default function AdminDashboard({ navigation, route }) {
   const [deviceSearchTerm, setDeviceSearchTerm] = useState('');
   const [deviceStatusFilter, setDeviceStatusFilter] = useState('all'); // 'all', 'pending', 'trusted', 'revoked'
   const [deviceSortOrder, setDeviceSortOrder] = useState('newest'); // 'newest', 'oldest', 'name'
-  
+
   // Helper function to load logo as base64
   const [logoBase64, setLogoBase64] = useState(null);
   const [watermarkBase64, setWatermarkBase64] = useState(null);
-  
+
   useEffect(() => {
     const loadLogos = async () => {
       try {
@@ -171,7 +177,7 @@ export default function AdminDashboard({ navigation, route }) {
           });
           setWatermarkBase64(`data:image/png;base64,${watermarkBase64Data}`);
         }
-        
+
         // Load cappp.jpg for header logo (with fallback)
         let logoAsset;
         try {
@@ -196,14 +202,14 @@ export default function AdminDashboard({ navigation, route }) {
     };
     loadLogos();
   }, []);
-  
+
   // Helper function to generate PDF header with logo
   const getPDFHeaderHTML = (title, subtitle = '') => {
     // Only show logo if it's actually loaded (not placeholder)
-    const logo = logoBase64 && logoBase64 !== 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==' 
-      ? logoBase64 
+    const logo = logoBase64 && logoBase64 !== 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+      ? logoBase64
       : null;
-    
+
     return `
       <div style="position: relative; margin-bottom: 30px; border-bottom: 3px solid #3166AE; padding-bottom: 20px;">
         ${logo ? `
@@ -225,16 +231,16 @@ export default function AdminDashboard({ navigation, route }) {
       </div>
     `;
   };
-  
+
   // Helper function to generate watermark CSS
   const getWatermarkCSS = () => {
     // Only use watermark if it's actually loaded (not placeholder)
     const watermark = watermarkBase64 && watermarkBase64 !== 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
-      ? watermarkBase64 
+      ? watermarkBase64
       : null;
-    
+
     if (!watermark) return '';
-    
+
     return `
       .watermark-container {
         position: fixed;
@@ -278,16 +284,16 @@ export default function AdminDashboard({ navigation, route }) {
       }
     `;
   };
-  
+
   // Helper function to generate watermark HTML
   const getWatermarkHTML = () => {
     // Only use watermark if it's actually loaded (not placeholder)
     const watermark = watermarkBase64 && watermarkBase64 !== 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
-      ? watermarkBase64 
+      ? watermarkBase64
       : null;
-    
+
     if (!watermark) return '';
-    
+
     return `
       <div class="watermark-container">
         <div class="watermark-logo"></div>
@@ -296,19 +302,19 @@ export default function AdminDashboard({ navigation, route }) {
   };
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
-  
+
   // Day details modal
   const [showDayDetails, setShowDayDetails] = useState(false);
   const [selectedDayDetails, setSelectedDayDetails] = useState(null);
   const [loadingDayDetails, setLoadingDayDetails] = useState(false);
-  
+
   // Department interns modal
   const [showDepartmentInterns, setShowDepartmentInterns] = useState(false);
   const [showDepartmentDetails, setShowDepartmentDetails] = useState(false);
   const [selectedDepartment, setSelectedDepartment] = useState(null);
   const [departmentInterns, setDepartmentInterns] = useState([]);
   const [loadingDepartmentInterns, setLoadingDepartmentInterns] = useState(false);
-  
+
   // Host company detail view state
   const [showHostCompanyDetails, setShowHostCompanyDetails] = useState(false); // kept for backward compatibility, no longer used as modal
   const [selectedHostCompany, setSelectedHostCompany] = useState(null);
@@ -325,6 +331,48 @@ export default function AdminDashboard({ navigation, route }) {
   const [processingApplication, setProcessingApplication] = useState(false);
 
   const dynamicStyles = getDynamicStyles(theme);
+  const [departmentCounts, setDepartmentCounts] = useState({});
+  const [hostDepartmentCounts, setHostDepartmentCounts] = useState({});
+
+  const buildDepartmentCountMap = (members = []) => {
+    return members.reduce((acc, member) => {
+      if (!member || !member.department || member.isActive === false) return acc;
+      const key = member.department.trim().toLowerCase();
+      if (!acc[key]) {
+        acc[key] = { memberCount: 0, internCount: 0, staffCount: 0 };
+      }
+      acc[key].memberCount += 1;
+      if (member.role === 'Intern') {
+        acc[key].internCount += 1;
+      } else {
+        acc[key].staffCount += 1;
+      }
+      return acc;
+    }, {});
+  };
+
+  const computeCountsFromStaff = (members = []) => {
+    return members.reduce(
+      (acc, member) => {
+        if (!member || member.isActive === false) return acc;
+        acc.memberCount += 1;
+        if (member.role === 'Intern') {
+          acc.internCount += 1;
+        } else {
+          acc.staffCount += 1;
+        }
+        return acc;
+      },
+      { memberCount: 0, internCount: 0, staffCount: 0 }
+    );
+  };
+
+  const getCountsForDepartment = (deptName, cache) => {
+    if (!deptName) return { memberCount: 0, internCount: 0, staffCount: 0 };
+    const key = deptName.trim().toLowerCase();
+    const cached = cache[key];
+    return cached || { memberCount: 0, internCount: 0, staffCount: 0 };
+  };
 
   useEffect(() => {
     loadData();
@@ -443,13 +491,13 @@ export default function AdminDashboard({ navigation, route }) {
     try {
       // Load staff list with full data from admin endpoint
       const today = new Date();
-      const params = { 
+      const params = {
         fullData: 'true', // Get all fields including department, hostCompany, etc.
         month: today.getMonth() + 1, // Current month (required by endpoint)
         year: today.getFullYear(), // Current year (required by endpoint)
         ...(isHostCompany && { hostCompanyId })
       };
-      const response = await axios.get(`${API_BASE_URL}/staff/admin/staff`, { 
+      const response = await axios.get(`${API_BASE_URL}/staff/admin/staff`, {
         params,
         timeout: 10000 // 10 second timeout
       });
@@ -486,7 +534,7 @@ export default function AdminDashboard({ navigation, route }) {
           params: { date },
           timeout: 10000 // 10 second timeout
         });
-        
+
         if (response.data.success) {
           // Convert day-details logs to a single, accurate timesheet row
           const logs = response.data.logs || [];
@@ -526,12 +574,12 @@ export default function AdminDashboard({ navigation, route }) {
         // Use timesheet endpoint for weekly/monthly
         const month = today.getMonth() + 1;
         const year = today.getFullYear();
-        
+
         response = await axios.get(`${API_BASE_URL}/staff/admin/staff/${staffId}/timesheet`, {
           params: { month, year },
           timeout: 10000 // 10 second timeout
         });
-        
+
         if (response.data.success) {
           const timesheetData = response.data.timesheet || [];
           // Filter based on period
@@ -573,7 +621,7 @@ export default function AdminDashboard({ navigation, route }) {
 
   const loadNotAccountable = async () => {
     try {
-      const params = { 
+      const params = {
         date: selectedDate,
         ...(isHostCompany && { hostCompanyId })
       };
@@ -591,7 +639,7 @@ export default function AdminDashboard({ navigation, route }) {
     try {
       setLoadingDayDetails(true);
       setShowDayDetails(true);
-      
+
       // If staffIdentifier is an ID, use it directly; otherwise find by name
       let staffId = staffIdentifier;
       if (typeof staffIdentifier === 'string' && !staffIdentifier.match(/^[0-9a-fA-F]{24}$/)) {
@@ -624,18 +672,18 @@ export default function AdminDashboard({ navigation, route }) {
   const exportDepartmentPDF = async (department) => {
     try {
       setExportingDepartment(true);
-      
+
       // Load all interns for this department
       const internsResponse = await axios.get(`${API_BASE_URL}/staff/admin/staff`, {
-        params: { 
+        params: {
           department: department.name,
           fullData: true,
           ...(isHostCompany && { hostCompanyId })
         }
       });
-      
+
       const interns = internsResponse.data.success ? internsResponse.data.staff : [];
-      
+
       // Create professional HTML table
       const html = `
         <!DOCTYPE html>
@@ -800,24 +848,24 @@ export default function AdminDashboard({ navigation, route }) {
                 <div class="info-item">
                   <div class="info-label">Created At</div>
                   <div class="info-value">${new Date(department.createdAt).toLocaleString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}</div>
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}</div>
                 </div>
                 ` : ''}
                 ${department.updatedAt ? `
                 <div class="info-item">
                   <div class="info-label">Last Updated</div>
                   <div class="info-value">${new Date(department.updatedAt).toLocaleString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}</div>
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}</div>
                 </div>
                 ` : ''}
               </div>
@@ -850,10 +898,10 @@ export default function AdminDashboard({ navigation, route }) {
                       <td>${intern.location || 'N/A'}</td>
                       <td>${intern.isActive ? 'Active' : 'Inactive'}</td>
                       <td>${intern.createdAt ? new Date(intern.createdAt).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric'
-                      }) : 'N/A'}</td>
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }) : 'N/A'}</td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -863,19 +911,19 @@ export default function AdminDashboard({ navigation, route }) {
             
             <div class="footer">
               Generated on ${new Date().toLocaleString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-              })}
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}
             </div>
           </body>
         </html>
       `;
-      
+
       const { uri } = await Print.printToFileAsync({ html });
-      
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
@@ -891,33 +939,33 @@ export default function AdminDashboard({ navigation, route }) {
       setExportingDepartment(false);
     }
   };
-  
+
   const exportAllDepartmentsPDF = async () => {
     try {
       setExportingAllDepartments(true);
-      
+
       // Load all departments - for admin, get ALL departments; for host company, get only their departments
       const params = isHostCompany ? { hostCompanyId } : {};
       console.log('📊 Exporting all departments with params:', params);
       const deptResponse = await axios.get(`${API_BASE_URL}/staff/admin/departments/all`, {
         params
       });
-      
+
       const allDepartments = deptResponse.data.success ? deptResponse.data.departments : [];
       console.log('📊 Total departments found:', allDepartments.length);
-      
+
       if (allDepartments.length === 0) {
         Alert.alert('No Data', 'No departments found to export.');
         setExportingAllDepartments(false);
         return;
       }
-      
+
       // Load all interns for each department
       const departmentsWithInterns = await Promise.all(
         allDepartments.map(async (dept) => {
           console.log(`📊 Loading interns for department: ${dept.name}`);
           const internsResponse = await axios.get(`${API_BASE_URL}/staff/admin/staff`, {
-            params: { 
+            params: {
               department: dept.name,
               fullData: true,
               ...(isHostCompany && { hostCompanyId })
@@ -931,9 +979,9 @@ export default function AdminDashboard({ navigation, route }) {
           };
         })
       );
-      
+
       console.log(`📊 Exporting ${departmentsWithInterns.length} departments with interns`);
-      
+
       // Create professional HTML table
       const html = `
         <!DOCTYPE html>
@@ -1152,12 +1200,12 @@ export default function AdminDashboard({ navigation, route }) {
                     <div class="info-item">
                       <div class="info-label">Created At</div>
                       <div class="info-value">${new Date(dept.createdAt).toLocaleString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}</div>
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}</div>
                     </div>
                     ` : ''}
                   </div>
@@ -1188,10 +1236,10 @@ export default function AdminDashboard({ navigation, route }) {
                           <td>${intern.location || 'N/A'}</td>
                           <td>${intern.isActive ? 'Active' : 'Inactive'}</td>
                           <td>${intern.createdAt ? new Date(intern.createdAt).toLocaleDateString('en-US', {
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric'
-                          }) : 'N/A'}</td>
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }) : 'N/A'}</td>
                         </tr>
                       `).join('')}
                     </tbody>
@@ -1203,19 +1251,19 @@ export default function AdminDashboard({ navigation, route }) {
             
             <div class="footer">
               Generated on ${new Date().toLocaleString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-              })}
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}
             </div>
           </body>
         </html>
       `;
-      
+
       const { uri } = await Print.printToFileAsync({ html });
-      
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
@@ -1231,27 +1279,27 @@ export default function AdminDashboard({ navigation, route }) {
       setExportingAllDepartments(false);
     }
   };
-  
+
   const exportAllHostCompaniesPDF = async () => {
     try {
       setExportingAllHostCompanies(true);
-      
+
       // Load all host companies - for admin, get ALL companies; for host company, get only their company
       const params = isHostCompany ? { hostCompanyId } : {};
       console.log('📊 Exporting all host companies with params:', params);
       const companiesResponse = await axios.get(`${API_BASE_URL}/staff/admin/host-companies`, {
         params
       });
-      
+
       const allCompanies = companiesResponse.data.success ? companiesResponse.data.companies : [];
       console.log('📊 Total host companies found:', allCompanies.length);
-      
+
       if (allCompanies.length === 0) {
         Alert.alert('No Data', 'No host companies found to export.');
         setExportingAllHostCompanies(false);
         return;
       }
-      
+
       // Load all departments and interns for each company
       const companiesWithData = await Promise.all(
         allCompanies.map(async (company) => {
@@ -1264,7 +1312,7 @@ export default function AdminDashboard({ navigation, route }) {
               params: { hostCompanyId: company._id, fullData: true }
             })
           ]);
-          
+
           const departments = deptResponse.data.success ? deptResponse.data.departments : [];
           const interns = internsResponse.data.success ? internsResponse.data.staff : [];
           console.log(`📊 Company "${company.name}": ${departments.length} departments, ${interns.length} interns`);
@@ -1275,9 +1323,9 @@ export default function AdminDashboard({ navigation, route }) {
           };
         })
       );
-      
+
       console.log(`📊 Exporting ${companiesWithData.length} companies with full data`);
-      
+
       // Create professional HTML table
       const html = `
         <!DOCTYPE html>
@@ -1502,12 +1550,12 @@ export default function AdminDashboard({ navigation, route }) {
                     <div class="info-item">
                       <div class="info-label">Created At</div>
                       <div class="info-value">${new Date(company.createdAt).toLocaleString('en-US', {
-                        year: 'numeric',
-                        month: 'long',
-                        day: 'numeric',
-                        hour: '2-digit',
-                        minute: '2-digit'
-                      })}</div>
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}</div>
                     </div>
                     ` : ''}
                   </div>
@@ -1532,10 +1580,10 @@ export default function AdminDashboard({ navigation, route }) {
                           <td>${dept.location || 'N/A'}</td>
                           <td>${dept.isActive ? 'Active' : 'Inactive'}</td>
                           <td>${dept.createdAt ? new Date(dept.createdAt).toLocaleDateString('en-US', {
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric'
-                          }) : 'N/A'}</td>
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }) : 'N/A'}</td>
                         </tr>
                       `).join('')}
                     </tbody>
@@ -1570,10 +1618,10 @@ export default function AdminDashboard({ navigation, route }) {
                           <td>${intern.location || 'N/A'}</td>
                           <td>${intern.isActive ? 'Active' : 'Inactive'}</td>
                           <td>${intern.createdAt ? new Date(intern.createdAt).toLocaleDateString('en-US', {
-                            year: 'numeric',
-                            month: 'short',
-                            day: 'numeric'
-                          }) : 'N/A'}</td>
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }) : 'N/A'}</td>
                         </tr>
                       `).join('')}
                     </tbody>
@@ -1585,19 +1633,19 @@ export default function AdminDashboard({ navigation, route }) {
             
             <div class="footer">
               Generated on ${new Date().toLocaleString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-              })}
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}
             </div>
           </body>
         </html>
       `;
-      
+
       const { uri } = await Print.printToFileAsync({ html });
-      
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
@@ -1617,7 +1665,7 @@ export default function AdminDashboard({ navigation, route }) {
   const exportHostCompanyPDF = async (company) => {
     try {
       setExportingHostCompany(true);
-      
+
       // Load all departments and interns for this host company
       const [deptResponse, internsResponse] = await Promise.all([
         axios.get(`${API_BASE_URL}/staff/admin/departments/all`, {
@@ -1627,10 +1675,10 @@ export default function AdminDashboard({ navigation, route }) {
           params: { hostCompanyId: company._id, fullData: true }
         })
       ]);
-      
+
       const departments = deptResponse.data.success ? deptResponse.data.departments : [];
       const interns = internsResponse.data.success ? internsResponse.data.staff : [];
-      
+
       // Create professional HTML table
       const html = `
         <!DOCTYPE html>
@@ -1793,12 +1841,12 @@ export default function AdminDashboard({ navigation, route }) {
                 <div class="info-item">
                   <div class="info-label">Created At</div>
                   <div class="info-value">${new Date(company.createdAt).toLocaleString('en-US', {
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric',
-                    hour: '2-digit',
-                    minute: '2-digit'
-                  })}</div>
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}</div>
                 </div>
                 ` : ''}
               </div>
@@ -1825,10 +1873,10 @@ export default function AdminDashboard({ navigation, route }) {
                       <td>${dept.location || 'N/A'}</td>
                       <td>${dept.isActive ? 'Active' : 'Inactive'}</td>
                       <td>${dept.createdAt ? new Date(dept.createdAt).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric'
-                      }) : 'N/A'}</td>
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }) : 'N/A'}</td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -1865,10 +1913,10 @@ export default function AdminDashboard({ navigation, route }) {
                       <td>${intern.location || 'N/A'}</td>
                       <td>${intern.isActive ? 'Active' : 'Inactive'}</td>
                       <td>${intern.createdAt ? new Date(intern.createdAt).toLocaleDateString('en-US', {
-                        year: 'numeric',
-                        month: 'short',
-                        day: 'numeric'
-                      }) : 'N/A'}</td>
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      }) : 'N/A'}</td>
                     </tr>
                   `).join('')}
                 </tbody>
@@ -1878,19 +1926,19 @@ export default function AdminDashboard({ navigation, route }) {
             
             <div class="footer">
               Generated on ${new Date().toLocaleString('en-US', {
-                year: 'numeric',
-                month: 'long',
-                day: 'numeric',
-                hour: '2-digit',
-                minute: '2-digit'
-              })}
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      })}
             </div>
           </body>
         </html>
       `;
-      
+
       const { uri } = await Print.printToFileAsync({ html });
-      
+
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
           mimeType: 'application/pdf',
@@ -2015,12 +2063,12 @@ export default function AdminDashboard({ navigation, route }) {
                 ${timesheet.length > 0 ? timesheet.map(entry => `
                   <tr style="${entry.extraHours ? 'background-color: #fee2e2;' : ''}">
                     <td>
-                      ${new Date(entry.date).toLocaleDateString('en-US', { 
-                        weekday: 'short', 
-                        year: 'numeric', 
-                        month: 'short', 
-                        day: 'numeric' 
-                      })}
+                      ${new Date(entry.date).toLocaleDateString('en-US', {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric'
+      })}
                       ${entry.extraHours ? `<br><span style="color: #dc2626; font-size: 10px; font-weight: 600;">${entry.extraHours}</span>` : ''}
                     </td>
                     <td>${entry.timeIn || '-'}</td>
@@ -2040,7 +2088,7 @@ export default function AdminDashboard({ navigation, route }) {
 
       // Generate PDF
       const { uri } = await Print.printToFileAsync({ html });
-      
+
       // Share the PDF
       if (await Sharing.isAvailableAsync()) {
         await Sharing.shareAsync(uri, {
@@ -2059,7 +2107,7 @@ export default function AdminDashboard({ navigation, route }) {
   };
 
   // Export reports list as PDF (table)
-  const exportReportsListPDF = async (reports = []) => {
+  const exportCaseLogsListPDF = async (reports = []) => {
     try {
       if (!reports || reports.length === 0) {
         Alert.alert('No Data', 'No reports available to export.');
@@ -2095,7 +2143,7 @@ export default function AdminDashboard({ navigation, route }) {
         </head>
         <body>
           ${getWatermarkHTML()}
-          ${getPDFHeaderHTML('Intern Reports', 'Exported Report List')}
+          ${getPDFHeaderHTML('Intern CaseLogs', 'Exported CaseLogs List')}
           <table>
             <thead>
               <tr>
@@ -2119,7 +2167,7 @@ export default function AdminDashboard({ navigation, route }) {
 
       const { uri } = await Print.printToFileAsync({ html });
       if (await Sharing.isAvailableAsync()) {
-        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Intern Reports Export' });
+        await Sharing.shareAsync(uri, { mimeType: 'application/pdf', dialogTitle: 'Intern CaseLogs Export' });
       } else {
         Alert.alert('Exported', `PDF saved to: ${uri}`);
       }
@@ -2225,7 +2273,7 @@ export default function AdminDashboard({ navigation, route }) {
     const chartSize = Math.min(size, screenWidth * 0.4);
     const strokeWidth = 30;
     const radius = (chartSize - strokeWidth) / 2;
-    
+
     useEffect(() => {
       // Only animate if not loading and data exists with values
       if (!loading && data && data.length > 0) {
@@ -2244,7 +2292,7 @@ export default function AdminDashboard({ navigation, route }) {
         animatedValue.setValue(0);
       }
     }, [loading, data]);
-    
+
     // Show loading only if explicitly loading AND no data yet
     if (loading && (!data || data.length === 0)) {
       return (
@@ -2253,7 +2301,7 @@ export default function AdminDashboard({ navigation, route }) {
         </View>
       );
     }
-    
+
     // Check for data
     if (!data || data.length === 0) {
       return (
@@ -2262,7 +2310,7 @@ export default function AdminDashboard({ navigation, route }) {
         </View>
       );
     }
-    
+
     // Calculate total and percentages
     const total = data.reduce((sum, item) => sum + (item.value || 0), 0);
     if (total === 0) {
@@ -2272,7 +2320,7 @@ export default function AdminDashboard({ navigation, route }) {
         </View>
       );
     }
-    
+
     // Create slices with proper angles for circular pie chart
     let currentAngle = -90; // Start from top
     const slices = data.map((item) => {
@@ -2282,7 +2330,7 @@ export default function AdminDashboard({ navigation, route }) {
       const startAngle = currentAngle;
       const endAngle = currentAngle + angle;
       currentAngle = endAngle;
-      
+
       return {
         ...item,
         value,
@@ -2292,12 +2340,12 @@ export default function AdminDashboard({ navigation, route }) {
         angle,
       };
     });
-    
+
     const scale = animatedValue.interpolate({
       inputRange: [0, 1],
       outputRange: [0.85, 1],
     });
-    
+
     return (
       <View style={[styles.pieChartContainer, { width: chartSize, height: chartSize }]}>
         <Animated.View
@@ -2319,18 +2367,18 @@ export default function AdminDashboard({ navigation, route }) {
               backgroundColor: isDarkMode ? theme.surface : '#f5f5f5',
             }}
           />
-          
+
           {/* Pie slices - using border-based approach for proper circular segments */}
           {slices.map((slice, index) => {
             const rotation = slice.startAngle;
             const sweepAngle = slice.angle;
-            
+
             // Determine which borders to show based on angle
             const showTop = true; // Always show top for first quadrant
             const showRight = sweepAngle > 90;
             const showBottom = sweepAngle > 180;
             const showLeft = sweepAngle > 270;
-            
+
             return (
               <Animated.View
                 key={index}
@@ -2361,7 +2409,7 @@ export default function AdminDashboard({ navigation, route }) {
               </Animated.View>
             );
           })}
-          
+
           {/* Center circle with total - properly centered */}
           <View
             style={{
@@ -2401,13 +2449,13 @@ export default function AdminDashboard({ navigation, route }) {
 
   const renderDashboard = () => {
     if (!stats) return null;
-    
+
     // Prepare pie chart data - don't filter out zeros, show them
     const attendancePieData = [
       { label: 'Present', value: stats.currentlyIn || 0, color: '#4CAF50' },
       { label: 'Absent', value: Math.max(0, (stats.totalStaff || 0) - (stats.currentlyIn || 0)), color: '#F44336' },
     ];
-    
+
     const statusPieData = [
       { label: 'On Time', value: Math.max(0, (stats.clockInsToday || 0) - (stats.lateArrivals || 0)), color: '#2196F3' },
       { label: 'Late', value: stats.lateArrivals || 0, color: '#FF9800' },
@@ -2417,7 +2465,7 @@ export default function AdminDashboard({ navigation, route }) {
       <ScrollView style={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <View style={styles.dashboardContainer}>
           <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Dashboard Overview</Text>
-          
+
           {/* Pie Charts Section */}
           <View style={styles.pieChartsContainer}>
             <View style={[styles.pieChartCard, dynamicStyles.statCard]}>
@@ -2434,7 +2482,7 @@ export default function AdminDashboard({ navigation, route }) {
                 ))}
               </View>
             </View>
-            
+
             <View style={[styles.pieChartCard, dynamicStyles.statCard]}>
               <Text style={[styles.pieChartTitle, dynamicStyles.statLabel]}>Clock-In Status</Text>
               <AnimatedPieChart data={statusPieData} size={180} loading={loading} />
@@ -2450,7 +2498,7 @@ export default function AdminDashboard({ navigation, route }) {
               </View>
             </View>
           </View>
-          
+
           <View style={styles.statsGrid}>
             {/* Total Staff Card */}
             <TouchableOpacity
@@ -2491,7 +2539,7 @@ export default function AdminDashboard({ navigation, route }) {
                 <Text style={[styles.statLabel, dynamicStyles.statLabel]}>Clock-Ins Today</Text>
               </View>
             </TouchableOpacity>
-            
+
             {/* Currently In Card */}
             <TouchableOpacity
               activeOpacity={0.8}
@@ -2511,7 +2559,7 @@ export default function AdminDashboard({ navigation, route }) {
                 <Text style={[styles.statLabel, dynamicStyles.statLabel]}>Currently In</Text>
               </View>
             </TouchableOpacity>
-            
+
             {/* Late Arrivals Card */}
             <TouchableOpacity
               activeOpacity={0.8}
@@ -2583,7 +2631,7 @@ export default function AdminDashboard({ navigation, route }) {
 
           {/* Second row of Quick Actions */}
           <View style={[styles.statsGrid, { marginTop: 12 }]}>
-            {/* Reports Quick Action */}
+            {/* CaseLogs Quick Action */}
             <TouchableOpacity
               activeOpacity={0.8}
               onPress={() => {
@@ -2599,7 +2647,7 @@ export default function AdminDashboard({ navigation, route }) {
                   </View>
                   <Text style={[styles.statValue, dynamicStyles.statValue]}>{reportsGeneratedCount}</Text>
                 </View>
-                <Text style={[styles.statLabel, dynamicStyles.statLabel]}>Official Reports</Text>
+                    <Text style={[styles.statLabel, dynamicStyles.statLabel]}>Official CaseLogs</Text>
               </View>
             </TouchableOpacity>
 
@@ -2699,7 +2747,52 @@ export default function AdminDashboard({ navigation, route }) {
         }
       }
 
-      setStaffDetails(fullDetails);
+    const cachedPicture = await loadStaffProfile(member._id);
+      const compensation = await loadStaffCompensation(member._id);
+      setStaffDetails({
+        ...fullDetails,
+        profilePicture: fullDetails.profilePicture || cachedPicture,
+        stipendAmount: compensation?.stipend ?? fullDetails.stipendAmount,
+        expectedWorkingDaysPerWeek: compensation?.workingHours?.workingDaysPerWeek ?? fullDetails.expectedWorkingDaysPerWeek,
+        expectedWorkingDaysPerMonth: compensation?.workingHours?.workingDaysPerMonth ?? fullDetails.expectedWorkingDaysPerMonth,
+        expectedHoursPerDay: compensation?.workingHours?.hoursPerDay ?? fullDetails.expectedHoursPerDay,
+        expectedWeeklyHours: compensation?.workingHours?.weeklyHours ?? fullDetails.expectedWeeklyHours,
+        expectedMonthlyHours: compensation?.workingHours?.monthlyHours ?? fullDetails.expectedMonthlyHours,
+      });
+      setStipendAmountInput(
+        (compensation?.stipend ?? fullDetails.stipendAmount) !== null && (compensation?.stipend ?? fullDetails.stipendAmount) !== undefined
+          ? String(compensation?.stipend ?? fullDetails.stipendAmount)
+          : ''
+      );
+      const preferredWorkingHours = compensation?.workingHours || {
+        workingDaysPerWeek: fullDetails.expectedWorkingDaysPerWeek,
+        workingDaysPerMonth: fullDetails.expectedWorkingDaysPerMonth,
+        hoursPerDay: fullDetails.expectedHoursPerDay,
+        weeklyHours: fullDetails.expectedWeeklyHours,
+        monthlyHours: fullDetails.expectedMonthlyHours,
+      };
+      setWorkingHoursInput({
+        workingDaysPerWeek:
+          preferredWorkingHours?.workingDaysPerWeek !== null && preferredWorkingHours?.workingDaysPerWeek !== undefined
+            ? String(preferredWorkingHours.workingDaysPerWeek)
+            : '',
+        workingDaysPerMonth:
+          preferredWorkingHours?.workingDaysPerMonth !== null && preferredWorkingHours?.workingDaysPerMonth !== undefined
+            ? String(preferredWorkingHours.workingDaysPerMonth)
+            : '',
+        hoursPerDay:
+          preferredWorkingHours?.hoursPerDay !== null && preferredWorkingHours?.hoursPerDay !== undefined
+            ? String(preferredWorkingHours.hoursPerDay)
+            : '',
+        weeklyHours:
+          preferredWorkingHours?.weeklyHours !== null && preferredWorkingHours?.weeklyHours !== undefined
+            ? String(preferredWorkingHours.weeklyHours)
+            : '',
+        monthlyHours:
+          preferredWorkingHours?.monthlyHours !== null && preferredWorkingHours?.monthlyHours !== undefined
+            ? String(preferredWorkingHours.monthlyHours)
+            : '',
+      });
       setStipendAmountInput(
         fullDetails.stipendAmount !== null && fullDetails.stipendAmount !== undefined
           ? String(fullDetails.stipendAmount)
@@ -2962,12 +3055,12 @@ export default function AdminDashboard({ navigation, route }) {
 
   const exportTimesheetPDF = async () => {
     if (!selectedStaff || !staffTimesheet) return;
-    
+
     try {
       setExportingPDF(true);
-      
-      const periodLabel = timesheetPeriod === 'today' ? 'Daily' : 
-                         timesheetPeriod === 'weekly' ? 'Weekly' : 'Monthly';
+
+      const periodLabel = timesheetPeriod === 'today' ? 'Daily' :
+        timesheetPeriod === 'weekly' ? 'Weekly' : 'Monthly';
 
       // Calculate stats matching the UI
       const completeDays = staffTimesheet.filter(e => (e.timeOut || e.clockOutTime) && (e.timeIn || e.clockInTime)).length;
@@ -2993,7 +3086,7 @@ export default function AdminDashboard({ navigation, route }) {
           year: 'numeric',
         });
       };
-      
+
       const html = `
         <!DOCTYPE html>
         <html>
@@ -3142,9 +3235,9 @@ export default function AdminDashboard({ navigation, route }) {
               <p><strong>Department:</strong> ${selectedStaff.department || 'N/A'}</p>
               <p><strong>Company:</strong> ${selectedStaff.hostCompany?.companyName || selectedStaff.hostCompany?.name || 'N/A'}</p>
               <p><strong>Period:</strong> ${periodLabel}</p>
-              <p><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', { 
-                weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' 
-              })}</p>
+              <p><strong>Generated:</strong> ${new Date().toLocaleDateString('en-US', {
+        weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
+      })}</p>
             </div>
             
             <div class="summary-section">
@@ -3353,7 +3446,7 @@ export default function AdminDashboard({ navigation, route }) {
                     flexDirection: 'row',
                     paddingVertical: 16,
                     paddingHorizontal: 16,
-                    backgroundColor: index % 2 === 0 
+                    backgroundColor: index % 2 === 0
                       ? (isDarkMode ? '#1e293b' : '#fff')
                       : (isDarkMode ? '#243447' : '#f8fafc'),
                     borderBottomWidth: index < staff.length - 1 ? 1 : 0,
@@ -3365,23 +3458,35 @@ export default function AdminDashboard({ navigation, route }) {
                 >
                   {/* Name Column with Avatar */}
                   <View style={{ flex: 2.5, flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={{
-                      width: 40,
-                      height: 40,
-                      borderRadius: 20,
-                      backgroundColor: theme.primary,
-                      justifyContent: 'center',
-                      alignItems: 'center',
-                      marginRight: 12,
-                    }}>
-                      <Text style={{
-                        color: '#fff',
-                        fontSize: 14,
-                        fontWeight: '700',
-                      }}>
-                        {getInitials(member.name, member.surname)}
-                      </Text>
-                    </View>
+                        <TouchableOpacity
+                          onPress={() => openStaffProfileModal(member)}
+                          disabled={!member.profilePicture && !staffProfileCache[member._id]}
+                          style={{
+                            width: 40,
+                            height: 40,
+                            borderRadius: 20,
+                            backgroundColor: theme.primary,
+                            justifyContent: 'center',
+                            alignItems: 'center',
+                            marginRight: 12,
+                            overflow: 'hidden',
+                          }}
+                        >
+                          {(member.profilePicture || staffProfileCache[member._id]) ? (
+                            <Image
+                              source={{ uri: member.profilePicture || staffProfileCache[member._id] }}
+                              style={styles.staffListAvatarImage}
+                            />
+                          ) : (
+                            <Text style={{
+                              color: '#fff',
+                              fontSize: 14,
+                              fontWeight: '700',
+                            }}>
+                              {getInitials(member.name, member.surname)}
+                            </Text>
+                          )}
+                        </TouchableOpacity>
                     <View style={{ flex: 1 }}>
                       <Text style={{
                         fontSize: 14,
@@ -3523,11 +3628,27 @@ export default function AdminDashboard({ navigation, route }) {
             </View>
 
             <View style={styles.staffDetailsHeader}>
-              <View style={styles.staffDetailsAvatar}>
-                <Text style={styles.staffAvatarLarge}>
-                  {getInitials(staffDetails.name, staffDetails.surname)}
-                </Text>
-              </View>
+              <TouchableOpacity
+                onPress={() => openStaffProfileModal(staffDetails)}
+                disabled={
+                  !staffDetails?.profilePicture &&
+                  !staffProfileCache[staffDetails?._id]
+                }
+                style={{ marginRight: 12 }}
+              >
+                {(staffDetails?.profilePicture || staffProfileCache[staffDetails?._id]) ? (
+                  <Image
+                    source={{ uri: staffDetails.profilePicture || staffProfileCache[staffDetails._id] }}
+                    style={styles.staffDetailsAvatarImage}
+                  />
+                ) : (
+                  <View style={styles.staffDetailsAvatar}>
+                    <Text style={styles.staffAvatarLarge}>
+                      {getInitials(staffDetails.name, staffDetails.surname)}
+                    </Text>
+                  </View>
+                )}
+              </TouchableOpacity>
               <View style={{ flex: 1 }}>
                 <Text style={[styles.staffDetailsName, dynamicStyles.staffName]}>
                   {staffDetails.name} {staffDetails.surname || ''}
@@ -3765,64 +3886,64 @@ export default function AdminDashboard({ navigation, route }) {
             {(staffDetails.attendanceSummary ||
               staffDetails.leaveApplications ||
               staffDetails.attendanceCorrections) && (
-              <View style={[styles.staffDetailsInfo, styles.officialCard, { marginTop: 16, padding: 0, overflow: 'hidden' }]}>
-                <View style={[styles.officialRibbon, { backgroundColor: theme.primary }]}>
-                  <View>
-                    <Text style={styles.officialRibbonText}>Performance Overview</Text>
-                    <Text style={styles.officialRibbonSubText}>Key Performance Indicators</Text>
-                  </View>
-                </View>
-                <View style={{ padding: 16 }}>
-                  <View style={styles.performanceGrid}>
-                    {staffDetails.attendanceSummary && (
-                      <>
-                        <View style={[styles.performanceCard, { borderLeftColor: theme.primary }]}>
-                          <Text style={styles.performanceLabel}>Hours Worked</Text>
-                          <Text style={[styles.performanceValue, { color: theme.primary }]}>
-                            {staffDetails.attendanceSummary.totalHours || '0.0'}
-                          </Text>
-                          <Text style={styles.performanceUnit}>hours</Text>
-                        </View>
-                        <View style={[styles.performanceCard, { borderLeftColor: '#16a34a' }]}>
-                          <Text style={styles.performanceLabel}>Days Present</Text>
-                          <Text style={[styles.performanceValue, { color: '#16a34a' }]}>
-                            {staffDetails.attendanceSummary.daysPresent || '0'}
-                          </Text>
-                          <Text style={styles.performanceUnit}>days</Text>
-                        </View>
-                        <View style={[styles.performanceCard, { borderLeftColor: '#eab308' }]}>
-                          <Text style={styles.performanceLabel}>Attendance Rate</Text>
-                          <Text style={[styles.performanceValue, { color: '#eab308' }]}>
-                            {(staffDetails.attendanceSummary.attendanceRate || '0') + '%'}
-                          </Text>
-                          <Text style={styles.performanceUnit}>compliance</Text>
-                        </View>
-                      </>
-                    )}
-
-                    <View style={[styles.performanceCard, { borderLeftColor: '#3b82f6' }]}>
-                      <Text style={styles.performanceLabel}>Leave Applications</Text>
-                      <Text style={[styles.performanceValue, { color: '#3b82f6' }]}>
-                        {Array.isArray(staffDetails.leaveApplications)
-                          ? staffDetails.leaveApplications.length
-                          : 0}
-                      </Text>
-                      <Text style={styles.performanceUnit}>requests</Text>
-                    </View>
-
-                    <View style={[styles.performanceCard, { borderLeftColor: '#dc2626' }]}>
-                      <Text style={styles.performanceLabel}>Corrections</Text>
-                      <Text style={[styles.performanceValue, { color: '#dc2626' }]}>
-                        {Array.isArray(staffDetails.attendanceCorrections)
-                          ? staffDetails.attendanceCorrections.length
-                          : 0}
-                      </Text>
-                      <Text style={styles.performanceUnit}>pending</Text>
+                <View style={[styles.staffDetailsInfo, styles.officialCard, { marginTop: 16, padding: 0, overflow: 'hidden' }]}>
+                  <View style={[styles.officialRibbon, { backgroundColor: theme.primary }]}>
+                    <View>
+                      <Text style={styles.officialRibbonText}>Performance Overview</Text>
+                      <Text style={styles.officialRibbonSubText}>Key Performance Indicators</Text>
                     </View>
                   </View>
+                  <View style={{ padding: 16 }}>
+                    <View style={styles.performanceGrid}>
+                      {staffDetails.attendanceSummary && (
+                        <>
+                          <View style={[styles.performanceCard, { borderLeftColor: theme.primary }]}>
+                            <Text style={styles.performanceLabel}>Hours Worked</Text>
+                            <Text style={[styles.performanceValue, { color: theme.primary }]}>
+                              {staffDetails.attendanceSummary.totalHours || '0.0'}
+                            </Text>
+                            <Text style={styles.performanceUnit}>hours</Text>
+                          </View>
+                          <View style={[styles.performanceCard, { borderLeftColor: '#16a34a' }]}>
+                            <Text style={styles.performanceLabel}>Days Present</Text>
+                            <Text style={[styles.performanceValue, { color: '#16a34a' }]}>
+                              {staffDetails.attendanceSummary.daysPresent || '0'}
+                            </Text>
+                            <Text style={styles.performanceUnit}>days</Text>
+                          </View>
+                          <View style={[styles.performanceCard, { borderLeftColor: '#eab308' }]}>
+                            <Text style={styles.performanceLabel}>Attendance Rate</Text>
+                            <Text style={[styles.performanceValue, { color: '#eab308' }]}>
+                              {(staffDetails.attendanceSummary.attendanceRate || '0') + '%'}
+                            </Text>
+                            <Text style={styles.performanceUnit}>compliance</Text>
+                          </View>
+                        </>
+                      )}
+
+                      <View style={[styles.performanceCard, { borderLeftColor: '#3b82f6' }]}>
+                        <Text style={styles.performanceLabel}>Leave Applications</Text>
+                        <Text style={[styles.performanceValue, { color: '#3b82f6' }]}>
+                          {Array.isArray(staffDetails.leaveApplications)
+                            ? staffDetails.leaveApplications.length
+                            : 0}
+                        </Text>
+                        <Text style={styles.performanceUnit}>requests</Text>
+                      </View>
+
+                      <View style={[styles.performanceCard, { borderLeftColor: '#dc2626' }]}>
+                        <Text style={styles.performanceLabel}>Corrections</Text>
+                        <Text style={[styles.performanceValue, { color: '#dc2626' }]}>
+                          {Array.isArray(staffDetails.attendanceCorrections)
+                            ? staffDetails.attendanceCorrections.length
+                            : 0}
+                        </Text>
+                        <Text style={styles.performanceUnit}>pending</Text>
+                      </View>
+                    </View>
+                  </View>
                 </View>
-              </View>
-            )}
+              )}
 
             {/* Recent attendance detail, similar to intern dashboard */}
             {staffDetails.recentAttendance && staffDetails.recentAttendance.length > 0 && (
@@ -3948,10 +4069,10 @@ export default function AdminDashboard({ navigation, route }) {
                             </View>
                             <View
                               style={{
-                                backgroundColor: app.status === 'approved' ? '#16a34a' + '30' : 
-                                                 app.status === 'rejected' ? '#dc2626' + '30' : '#eab308' + '30',
-                                borderColor: app.status === 'approved' ? '#16a34a' : 
-                                            app.status === 'rejected' ? '#dc2626' : '#eab308',
+                                backgroundColor: app.status === 'approved' ? '#16a34a' + '30' :
+                                  app.status === 'rejected' ? '#dc2626' + '30' : '#eab308' + '30',
+                                borderColor: app.status === 'approved' ? '#16a34a' :
+                                  app.status === 'rejected' ? '#dc2626' : '#eab308',
                                 borderWidth: 1,
                                 borderRadius: 12,
                                 paddingHorizontal: 10,
@@ -3959,8 +4080,8 @@ export default function AdminDashboard({ navigation, route }) {
                               }}
                             >
                               <Text style={{
-                                color: app.status === 'approved' ? '#16a34a' : 
-                                       app.status === 'rejected' ? '#dc2626' : '#eab308',
+                                color: app.status === 'approved' ? '#16a34a' :
+                                  app.status === 'rejected' ? '#dc2626' : '#eab308',
                                 fontSize: 10,
                                 fontWeight: '700',
                                 textTransform: 'uppercase',
@@ -4111,10 +4232,10 @@ export default function AdminDashboard({ navigation, route }) {
                               }}>Status</Text>
                               <View
                                 style={{
-                                  backgroundColor: app.status === 'approved' ? '#16a34a' + '20' : 
-                                                   app.status === 'rejected' ? '#dc2626' + '20' : '#eab308' + '20',
-                                  borderColor: app.status === 'approved' ? '#16a34a' : 
-                                              app.status === 'rejected' ? '#dc2626' : '#eab308',
+                                  backgroundColor: app.status === 'approved' ? '#16a34a' + '20' :
+                                    app.status === 'rejected' ? '#dc2626' + '20' : '#eab308' + '20',
+                                  borderColor: app.status === 'approved' ? '#16a34a' :
+                                    app.status === 'rejected' ? '#dc2626' : '#eab308',
                                   borderWidth: 1,
                                   borderRadius: 12,
                                   paddingHorizontal: 10,
@@ -4122,8 +4243,8 @@ export default function AdminDashboard({ navigation, route }) {
                                 }}
                               >
                                 <Text style={{
-                                  color: app.status === 'approved' ? '#16a34a' : 
-                                         app.status === 'rejected' ? '#dc2626' : '#eab308',
+                                  color: app.status === 'approved' ? '#16a34a' :
+                                    app.status === 'rejected' ? '#dc2626' : '#eab308',
                                   fontSize: 11,
                                   fontWeight: '700',
                                   textTransform: 'uppercase',
@@ -4225,10 +4346,10 @@ export default function AdminDashboard({ navigation, route }) {
                           }}
                           activeOpacity={0.7}
                         >
-                          <View style={[styles.officialRibbon, { 
-                            backgroundColor: corr.status === 'approved' ? '#16a34a' : 
-                                            corr.status === 'rejected' ? '#dc2626' : theme.primary,
-                            paddingVertical: 8 
+                          <View style={[styles.officialRibbon, {
+                            backgroundColor: corr.status === 'approved' ? '#16a34a' :
+                              corr.status === 'rejected' ? '#dc2626' : theme.primary,
+                            paddingVertical: 8
                           }]}>
                             <View style={{ flex: 1 }}>
                               <Text style={styles.officialRibbonText} numberOfLines={1}>
@@ -4237,10 +4358,10 @@ export default function AdminDashboard({ navigation, route }) {
                               <Text style={styles.officialRibbonSubText}>
                                 {corr.date
                                   ? new Date(corr.date).toLocaleDateString('en-US', {
-                                      year: 'numeric',
-                                      month: 'short',
-                                      day: 'numeric',
-                                    })
+                                    year: 'numeric',
+                                    month: 'short',
+                                    day: 'numeric',
+                                  })
                                   : 'N/A'}
                               </Text>
                             </View>
@@ -4270,10 +4391,10 @@ export default function AdminDashboard({ navigation, route }) {
                               <Text style={[styles.officialValue, { flex: 1, fontWeight: '500' }]}>
                                 {corr.date
                                   ? new Date(corr.date).toLocaleDateString('en-US', {
-                                      year: 'numeric',
-                                      month: 'short',
-                                      day: 'numeric',
-                                    })
+                                    year: 'numeric',
+                                    month: 'short',
+                                    day: 'numeric',
+                                  })
                                   : 'N/A'}
                               </Text>
                             </View>
@@ -4283,17 +4404,17 @@ export default function AdminDashboard({ navigation, route }) {
                                 style={[
                                   styles.statusChip,
                                   {
-                                    backgroundColor: corr.status === 'approved' ? '#16a34a' + '20' : 
-                                                     corr.status === 'rejected' ? '#dc2626' + '20' : '#eab308' + '20',
-                                    borderColor: corr.status === 'approved' ? '#16a34a' : 
-                                                corr.status === 'rejected' ? '#dc2626' : '#eab308',
+                                    backgroundColor: corr.status === 'approved' ? '#16a34a' + '20' :
+                                      corr.status === 'rejected' ? '#dc2626' + '20' : '#eab308' + '20',
+                                    borderColor: corr.status === 'approved' ? '#16a34a' :
+                                      corr.status === 'rejected' ? '#dc2626' : '#eab308',
                                     alignSelf: 'flex-start',
                                   },
                                 ]}
                               >
-                                <Text style={[styles.statusText, { 
-                                  color: corr.status === 'approved' ? '#16a34a' : 
-                                         corr.status === 'rejected' ? '#dc2626' : '#eab308',
+                                <Text style={[styles.statusText, {
+                                  color: corr.status === 'approved' ? '#16a34a' :
+                                    corr.status === 'rejected' ? '#dc2626' : '#eab308',
                                   fontSize: 11,
                                 }]}>
                                   {corr.status ? corr.status.toUpperCase() : 'PENDING'}
@@ -4313,10 +4434,10 @@ export default function AdminDashboard({ navigation, route }) {
                               <Text style={[styles.officialValue, { flex: 1, fontSize: 12, opacity: 0.7 }]}>
                                 {corr.createdAt
                                   ? new Date(corr.createdAt).toLocaleDateString('en-US', {
-                                      year: 'numeric',
-                                      month: 'short',
-                                      day: 'numeric',
-                                    })
+                                    year: 'numeric',
+                                    month: 'short',
+                                    day: 'numeric',
+                                  })
                                   : 'N/A'}
                               </Text>
                             </View>
@@ -4342,8 +4463,8 @@ export default function AdminDashboard({ navigation, route }) {
 
   // Render timesheet view
   const renderTimesheetView = () => {
-    const periodLabel = timesheetPeriod === 'today' ? 'Daily' : 
-                       timesheetPeriod === 'weekly' ? 'Weekly' : 'Monthly';
+    const periodLabel = timesheetPeriod === 'today' ? 'Daily' :
+      timesheetPeriod === 'weekly' ? 'Weekly' : 'Monthly';
 
     const formatTime = (dateString) => {
       if (!dateString) return '-';
@@ -4579,10 +4700,10 @@ export default function AdminDashboard({ navigation, route }) {
                         {record.timeIn ||
                           (record.clockInTime
                             ? new Date(record.clockInTime).toLocaleTimeString('en-US', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                hour12: true,
-                              })
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true,
+                            })
                             : '-')}
                       </Text>
                       <Text
@@ -4595,10 +4716,10 @@ export default function AdminDashboard({ navigation, route }) {
                         {record.timeOut ||
                           (record.clockOutTime
                             ? new Date(record.clockOutTime).toLocaleTimeString('en-US', {
-                                hour: '2-digit',
-                                minute: '2-digit',
-                                hour12: true,
-                              })
+                              hour: '2-digit',
+                              minute: '2-digit',
+                              hour12: true,
+                            })
                             : '-')}
                       </Text>
                       <Text style={[styles.timesheetHoursCell, { flex: 0.8, color: '#3166AE' }]}>
@@ -4651,6 +4772,35 @@ export default function AdminDashboard({ navigation, route }) {
     }
   }, [activeView]);
 
+  useEffect(() => {
+    setDepartmentCounts(buildDepartmentCountMap(staff));
+  }, [staff]);
+
+  useEffect(() => {
+    setHostDepartmentCounts(buildDepartmentCountMap(hostCompanyInterns));
+  }, [hostCompanyInterns]);
+
+  useEffect(() => {
+    const loadAllStaffProfiles = async () => {
+      if (!staff || staff.length === 0) return;
+      const updates = {};
+      await Promise.all(staff.map(async (member) => {
+        if (!member._id) return;
+        const key = `internProfilePicture:${member._id}`;
+        try {
+          const stored = await AsyncStorage.getItem(key);
+          if (stored) updates[member._id] = stored;
+        } catch (error) {
+          console.error('Failed to load profile picture from storage:', error);
+        }
+      }));
+      if (Object.keys(updates).length > 0) {
+        setStaffProfileCache(prev => ({ ...prev, ...updates }));
+      }
+    };
+    loadAllStaffProfiles();
+  }, [staff]);
+
   const loadReportFilters = async () => {
     try {
       const params = isHostCompany ? { hostCompanyId } : {};
@@ -4658,7 +4808,7 @@ export default function AdminDashboard({ navigation, route }) {
       if (response.data.success) {
         const staff = response.data.staff;
         setAvailableStaff(staff);
-        
+
         // Extract unique locations
         const locations = [...new Set(staff.map(s => s.location || 'Unknown').filter(Boolean))];
         setAvailableLocations(locations.sort());
@@ -4677,9 +4827,9 @@ export default function AdminDashboard({ navigation, route }) {
         period: reportFilters.period === 'custom' ? undefined : reportFilters.period,
         startDate: reportFilters.period === 'custom' ? reportFilters.startDate : undefined,
         endDate: reportFilters.period === 'custom' ? reportFilters.endDate : undefined,
-        staffIds: reportFilters.staffType === 'all' 
-          ? 'all' 
-          : reportFilters.selectedStaff.length > 0 
+        staffIds: reportFilters.staffType === 'all'
+          ? 'all'
+          : reportFilters.selectedStaff.length > 0
             ? reportFilters.selectedStaff.join(',')
             : 'all',
         location: reportFilters.location,
@@ -4690,7 +4840,7 @@ export default function AdminDashboard({ navigation, route }) {
       // Fetch report data
       console.log('📊 Generating report with params:', params);
       console.log('📊 Request URL:', `${API_BASE_URL}/staff/admin/reports/data`);
-      
+
       const response = await axios.get(`${API_BASE_URL}/staff/admin/reports/data`, { params });
 
       console.log('📊 Report data received:', response.data);
@@ -4723,7 +4873,7 @@ export default function AdminDashboard({ navigation, route }) {
         status: error.response?.status,
         url: error.config?.url
       });
-      
+
       const errorMessage = error.response?.data?.error || error.message || 'Failed to generate report. Please try again.';
       Alert.alert('Error', `Failed to generate report: ${errorMessage}\n\nPlease ensure the backend server is running and restarted.`);
     } finally {
@@ -4732,9 +4882,9 @@ export default function AdminDashboard({ navigation, route }) {
   };
 
   const generateReportHTML = (data, summary, filters) => {
-    const periodLabel = filters.period === 'daily' ? 'Daily' : 
-                       filters.period === 'weekly' ? 'Weekly' : 
-                       filters.period === 'monthly' ? 'Monthly' : 'Custom';
+    const periodLabel = filters.period === 'daily' ? 'Daily' :
+      filters.period === 'weekly' ? 'Weekly' :
+        filters.period === 'monthly' ? 'Monthly' : 'Custom';
     const dateRange = summary.dateRange;
     const startDate = new Date(dateRange.start);
     const endDate = new Date(dateRange.end);
@@ -4889,12 +5039,12 @@ export default function AdminDashboard({ navigation, route }) {
                   ${item.timesheet.length > 0 ? item.timesheet.map(entry => `
                     <tr style="${entry.extraHours ? 'background-color: #fee2e2;' : ''}">
                       <td>
-                        ${new Date(entry.date).toLocaleDateString('en-US', { 
-                          weekday: 'short', 
-                          year: 'numeric', 
-                          month: 'short', 
-                          day: 'numeric' 
-                        })}
+                        ${new Date(entry.date).toLocaleDateString('en-US', {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    })}
                         ${entry.extraHours ? `<br><span style="color: #dc2626; font-size: 10px; font-weight: 600;">${entry.extraHours}</span>` : ''}
                       </td>
                       <td>${entry.timeIn || '-'}</td>
@@ -4916,6 +5066,38 @@ export default function AdminDashboard({ navigation, route }) {
     `;
   };
 
+
+
+
+
+
+
+
+  {/* REPORTS/ CASELOGS SUBMITTED BY HOST COMPANIES */ }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
   const renderReports = () => {
     // ADMIN VIEW: Reviews reports submitted by Host Companies
     if (isAdmin && !isHostCompany) {
@@ -4923,40 +5105,14 @@ export default function AdminDashboard({ navigation, route }) {
         <ScrollView style={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           <View style={styles.dashboardContainer}>
             {/* Header */}
-            <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Intern Reports Management</Text>
+            <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>CaseLogs Management</Text>
             <Text style={[styles.sectionSubtitle, dynamicStyles.sectionSubtitle]}>
-              Review and acknowledge reports submitted by Host Companies
+              Review and acknowledge CaseLogs submitted by Host Companies
             </Text>
 
             {/* Filters */}
             <View style={[styles.filterCard, dynamicStyles.filterCard]}>
-              <Text style={[styles.filterLabel, dynamicStyles.filterLabel]}>Filter by Status</Text>
-              <View style={styles.filterOptions}>
-                {['all', 'Submitted', 'Reviewed', 'Actioned'].map(status => (
-                  <TouchableOpacity
-                    key={status}
-                    style={[
-                      styles.filterOption,
-                      dynamicStyles.filterOption,
-                      reportFilters.statusFilter === status && [styles.filterOptionSelected, dynamicStyles.filterOptionSelected]
-                    ]}
-                    onPress={() => setReportFilters({ ...reportFilters, statusFilter: status })}
-                  >
-                    <Text style={[
-                      styles.filterOptionText,
-                      dynamicStyles.filterOptionText,
-                      reportFilters.statusFilter === status && styles.filterOptionTextSelected
-                    ]}>
-                      {status === 'all' ? 'All' : status}
-                    </Text>
-                  </TouchableOpacity>
-                ))}
-              </View>
-            </View>
-
-            {/* Severity Filter */}
-            <View style={[styles.filterCard, dynamicStyles.filterCard]}>
-              <Text style={[styles.filterLabel, dynamicStyles.filterLabel]}>Filter by Severity</Text>
+              <Text style={[styles.filterLabel, dynamicStyles.filterLabel]}>Filter CaseLogs by Severity</Text>
               <View style={styles.filterOptions}>
                 {['all', 'Low', 'Medium', 'High'].map(severity => (
                   <TouchableOpacity
@@ -4980,7 +5136,7 @@ export default function AdminDashboard({ navigation, route }) {
               </View>
             </View>
 
-            {/* Reports List */}
+            {/* CaseLogs List */}
             {loadingReports ? (
               <View style={styles.emptyContainer}>
                 <ActivityIndicator size="large" color={theme.primary} />
@@ -5008,7 +5164,7 @@ export default function AdminDashboard({ navigation, route }) {
         <ScrollView style={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           <View style={styles.dashboardContainer}>
             {/* Header */}
-            <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Intern Reports</Text>
+                <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Intern CaseLogs</Text>
             <Text style={[styles.sectionSubtitle, dynamicStyles.sectionSubtitle]}>
               Submit and review formal reports about interns assigned to your company
             </Text>
@@ -5076,7 +5232,7 @@ export default function AdminDashboard({ navigation, route }) {
             {/* Step 3: Previous Reports */}
             {selectedIntern && (
               <View style={[styles.filterCard, dynamicStyles.filterCard]}>
-                <Text style={[styles.filterLabel, dynamicStyles.filterLabel]}>Step 3: Previous Reports</Text>
+                <Text style={[styles.filterLabel, dynamicStyles.filterLabel]}>Step 3: Previous CaseLogs</Text>
                 {loadingReports ? (
                   <View style={styles.emptyContainer}>
                     <ActivityIndicator size="small" color={theme.primary} />
@@ -5109,7 +5265,7 @@ export default function AdminDashboard({ navigation, route }) {
     // Fallback
     return (
       <View style={styles.emptyContainer}>
-        <Text style={[styles.emptyText, dynamicStyles.emptyText]}>Reports feature not available</Text>
+                  <Text style={[styles.emptyText, dynamicStyles.emptyText]}>CaseLogs feature not available</Text>
       </View>
     );
   };
@@ -5129,7 +5285,7 @@ export default function AdminDashboard({ navigation, route }) {
             <Text style={[styles.tableColSubmitted, styles.tableHeaderText]}>Submitted</Text>
             <Text style={[styles.tableColStatus, styles.tableHeaderText]}>Status</Text>
             <Text style={[styles.tableColSeverity, styles.tableHeaderText]}>Severity</Text>
-            <TouchableOpacity onPress={() => exportReportsListPDF(reports)} style={{ marginLeft: 12 }}>
+            <TouchableOpacity onPress={() => exportCaseLogsListPDF(reports)} style={{ marginLeft: 12 }}>
               <Text style={[styles.tableHeaderText, { color: theme.primary }]}>Export PDF</Text>
             </TouchableOpacity>
           </View>
@@ -5308,7 +5464,7 @@ export default function AdminDashboard({ navigation, route }) {
               {/* Report Details */}
               <View style={[styles.filterCard, dynamicStyles.filterCard]}>
                 <Text style={[styles.filterLabel, dynamicStyles.filterLabel]}>Report Details</Text>
-                
+
                 <View style={{ marginBottom: 12 }}>
                   <Text style={[styles.contextLabel, dynamicStyles.contextLabel]}>Report Type</Text>
                   <Text style={[styles.contextValue, dynamicStyles.contextValue]}>{selectedReport.reportType || 'N/A'}</Text>
@@ -5418,15 +5574,15 @@ export default function AdminDashboard({ navigation, route }) {
                 params: { hostCompanyId: company._id }
               });
               const departmentCount = deptResponse.data.success ? deptResponse.data.departments.length : 0;
-              
+
               // Get interns for this company (full data) - ONLY count staff with role === 'Intern'
               const internsResponse = await axios.get(`${API_BASE_URL}/staff/admin/staff`, {
                 params: { hostCompanyId: company._id, fullData: true }
               });
-              const internCount = internsResponse.data.success 
-                ? internsResponse.data.staff.filter(staff => staff.role === 'Intern').length 
+              const internCount = internsResponse.data.success
+                ? internsResponse.data.staff.filter(staff => staff.role === 'Intern').length
                 : 0;
-              
+
               return {
                 ...company,
                 departmentCount,
@@ -5454,7 +5610,7 @@ export default function AdminDashboard({ navigation, route }) {
       Alert.alert('Error', 'Company name is required');
       return;
     }
-    
+
     if (!hostCompanyCompanyName.trim()) {
       Alert.alert('Error', 'Company name is required');
       return;
@@ -5466,7 +5622,7 @@ export default function AdminDashboard({ navigation, route }) {
         Alert.alert('Error', 'Username is required');
         return;
       }
-      
+
       if (!hostCompanyPassword || hostCompanyPassword.length < 6) {
         Alert.alert('Error', 'Password is required and must be at least 6 characters');
         return;
@@ -5488,17 +5644,17 @@ export default function AdminDashboard({ navigation, route }) {
           mentorName: hostCompanyMentorName.trim() || undefined,
           isActive: editingHostCompany.isActive
         };
-        
+
         // Only update username if provided
         if (hostCompanyUsername.trim()) {
           updateData.username = hostCompanyUsername.trim();
         }
-        
+
         // Only update password if provided (for security, don't require it on edit)
         if (hostCompanyPassword && hostCompanyPassword.length >= 6) {
           updateData.password = hostCompanyPassword;
         }
-        
+
         // ⏰ DEFAULT WORKING HOURS: Update if provided
         if (hostCompanyDefaultClockInTime.trim()) {
           updateData.defaultClockInTime = hostCompanyDefaultClockInTime.trim();
@@ -5520,10 +5676,10 @@ export default function AdminDashboard({ navigation, route }) {
         } else {
           updateData.defaultBreakEndTime = undefined; // Allow clearing
         }
-        
+
         const response = await axios.put(`${API_BASE_URL}/staff/admin/host-companies/${editingHostCompany._id}`, updateData);
         Alert.alert('✅ Updated Successfully', 'Host company details have been updated.');
-        
+
         // If we're in the details view, update the selected company with new data
         if (activeView === 'hostCompanyDetails' && selectedHostCompany && selectedHostCompany._id === editingHostCompany._id) {
           // Refresh the company data to show updated info
@@ -5544,7 +5700,7 @@ export default function AdminDashboard({ navigation, route }) {
           username: hostCompanyUsername.trim(),
           password: hostCompanyPassword
         };
-        
+
         // Only add optional fields if they have values
         if (hostCompanyRegistrationNumber.trim()) {
           createData.registrationNumber = hostCompanyRegistrationNumber.trim();
@@ -5577,7 +5733,7 @@ export default function AdminDashboard({ navigation, route }) {
         if (hostCompanyDefaultBreakEndTime.trim()) {
           createData.defaultBreakEndTime = hostCompanyDefaultBreakEndTime.trim();
         }
-        
+
         console.log('📤 Creating host company with data:', { ...createData, password: '***' });
         await axios.post(`${API_BASE_URL}/staff/admin/host-companies`, createData);
         Alert.alert('Success', 'Host company created successfully');
@@ -5636,20 +5792,20 @@ export default function AdminDashboard({ navigation, route }) {
     // First, show warning about what will be deleted
     const departmentCount = company.departmentCount || 0;
     const internCount = company.internCount || 0;
-    
+
     const hasRelatedData = departmentCount > 0 || internCount > 0;
-    
+
     const warningMessage = hasRelatedData
       ? `⚠️ WARNING: This will permanently delete:\n\n` +
-        `• Host Company: "${company.companyName || company.name}"\n` +
-        `• ${departmentCount} Department(s)\n` +
-        `• ${internCount} Staff/Intern(s)\n` +
-        `• All related attendance records\n` +
-        `• All leave applications\n` +
-        `• All attendance corrections\n\n` +
-        `This action CANNOT be undone!`
+      `• Host Company: "${company.companyName || company.name}"\n` +
+      `• ${departmentCount} Department(s)\n` +
+      `• ${internCount} Staff/Intern(s)\n` +
+      `• All related attendance records\n` +
+      `• All leave applications\n` +
+      `• All attendance corrections\n\n` +
+      `This action CANNOT be undone!`
       : `Are you sure you want to delete "${company.companyName || company.name}"?\n\nThis action cannot be undone.`;
-    
+
     Alert.alert(
       '🗑️ Delete Host Company',
       warningMessage,
@@ -5664,14 +5820,14 @@ export default function AdminDashboard({ navigation, route }) {
               const url = hasRelatedData
                 ? `${API_BASE_URL}/staff/admin/host-companies/${company._id}?cascade=true`
                 : `${API_BASE_URL}/staff/admin/host-companies/${company._id}`;
-              
+
               const response = await axios.delete(url);
-              
+
               if (response.data.success) {
                 // Show success with details of what was deleted
                 const deleted = response.data.deleted;
                 let successMessage = `Host company "${company.companyName || company.name}" deleted successfully.`;
-                
+
                 if (deleted) {
                   successMessage = `Successfully deleted:\n\n` +
                     `✓ Company: ${deleted.company}\n` +
@@ -5680,9 +5836,9 @@ export default function AdminDashboard({ navigation, route }) {
                     `✓ ${deleted.leaveApplications} Leave Application(s)\n` +
                     `✓ ${deleted.attendanceCorrections} Attendance Correction(s)`;
                 }
-                
+
                 Alert.alert('✅ Deleted Successfully', successMessage);
-                
+
                 // Navigate back to host companies list
                 setActiveView('hostCompanies');
                 setSelectedHostCompany(null);
@@ -5692,7 +5848,7 @@ export default function AdminDashboard({ navigation, route }) {
               }
             } catch (error) {
               console.error('Error deleting host company:', error);
-              
+
               // Check if cascade is required
               if (error.response?.data?.requiresCascade) {
                 const counts = error.response.data.counts;
@@ -5784,7 +5940,7 @@ export default function AdminDashboard({ navigation, route }) {
 
         if (response.data.success) {
           let reports = response.data.reports || [];
-          
+
           // Apply filters if any
           if (reportFilters.statusFilter && reportFilters.statusFilter !== 'all') {
             reports = reports.filter(r => r.status === reportFilters.statusFilter);
@@ -5974,7 +6130,7 @@ export default function AdminDashboard({ navigation, route }) {
       setLoadingData(true);
       const params = isHostCompany && hostCompanyId ? { hostCompanyId } : {};
       const response = await axios.get(`${API_BASE_URL}/staff/admin/devices`, { params });
-      
+
       if (response.data.success) {
         const devicesList = response.data.devices || [];
         setDevices(devicesList);
@@ -6387,7 +6543,7 @@ export default function AdminDashboard({ navigation, route }) {
                       flexDirection: 'row',
                       paddingVertical: 16,
                       paddingHorizontal: 16,
-                      backgroundColor: index % 2 === 0 
+                      backgroundColor: index % 2 === 0
                         ? (isDarkMode ? '#1e293b' : '#fff')
                         : (isDarkMode ? '#243447' : '#f8fafc'),
                       borderBottomWidth: index < attendanceCorrections.length - 1 ? 1 : 0,
@@ -6493,8 +6649,8 @@ export default function AdminDashboard({ navigation, route }) {
               <ScrollView showsVerticalScrollIndicator={true} contentContainerStyle={{ paddingBottom: 20 }}>
                 {selectedCorrection && (
                   <>
-                    <View style={[styles.modalHeader, { 
-                      backgroundColor: theme.primary, 
+                    <View style={[styles.modalHeader, {
+                      backgroundColor: theme.primary,
                       paddingVertical: 16,
                       paddingHorizontal: 20,
                       borderTopLeftRadius: 12,
@@ -7219,15 +7375,15 @@ export default function AdminDashboard({ navigation, route }) {
                       {(selectedLeaveApplication.internId?.email ||
                         selectedLeaveApplication.internId?.emailAddress ||
                         selectedLeaveApplication.internEmail) && (
-                        <View style={styles.detailRow}>
-                          <Text style={[styles.detailLabel, dynamicStyles.textSecondary]}>Email:</Text>
-                          <Text style={[styles.detailValue, dynamicStyles.text]}>
-                            {selectedLeaveApplication.internId?.email ||
-                              selectedLeaveApplication.internId?.emailAddress ||
-                              selectedLeaveApplication.internEmail}
-                          </Text>
-                        </View>
-                      )}
+                          <View style={styles.detailRow}>
+                            <Text style={[styles.detailLabel, dynamicStyles.textSecondary]}>Email:</Text>
+                            <Text style={[styles.detailValue, dynamicStyles.text]}>
+                              {selectedLeaveApplication.internId?.email ||
+                                selectedLeaveApplication.internId?.emailAddress ||
+                                selectedLeaveApplication.internEmail}
+                            </Text>
+                          </View>
+                        )}
                       {selectedLeaveApplication.internId?.phoneNumber && (
                         <View style={styles.detailRow}>
                           <Text style={[styles.detailLabel, dynamicStyles.textSecondary]}>Phone:</Text>
@@ -7239,16 +7395,16 @@ export default function AdminDashboard({ navigation, route }) {
                       {(selectedLeaveApplication.internId?.location ||
                         selectedLeaveApplication.location ||
                         selectedLeaveApplication.internLocation) && (
-                        <View style={styles.detailRow}>
-                          <Text style={[styles.detailLabel, dynamicStyles.textSecondary]}>Location:</Text>
-                          <Text style={[styles.detailValue, dynamicStyles.text]}>
-                            {selectedLeaveApplication.internId?.location ||
-                              selectedLeaveApplication.location ||
-                              selectedLeaveApplication.internLocation ||
-                              'N/A'}
-                          </Text>
-                        </View>
-                      )}
+                          <View style={styles.detailRow}>
+                            <Text style={[styles.detailLabel, dynamicStyles.textSecondary]}>Location:</Text>
+                            <Text style={[styles.detailValue, dynamicStyles.text]}>
+                              {selectedLeaveApplication.internId?.location ||
+                                selectedLeaveApplication.location ||
+                                selectedLeaveApplication.internLocation ||
+                                'N/A'}
+                            </Text>
+                          </View>
+                        )}
 
                       <View style={styles.detailRow}>
                         <Text style={[styles.detailLabel, dynamicStyles.textSecondary]}>Leave Type:</Text>
@@ -7414,7 +7570,7 @@ export default function AdminDashboard({ navigation, route }) {
   const renderDevices = () => {
     return (
       <View style={styles.content}>
-        <ScrollView 
+        <ScrollView
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
           contentContainerStyle={styles.scrollContent}
         >
@@ -7672,11 +7828,11 @@ export default function AdminDashboard({ navigation, route }) {
               </Text>
 
               <Text style={[styles.confirmMessage, dynamicStyles.secondaryText]}>
-                {deviceAction === 'approve' 
+                {deviceAction === 'approve'
                   ? 'This device will be approved and can be used for clock-in/out.'
                   : deviceAction === 'reject'
-                  ? 'This device will be rejected and cannot be used.'
-                  : 'This device will be revoked and can no longer be used.'
+                    ? 'This device will be rejected and cannot be used.'
+                    : 'This device will be revoked and can no longer be used.'
                 }
               </Text>
 
@@ -7729,12 +7885,12 @@ export default function AdminDashboard({ navigation, route }) {
     }
 
     return (
-      <ScrollView 
-        style={styles.content} 
+      <ScrollView
+        style={styles.content}
         refreshControl={
-          <RefreshControl 
-            refreshing={loadingHostCompanyDetails} 
-            onRefresh={() => loadHostCompanyDetails(selectedHostCompany._id)} 
+          <RefreshControl
+            refreshing={loadingHostCompanyDetails}
+            onRefresh={() => loadHostCompanyDetails(selectedHostCompany._id)}
           />
         }
       >
@@ -8103,91 +8259,91 @@ export default function AdminDashboard({ navigation, route }) {
             </View>
 
             {/* ===== DEFAULT WORKING HOURS SECTION ===== */}
-            {(selectedHostCompany.defaultClockInTime || selectedHostCompany.defaultClockOutTime || 
+            {(selectedHostCompany.defaultClockInTime || selectedHostCompany.defaultClockOutTime ||
               selectedHostCompany.defaultBreakStartTime || selectedHostCompany.defaultBreakEndTime) && (
-              <View style={{
-                backgroundColor: isDarkMode ? '#1a2332' : '#f8fafc',
-                borderRadius: 12,
-                marginBottom: 24,
-                overflow: 'hidden',
-                borderWidth: 1,
-                borderColor: theme.border
-              }}>
-                {/* Section Header */}
                 <View style={{
-                  backgroundColor: '#0891b2',
-                  paddingVertical: 14,
-                  paddingHorizontal: 20
+                  backgroundColor: isDarkMode ? '#1a2332' : '#f8fafc',
+                  borderRadius: 12,
+                  marginBottom: 24,
+                  overflow: 'hidden',
+                  borderWidth: 1,
+                  borderColor: theme.border
                 }}>
-                  <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 }}>
-                    ⏰ DEFAULT WORKING HOURS
-                  </Text>
-                </View>
+                  {/* Section Header */}
+                  <View style={{
+                    backgroundColor: '#0891b2',
+                    paddingVertical: 14,
+                    paddingHorizontal: 20
+                  }}>
+                    <Text style={{ color: '#fff', fontSize: 16, fontWeight: '700', letterSpacing: 0.5 }}>
+                      ⏰ DEFAULT WORKING HOURS
+                    </Text>
+                  </View>
 
-                {/* Working Hours Grid */}
-                <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
-                  <View style={{
-                    width: '50%',
-                    paddingVertical: 16,
-                    paddingHorizontal: 20,
-                    borderBottomWidth: 1,
-                    borderRightWidth: 1,
-                    borderColor: theme.border,
-                    backgroundColor: isDarkMode ? '#1e293b' : '#fff'
-                  }}>
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
-                      Clock-In Time
-                    </Text>
-                    <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
-                      {selectedHostCompany.defaultClockInTime || '--:--'}
-                    </Text>
-                  </View>
-                  <View style={{
-                    width: '50%',
-                    paddingVertical: 16,
-                    paddingHorizontal: 20,
-                    borderBottomWidth: 1,
-                    borderColor: theme.border,
-                    backgroundColor: isDarkMode ? '#1e293b' : '#fff'
-                  }}>
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
-                      Clock-Out Time
-                    </Text>
-                    <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
-                      {selectedHostCompany.defaultClockOutTime || '--:--'}
-                    </Text>
-                  </View>
-                  <View style={{
-                    width: '50%',
-                    paddingVertical: 16,
-                    paddingHorizontal: 20,
-                    borderRightWidth: 1,
-                    borderColor: theme.border,
-                    backgroundColor: isDarkMode ? '#1e293b' : '#fff'
-                  }}>
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
-                      Break Start
-                    </Text>
-                    <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
-                      {selectedHostCompany.defaultBreakStartTime || '--:--'}
-                    </Text>
-                  </View>
-                  <View style={{
-                    width: '50%',
-                    paddingVertical: 16,
-                    paddingHorizontal: 20,
-                    backgroundColor: isDarkMode ? '#1e293b' : '#fff'
-                  }}>
-                    <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
-                      Break End
-                    </Text>
-                    <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
-                      {selectedHostCompany.defaultBreakEndTime || '--:--'}
-                    </Text>
+                  {/* Working Hours Grid */}
+                  <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+                    <View style={{
+                      width: '50%',
+                      paddingVertical: 16,
+                      paddingHorizontal: 20,
+                      borderBottomWidth: 1,
+                      borderRightWidth: 1,
+                      borderColor: theme.border,
+                      backgroundColor: isDarkMode ? '#1e293b' : '#fff'
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+                        Clock-In Time
+                      </Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
+                        {selectedHostCompany.defaultClockInTime || '--:--'}
+                      </Text>
+                    </View>
+                    <View style={{
+                      width: '50%',
+                      paddingVertical: 16,
+                      paddingHorizontal: 20,
+                      borderBottomWidth: 1,
+                      borderColor: theme.border,
+                      backgroundColor: isDarkMode ? '#1e293b' : '#fff'
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+                        Clock-Out Time
+                      </Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
+                        {selectedHostCompany.defaultClockOutTime || '--:--'}
+                      </Text>
+                    </View>
+                    <View style={{
+                      width: '50%',
+                      paddingVertical: 16,
+                      paddingHorizontal: 20,
+                      borderRightWidth: 1,
+                      borderColor: theme.border,
+                      backgroundColor: isDarkMode ? '#1e293b' : '#fff'
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+                        Break Start
+                      </Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
+                        {selectedHostCompany.defaultBreakStartTime || '--:--'}
+                      </Text>
+                    </View>
+                    <View style={{
+                      width: '50%',
+                      paddingVertical: 16,
+                      paddingHorizontal: 20,
+                      backgroundColor: isDarkMode ? '#1e293b' : '#fff'
+                    }}>
+                      <Text style={{ fontSize: 11, fontWeight: '600', color: theme.textSecondary, marginBottom: 6, textTransform: 'uppercase' }}>
+                        Break End
+                      </Text>
+                      <Text style={{ fontSize: 18, fontWeight: '700', color: theme.text }}>
+                        {selectedHostCompany.defaultBreakEndTime || '--:--'}
+                      </Text>
+                    </View>
                   </View>
                 </View>
-              </View>
-            )}
+              )}
 
             {/* ===== STATISTICS SUMMARY ===== */}
             <View style={{
@@ -8318,61 +8474,67 @@ export default function AdminDashboard({ navigation, route }) {
                   </Text>
                 </View>
               ) : (
-                hostCompanyDepartments.map((dept, index) => (
-                  <TouchableOpacity
-                    key={dept._id}
-                    style={{
-                      flexDirection: 'row',
-                      paddingVertical: 14,
-                      paddingHorizontal: 16,
-                      backgroundColor: index % 2 === 0 
-                        ? (isDarkMode ? '#1e293b' : '#fff')
-                        : (isDarkMode ? '#243447' : '#f8fafc'),
-                      borderBottomWidth: index < hostCompanyDepartments.length - 1 ? 1 : 0,
-                      borderBottomColor: theme.border,
-                      alignItems: 'center'
-                    }}
-                    onPress={() => {
-                      setSelectedDepartment(dept);
-                      setShowDepartmentDetails(true);
-                    }}
-                    activeOpacity={0.7}
-                  >
-                    <View style={{ flex: 2 }}>
-                      <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text, marginBottom: 2 }}>
-                        {dept.name}
-                      </Text>
-                      {dept.location && (
-                        <Text style={{ fontSize: 11, color: theme.textSecondary }} numberOfLines={1}>
-                          📍 {dept.location}
+                hostCompanyDepartments.map((dept, index) => {
+                  const counts = getCountsForDepartment(dept.name, hostDepartmentCounts);
+                  const totalMembers = typeof dept.memberCount === 'number' ? dept.memberCount : counts.memberCount;
+                  const internCount = typeof dept.internCount === 'number' && dept.internCount > 0 ? dept.internCount : counts.internCount;
+                  const staffCount = typeof dept.staffCount === 'number' && dept.staffCount > 0 ? dept.staffCount : counts.staffCount;
+                  return (
+                    <TouchableOpacity
+                      key={dept._id}
+                      style={{
+                        flexDirection: 'row',
+                        paddingVertical: 14,
+                        paddingHorizontal: 16,
+                        backgroundColor: index % 2 === 0
+                          ? (isDarkMode ? '#1e293b' : '#fff')
+                          : (isDarkMode ? '#243447' : '#f8fafc'),
+                        borderBottomWidth: index < hostCompanyDepartments.length - 1 ? 1 : 0,
+                        borderBottomColor: theme.border,
+                        alignItems: 'center'
+                      }}
+                      onPress={() => {
+                        setSelectedDepartment(dept);
+                        setShowDepartmentDetails(true);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <View style={{ flex: 2 }}>
+                        <Text style={{ fontSize: 14, fontWeight: '600', color: theme.text, marginBottom: 2 }}>
+                          {dept.name}
                         </Text>
-                      )}
-                    </View>
-                    <Text style={{ flex: 1, fontSize: 13, color: theme.textSecondary, textAlign: 'center', fontFamily: 'monospace' }}>
-                      {dept.departmentCode || '-'}
-                    </Text>
-                    <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: theme.primary, textAlign: 'center' }}>
-                      {dept.internCount || 0}
-                    </Text>
-                    <View style={{ flex: 1, alignItems: 'center' }}>
-                      <View style={{
-                        paddingHorizontal: 8,
-                        paddingVertical: 4,
-                        borderRadius: 4,
-                        backgroundColor: dept.isActive ? '#16a34a20' : '#dc262620'
-                      }}>
-                        <Text style={{
-                          fontSize: 10,
-                          fontWeight: '700',
-                          color: dept.isActive ? '#16a34a' : '#dc2626',
-                          textTransform: 'uppercase'
-                        }}>
-                          {dept.isActive ? 'Active' : 'Inactive'}
-                        </Text>
+                        {dept.location && (
+                          <Text style={{ fontSize: 11, color: theme.textSecondary }} numberOfLines={1}>
+                            📍 {dept.location}
+                          </Text>
+                        )}
                       </View>
-                    </View>
-                  </TouchableOpacity>
-                ))
+                      <Text style={{ flex: 1, fontSize: 13, color: theme.textSecondary, textAlign: 'center', fontFamily: 'monospace' }}>
+                        {dept.departmentCode || '-'}
+                      </Text>
+                      <Text style={{ flex: 1, fontSize: 14, fontWeight: '600', color: theme.primary, textAlign: 'center' }}>
+                        {internCount}
+                      </Text>
+                      <View style={{ flex: 1, alignItems: 'center' }}>
+                        <View style={{
+                          paddingHorizontal: 8,
+                          paddingVertical: 4,
+                          borderRadius: 4,
+                          backgroundColor: dept.isActive ? '#16a34a20' : '#dc262620'
+                        }}>
+                          <Text style={{
+                            fontSize: 10,
+                            fontWeight: '700',
+                            color: dept.isActive ? '#16a34a' : '#dc2626',
+                            textTransform: 'uppercase'
+                          }}>
+                            {dept.isActive ? 'Active' : 'Inactive'}
+                          </Text>
+                        </View>
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })
               )}
             </View>
 
@@ -8453,7 +8615,7 @@ export default function AdminDashboard({ navigation, route }) {
                       flexDirection: 'row',
                       paddingVertical: 14,
                       paddingHorizontal: 16,
-                      backgroundColor: index % 2 === 0 
+                      backgroundColor: index % 2 === 0
                         ? (isDarkMode ? '#1e293b' : '#fff')
                         : (isDarkMode ? '#243447' : '#f8fafc'),
                       borderBottomWidth: index < hostCompanyInterns.length - 1 ? 1 : 0,
@@ -8565,9 +8727,9 @@ export default function AdminDashboard({ navigation, route }) {
   };
 
   const renderHostCompanies = () => {
-    
+
     return (
-      <ScrollView 
+      <ScrollView
         style={styles.content}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={loadHostCompanies} />}
       >
@@ -8581,17 +8743,17 @@ export default function AdminDashboard({ navigation, route }) {
         }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
             <View>
-              <Text style={{ 
-                fontSize: 24, 
-                fontWeight: '800', 
+              <Text style={{
+                fontSize: 24,
+                fontWeight: '800',
                 color: theme.text,
                 letterSpacing: 0.5,
                 marginBottom: 4
               }}>
                 🏢 HOST COMPANY REGISTRY
               </Text>
-              <Text style={{ 
-                fontSize: 13, 
+              <Text style={{
+                fontSize: 13,
                 color: theme.textSecondary,
                 letterSpacing: 0.3
               }}>
@@ -8763,7 +8925,7 @@ export default function AdminDashboard({ navigation, route }) {
                   flexDirection: 'row',
                   paddingVertical: 16,
                   paddingHorizontal: 16,
-                  backgroundColor: index % 2 === 0 
+                  backgroundColor: index % 2 === 0
                     ? (isDarkMode ? '#1e293b' : '#fff')
                     : (isDarkMode ? '#243447' : '#f8fafc'),
                   borderBottomWidth: index < hostCompanies.length - 1 ? 1 : 0,
@@ -8791,19 +8953,19 @@ export default function AdminDashboard({ navigation, route }) {
                 </View>
 
                 {/* Registration Number Column */}
-                <Text style={{ 
-                  flex: 1.5, 
-                  fontSize: 12, 
-                  color: theme.textSecondary, 
+                <Text style={{
+                  flex: 1.5,
+                  fontSize: 12,
+                  color: theme.textSecondary,
                   fontFamily: 'monospace'
                 }}>
                   {company.registrationNumber || '—'}
                 </Text>
 
                 {/* Industry Column */}
-                <Text style={{ 
-                  flex: 1.2, 
-                  fontSize: 11, 
+                <Text style={{
+                  flex: 1.2,
+                  fontSize: 11,
                   color: theme.textSecondary,
                   textAlign: 'center'
                 }} numberOfLines={1}>
@@ -8934,7 +9096,7 @@ export default function AdminDashboard({ navigation, route }) {
     try {
       // Filter by hostCompanyId if user is host company
       const params = isHostCompany ? { hostCompanyId } : {};
-      
+
       // 🎯 First, try to use the new backend endpoint that efficiently returns departments WITH intern counts
       try {
         const response = await axios.get(`${API_BASE_URL}/staff/admin/departments-with-counts`, { params });
@@ -8947,7 +9109,7 @@ export default function AdminDashboard({ navigation, route }) {
       } catch (newEndpointError) {
         console.warn('⚠️ New endpoint not available, using fallback method');
       }
-      
+
       // Fallback: Load departments without counts, then fetch counts individually
       const response = await axios.get(`${API_BASE_URL}/staff/admin/departments/all`, { params });
       if (response.data.success) {
@@ -8957,17 +9119,17 @@ export default function AdminDashboard({ navigation, route }) {
           depts.map(async (dept) => {
             try {
               const internsResponse = await axios.get(`${API_BASE_URL}/staff/admin/staff`, {
-                params: { 
-                  department: dept.name, 
+                params: {
+                  department: dept.name,
                   fullData: 'true', // Request full data to get role field
-                  ...(isHostCompany && { hostCompanyId }) 
+                  ...(isHostCompany && { hostCompanyId })
                 }
               });
               if (internsResponse.data.success) {
                 // CRITICAL FIX: Filter to only count staff with role === 'Intern'
                 const interns = internsResponse.data.staff.filter(staff => staff.role === 'Intern');
                 const internCount = interns.length;
-                
+
                 // If we found interns, log it
                 if (internCount > 0) {
                   console.log(`✅ Department "${dept.name}": ${internCount} interns found`);
@@ -8975,7 +9137,7 @@ export default function AdminDashboard({ navigation, route }) {
                   // Even if backend found none, that's ok - just log for debugging
                   console.log(`⚠️ Department "${dept.name}": ${internCount} interns found`);
                 }
-                
+
                 return {
                   ...dept,
                   internCount
@@ -8997,12 +9159,68 @@ export default function AdminDashboard({ navigation, route }) {
       Alert.alert('Error', 'Failed to load departments');
     }
   };
-  
+
+  const loadStaffCompensation = async (staffId) => {
+    if (!staffId) return null;
+    try {
+      const token = await AsyncStorage.getItem('userToken');
+      const [stipendRes, hoursRes] = await Promise.allSettled([
+        axios.get(`${API_BASE_URL}/staff/intern/stipend`, {
+          params: { internId: staffId },
+        }),
+        axios.get(`${API_BASE_URL}/staff/intern/working-hours`, {
+          params: { internId: staffId },
+        }),
+      ]);
+
+      const stipend = stipendRes.status === 'fulfilled' && stipendRes.value.data?.success
+        ? stipendRes.value.data.stipendAmount ?? null
+        : null;
+
+      const workingHours = hoursRes.status === 'fulfilled' && hoursRes.value.data?.success
+        ? hoursRes.value.data.workingHours ?? null
+        : null;
+
+      return { stipend, workingHours };
+    } catch (error) {
+      console.error('Error loading staff compensation data:', error);
+      return null;
+    }
+  };
+
+  const loadStaffProfile = async (staffId) => {
+    const cached = staffProfileCache[staffId];
+    if (cached) return cached;
+    const key = `internProfilePicture:${staffId}`;
+    try {
+      const stored = await AsyncStorage.getItem(key);
+      if (stored) {
+        setStaffProfileCache(prev => ({ ...prev, [staffId]: stored }));
+        return stored;
+      }
+    } catch (error) {
+      console.error('Failed to load staff profile picture from storage:', error);
+    }
+    return null;
+  };
+
+  const openStaffProfileModal = async (staffMember) => {
+    const picture =
+      staffMember?.profilePicture ||
+      staffProfileCache[staffMember?._id] ||
+      (staffMember?._id ? await loadStaffProfile(staffMember._id) : null);
+    if (!picture) return;
+    const name = `${staffMember?.name || ''} ${staffMember?.surname || ''}`.trim() || 'Staff Member';
+    setStaffProfileModalImage(picture);
+    setStaffProfileModalName(name);
+    setStaffProfileModalVisible(true);
+  };
+
   const loadDepartmentInterns = async (departmentName) => {
     try {
       setLoadingDepartmentInterns(true);
       // Fetch full staff data by department
-      const params = { 
+      const params = {
         department: departmentName,
         fullData: true, // Request full data
         ...(isHostCompany && { hostCompanyId })
@@ -9010,6 +9228,10 @@ export default function AdminDashboard({ navigation, route }) {
       const response = await axios.get(`${API_BASE_URL}/staff/admin/staff`, { params });
       if (response.data.success) {
         setDepartmentInterns(response.data.staff);
+        setDepartmentCounts((prev) => ({
+          ...prev,
+          [departmentName]: computeCountsFromStaff(response.data.staff || [])
+        }));
       }
     } catch (error) {
       console.error('Error loading department interns:', error);
@@ -9018,11 +9240,11 @@ export default function AdminDashboard({ navigation, route }) {
       setLoadingDepartmentInterns(false);
     }
   };
-  
+
   const loadHostCompanyDetails = async (hostCompanyId) => {
     try {
       setLoadingHostCompanyDetails(true);
-      
+
       // 🎯 Try to use the new backend endpoint that efficiently returns departments WITH intern counts
       try {
         const deptResponse = await axios.get(`${API_BASE_URL}/staff/admin/departments-with-counts`, {
@@ -9069,7 +9291,7 @@ export default function AdminDashboard({ navigation, route }) {
           setHostCompanyDepartments(departmentsWithCounts);
         }
       }
-      
+
       // Load all staff/interns for this host company
       const internsResponse = await axios.get(`${API_BASE_URL}/staff/admin/staff`, {
         params: { hostCompanyId }
@@ -9084,20 +9306,20 @@ export default function AdminDashboard({ navigation, route }) {
       setLoadingHostCompanyDetails(false);
     }
   };
-  
+
   const handleViewDepartmentInterns = async (dept) => {
     setSelectedDepartment(dept);
     setShowDepartmentInterns(true);
     await loadDepartmentInterns(dept.name);
   };
-  
+
   const handleViewDepartmentDetails = async (dept) => {
     setSelectedDepartment(dept);
     setShowDepartmentDetails(true);
     // Load interns for this department to display in the modal
     await loadDepartmentInterns(dept.name);
   };
-  
+
   const handleViewHostCompanyDetails = async (company) => {
     setSelectedHostCompany(company);
     setActiveView('hostCompanyDetails');
@@ -9109,17 +9331,17 @@ export default function AdminDashboard({ navigation, route }) {
       Alert.alert('Error', 'Department name is required');
       return;
     }
-    
+
     if (!companyName.trim()) {
       Alert.alert('Error', 'Company name is required');
       return;
     }
-    
+
     if (!useDepartmentCustomAddress && !departmentLocation) {
       Alert.alert('Error', 'Please select a location from the dropdown or enter a custom address');
       return;
     }
-    
+
     if (useDepartmentCustomAddress && !departmentCustomAddress.trim()) {
       Alert.alert('Error', 'Please enter a custom address');
       return;
@@ -9145,7 +9367,7 @@ export default function AdminDashboard({ navigation, route }) {
           customAddress: useDepartmentCustomAddress ? departmentCustomAddress.trim() : undefined,
           isActive: editingDepartment.isActive
         };
-        
+
         // CRITICAL: Host company users cannot change hostCompanyId
         if (isHostCompany) {
           // Ensure hostCompanyId matches (security check)
@@ -9153,7 +9375,7 @@ export default function AdminDashboard({ navigation, route }) {
             throw new Error('You can only edit departments belonging to your company');
           }
         }
-        
+
         await axios.put(`${API_BASE_URL}/staff/admin/departments/${editingDepartment._id}`, updateData);
         Alert.alert('Success', 'Department updated successfully');
       } else {
@@ -9169,7 +9391,7 @@ export default function AdminDashboard({ navigation, route }) {
           // CRITICAL: Auto-set hostCompanyId for host company users
           ...(isHostCompany && { hostCompanyId })
         };
-        
+
         await axios.post(`${API_BASE_URL}/staff/admin/departments`, createData);
         Alert.alert('Success', 'Department created successfully');
       }
@@ -9198,7 +9420,7 @@ export default function AdminDashboard({ navigation, route }) {
       Alert.alert('Error', 'You can only edit departments belonging to your company');
       return;
     }
-    
+
     setEditingDepartment(dept);
     setDepartmentName(dept.name);
     setDepartmentCode(dept.departmentCode || '');
@@ -9226,7 +9448,7 @@ export default function AdminDashboard({ navigation, route }) {
       Alert.alert('Error', 'You can only delete departments belonging to your company');
       return;
     }
-    
+
     Alert.alert(
       'Delete Department',
       `Are you sure you want to delete "${dept.name}"? This will only work if no staff members are assigned to this department.`,
@@ -9307,106 +9529,140 @@ export default function AdminDashboard({ navigation, route }) {
               </Text>
             </View>
           ) : (
-            departments.map((dept) => (
-              <TouchableOpacity
-                key={dept._id}
-                style={[styles.staffCard, dynamicStyles.staffCard, styles.officialCard]}
-                onPress={() => handleViewDepartmentDetails(dept)}
-                activeOpacity={0.7}
-              >
-                <View style={[styles.officialRibbon, { backgroundColor: theme.primary }]}>
-                  <View>
-                    <Text style={styles.officialRibbonText}>Department Record</Text>
-                    <Text style={styles.officialRibbonSubText}>Reference: {dept.departmentCode || 'N/A'}</Text>
-                  </View>
-                  <Text style={styles.officialRibbonBadge}>{dept.isActive ? 'Active' : 'Inactive'}</Text>
-                </View>
-                <View style={styles.staffHeader}>
-                  <View style={{ flex: 1 }}>
-                    <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-                      <Text style={[styles.staffName, dynamicStyles.staffName]}>
-                        {dept.name}
-                        {dept.departmentCode && (
-                          <Text style={[styles.staffDetails, dynamicStyles.staffDetails, { marginLeft: 8 }]}>
-                            ({dept.departmentCode})
-                          </Text>
-                        )}
-                      </Text>
-                      <View style={[styles.internCountBadge, { backgroundColor: theme.primary + '15' }]}>
-                        <Text style={[styles.internCountText, { color: theme.primary }]}>
-                          {dept.internCount || 0} {dept.internCount === 1 ? 'Intern' : 'Interns'}
-                        </Text>
-                      </View>
+            departments.map((dept) => {
+              const counts = getCountsForDepartment(dept.name, departmentCounts);
+              const totalMembers = typeof dept.memberCount === 'number' ? dept.memberCount : counts.memberCount;
+              const internCount = typeof dept.internCount === 'number' && dept.internCount > 0 ? dept.internCount : counts.internCount;
+              const staffCount = typeof dept.staffCount === 'number' && dept.staffCount > 0 ? dept.staffCount : counts.staffCount;
+              return (
+                <TouchableOpacity
+                  key={dept._id}
+                  style={[styles.staffCard, dynamicStyles.staffCard, styles.officialCard]}
+                  onPress={() => handleViewDepartmentDetails(dept)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.officialRibbon, { backgroundColor: theme.primary }]}>
+                    <View>
+                      <Text style={styles.officialRibbonText}>Department Record</Text>
+                      <Text style={styles.officialRibbonSubText}>Reference: {dept.departmentCode || 'N/A'}</Text>
                     </View>
-                    {dept.companyName && (
-                      <Text style={[styles.staffDetails, dynamicStyles.staffDetails]}>
-                        Company: {dept.companyName}
-                      </Text>
-                    )}
-                    {dept.location && (
-                      <Text style={[styles.staffDetails, dynamicStyles.staffDetails]}>
-                        Location: {dept.location}
-                      </Text>
-                    )}
-                    {dept.description && (
-                      <Text style={[styles.staffDetails, dynamicStyles.staffDetails]}>{dept.description}</Text>
-                    )}
-                    <Text style={[styles.staffDetails, dynamicStyles.staffDetails, { marginTop: 4 }]}>
-                      Status: {dept.isActive ? 'Active' : 'Inactive'}
-                    </Text>
-                    <Text style={[styles.clickHint, dynamicStyles.clickHint, { marginTop: 8 }]}>
-                      Tap to view interns →
-                    </Text>
+                    <Text style={styles.officialRibbonBadge}>{dept.isActive ? 'Active' : 'Inactive'}</Text>
                   </View>
-                  <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-                    <TouchableOpacity
-                      style={styles.exportIconButton}
-                      onPress={async (e) => {
-                        e.stopPropagation();
-                        await exportDepartmentPDF(dept);
-                      }}
-                      disabled={exportingDepartment}
-                      hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                    >
-                      {exportingDepartment ? (
-                        <ActivityIndicator size="small" color={theme.primary} />
-                      ) : (
-                        <Text style={styles.exportIconSmall}>📄</Text>
+                  <View style={styles.staffHeader}>
+                    <View style={{ flex: 1 }}>
+                      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                        <Text style={[styles.staffName, dynamicStyles.staffName]}>
+                          {dept.name}
+                          {dept.departmentCode && (
+                            <Text style={[styles.staffDetails, dynamicStyles.staffDetails, { marginLeft: 8 }]}>
+                              ({dept.departmentCode})
+                            </Text>
+                          )}
+                        </Text>
+                        <View style={[styles.internCountBadge, { backgroundColor: theme.primary + '15' }]}>
+                          <Text style={[styles.internCountText, { color: theme.primary }]}>
+                            {staffCount} {staffCount === 1 ? 'Intern' : 'Interns'}
+                          </Text>
+                        </View>
+                      </View>
+                      {dept.companyName && (
+                        <Text style={[styles.staffDetails, dynamicStyles.staffDetails]}>
+                          Company: {dept.companyName}
+                        </Text>
                       )}
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.editButton, dynamicStyles.editButton]}
-                      onPress={(e) => {
-                        e.stopPropagation();
-                        handleEditDepartment(dept);
-                      }}
-                    >
-                      <Text style={styles.editButtonText}>Edit</Text>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.deleteButton, dynamicStyles.deleteButton]}
-                      onPress={async (e) => {
-                        e.stopPropagation();
-                        try {
-                          // Pass hostCompanyId in query params for backend validation
-                          const params = isHostCompany ? { hostCompanyId } : {};
-                          await axios.delete(`${API_BASE_URL}/staff/admin/departments/${dept._id}`, { params });
-                          Alert.alert('Success', 'Department deleted successfully');
-                          loadDepartments();
-                        } catch (error) {
-                          console.error('Error deleting department:', error);
-                          Alert.alert('Error', error.response?.data?.error || 'Failed to delete department');
-                        }
-                      }}
-                    >
-                      <Text style={styles.deleteButtonText}>Delete</Text>
-                    </TouchableOpacity>
+                      {dept.location && (
+                        <Text style={[styles.staffDetails, dynamicStyles.staffDetails]}>
+                          Location: {dept.location}
+                        </Text>
+                      )}
+                      {dept.description && (
+                        <Text style={[styles.staffDetails, dynamicStyles.staffDetails]}>{dept.description}</Text>
+                      )}
+
+                      <Text style={[styles.clickHint, dynamicStyles.clickHint, { marginTop: 8 }]}>
+                        Tap to view interns →
+                      </Text>
+                    </View>
+                    <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                      <TouchableOpacity
+                        style={styles.exportIconButton}
+                        onPress={async (e) => {
+                          e.stopPropagation();
+                          await exportDepartmentPDF(dept);
+                        }}
+                        disabled={exportingDepartment}
+                        hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                      >
+                        {exportingDepartment ? (
+                          <ActivityIndicator size="small" color={theme.primary} />
+                        ) : (
+                          <Text style={styles.exportIconSmall}>📄</Text>
+                        )}
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.editButton, dynamicStyles.editButton]}
+                        onPress={(e) => {
+                          e.stopPropagation();
+                          handleEditDepartment(dept);
+                        }}
+                      >
+                        <Text style={styles.editButtonText}>Edit</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.deleteButton, dynamicStyles.deleteButton]}
+                        onPress={async (e) => {
+                          e.stopPropagation();
+                          try {
+                            const params = isHostCompany ? { hostCompanyId } : {};
+                            await axios.delete(`${API_BASE_URL}/staff/admin/departments/${dept._id}`, { params });
+                            Alert.alert('Success', 'Department deleted successfully');
+                            loadDepartments();
+                          } catch (error) {
+                            console.error('Error deleting department:', error);
+                            Alert.alert('Error', error.response?.data?.error || 'Failed to delete department');
+                          }
+                        }}
+                      >
+                        <Text style={styles.deleteButtonText}>Delete</Text>
+                      </TouchableOpacity>
+                    </View>
                   </View>
-                </View>
-              </TouchableOpacity>
-            ))
+                </TouchableOpacity>
+              );
+            })
           )}
         </ScrollView>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        {/* ADMIN/HOST COMPANY LOGIN>"DEPARTMENTS>SEES THE LISTS AND CLICK ANY" */}
+
+
+
 
         {/* Department Modal */}
         <Modal
@@ -9525,7 +9781,7 @@ export default function AdminDashboard({ navigation, route }) {
                 />
 
                 <Text style={[styles.modalLabel, dynamicStyles.modalLabel]}>Department Location *</Text>
-                
+
                 {/* Location Type Dropdown - Compact */}
                 <View style={styles.locationTypeContainer}>
                   <Text style={[styles.locationTypeLabel, dynamicStyles.modalLabel]}>Location Type:</Text>
@@ -9558,7 +9814,7 @@ export default function AdminDashboard({ navigation, route }) {
                       dynamicStyles.dropdownButtonText,
                       !departmentLocation && styles.dropdownButtonPlaceholder
                     ]}>
-                      {departmentLocation 
+                      {departmentLocation
                         ? departmentLocations.find(l => l.key === departmentLocation)?.name || departmentLocation
                         : 'Select Location *'}
                     </Text>
@@ -9703,6 +9959,12 @@ export default function AdminDashboard({ navigation, route }) {
           </View>
         </Modal>
 
+
+
+
+
+
+        {/* WHEN YOU CLICK THAT THING TO READ */}
         {/* Department Info Modal */}
         <Modal
           visible={showDepartmentInfo}
@@ -9782,7 +10044,7 @@ export default function AdminDashboard({ navigation, route }) {
         // Parse times to compare
         const actualTime = item.clockInTime;
         const expectedTime = item.expectedClockIn;
-        
+
         // Convert to minutes for comparison
         const parseTime = (timeStr) => {
           if (!timeStr) return null;
@@ -9795,10 +10057,10 @@ export default function AdminDashboard({ navigation, route }) {
           if (ampm === 'AM' && hours === 12) hours = 0;
           return hours * 60 + minutes;
         };
-        
+
         const actualMinutes = parseTime(actualTime);
         const expectedMinutes = parseTime(expectedTime);
-        
+
         // Only include if actual time is LATER than expected (late arrival)
         if (actualMinutes && expectedMinutes) {
           return actualMinutes > expectedMinutes;
@@ -9820,7 +10082,7 @@ export default function AdminDashboard({ navigation, route }) {
         };
       }
       acc[key].items.push(item);
-      
+
       // Collect violations (only late clock-ins)
       if (item.clockInTime && item.expectedClockIn) {
         acc[key].violations.push({
@@ -9829,7 +10091,7 @@ export default function AdminDashboard({ navigation, route }) {
           expected: item.expectedClockIn
         });
       }
-      
+
       return acc;
     }, {});
 
@@ -9977,7 +10239,7 @@ export default function AdminDashboard({ navigation, route }) {
                     flexDirection: 'row',
                     paddingVertical: 16,
                     paddingHorizontal: 16,
-                    backgroundColor: index % 2 === 0 
+                    backgroundColor: index % 2 === 0
                       ? (isDarkMode ? '#1e293b' : '#fff')
                       : (isDarkMode ? '#243447' : '#f8fafc'),
                     borderBottomWidth: index < groupedList.length - 1 ? 1 : 0,
@@ -10091,7 +10353,7 @@ export default function AdminDashboard({ navigation, route }) {
                   reportsGeneratedCount: reportsGeneratedCount || 0,
                   lateArrivalsList: stats.lateArrivalsList || [],
                 }, userInfo.name || 'Admin');
-                
+
                 if (result.success) {
                   Alert.alert('✅ Success', 'Dashboard exported as PDF successfully!');
                 } else {
@@ -10125,7 +10387,7 @@ export default function AdminDashboard({ navigation, route }) {
               </View>
             )}
           </TouchableOpacity>
-          
+
           {/* Avatar with Dropdown */}
           <View style={styles.avatarContainer}>
             <TouchableOpacity
@@ -10138,7 +10400,7 @@ export default function AdminDashboard({ navigation, route }) {
                 </Text>
               </View>
             </TouchableOpacity>
-            
+
             {/* Dropdown Menu */}
             {showAvatarDropdown && (
               <View style={[styles.avatarDropdown, dynamicStyles.avatarDropdown]}>
@@ -10168,7 +10430,7 @@ export default function AdminDashboard({ navigation, route }) {
           </View>
         </View>
       </View>
-      
+
       {/* Overlay to close dropdown when clicking outside */}
       {showAvatarDropdown && (
         <TouchableOpacity
@@ -10193,10 +10455,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="dashboard" 
-                size={20} 
-                color={activeView === 'dashboard' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="dashboard"
+                size={20}
+                color={activeView === 'dashboard' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10219,10 +10481,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="people" 
-                size={20} 
-                color={activeView === 'staff' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="people"
+                size={20}
+                color={activeView === 'staff' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10245,10 +10507,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="person-add" 
-                size={20} 
-                color={theme.text} 
+              <MaterialIcons
+                name="person-add"
+                size={20}
+                color={theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10302,10 +10564,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="warning" 
-                size={20} 
-                color={activeView === 'notAccountable' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="warning"
+                size={20}
+                color={activeView === 'notAccountable' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10329,10 +10591,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="business" 
-                size={20} 
-                color={activeView === 'departments' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="business"
+                size={20}
+                color={activeView === 'departments' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10357,10 +10619,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="event-note" 
-                size={20} 
-                color={activeView === 'leaveApplications' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="event-note"
+                size={20}
+                color={activeView === 'leaveApplications' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10390,10 +10652,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="schedule" 
-                size={20} 
-                color={activeView === 'attendanceCorrections' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="schedule"
+                size={20}
+                color={activeView === 'attendanceCorrections' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10422,10 +10684,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="bar-chart" 
-                size={20} 
-                color={activeView === 'reports' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="bar-chart"
+                size={20}
+                color={activeView === 'reports' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10433,7 +10695,7 @@ export default function AdminDashboard({ navigation, route }) {
                 dynamicStyles.sidebarItemText,
                 activeView === 'reports' && [styles.sidebarItemTextActive, dynamicStyles.sidebarItemTextActive]
               ]}>
-                Reports
+                CaseLogs
               </Text>
             </TouchableOpacity>
 
@@ -10449,10 +10711,10 @@ export default function AdminDashboard({ navigation, route }) {
                 setSidebarCollapsed(true);
               }}
             >
-              <MaterialIcons 
-                name="smartphone" 
-                size={20} 
-                color={activeView === 'devices' ? '#fff' : theme.text} 
+              <MaterialIcons
+                name="smartphone"
+                size={20}
+                color={activeView === 'devices' ? '#fff' : theme.text}
                 style={{ marginRight: 12 }}
               />
               <Text style={[
@@ -10485,10 +10747,10 @@ export default function AdminDashboard({ navigation, route }) {
                     setSidebarCollapsed(true);
                   }}
                 >
-                  <MaterialIcons 
-                    name="apartment" 
-                    size={20} 
-                    color={activeView === 'hostCompanies' ? '#fff' : theme.text} 
+                  <MaterialIcons
+                    name="apartment"
+                    size={20}
+                    color={activeView === 'hostCompanies' ? '#fff' : theme.text}
                     style={{ marginRight: 12 }}
                   />
                   <Text style={[
@@ -10615,7 +10877,7 @@ export default function AdminDashboard({ navigation, route }) {
               <Text style={[styles.helperText, dynamicStyles.helperText, { marginBottom: 8 }]}>
                 These will be used as default for staff who don't have individual hours assigned. Format: HH:MM (24-hour, e.g., "07:30").
               </Text>
-              
+
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 12 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.helperText, dynamicStyles.helperText, { marginBottom: 4, fontSize: 12 }]}>Clock In</Text>
@@ -10640,7 +10902,7 @@ export default function AdminDashboard({ navigation, route }) {
                   />
                 </View>
               </View>
-              
+
               <View style={{ flexDirection: 'row', gap: 12, marginBottom: 16 }}>
                 <View style={{ flex: 1 }}>
                   <Text style={[styles.helperText, dynamicStyles.helperText, { marginBottom: 4, fontSize: 12 }]}>Break Start</Text>
@@ -10792,8 +11054,8 @@ export default function AdminDashboard({ navigation, route }) {
                 style={[styles.modalSaveButton, dynamicStyles.modalSaveButton]}
                 onPress={handleSaveHostCompany}
                 disabled={
-                  savingHostCompany || 
-                  !hostCompanyName.trim() || 
+                  savingHostCompany ||
+                  !hostCompanyName.trim() ||
                   !hostCompanyCompanyName.trim() ||
                   (!editingHostCompany && (!hostCompanyUsername.trim() || !hostCompanyPassword || hostCompanyPassword.length < 6))
                 }
@@ -10807,6 +11069,31 @@ export default function AdminDashboard({ navigation, route }) {
                 )}
               </TouchableOpacity>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={staffProfileModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setStaffProfileModalVisible(false)}
+      >
+        <View style={styles.profileModalOverlay}>
+          <View style={styles.profileModalContent}>
+            <Text style={styles.profileModalName}>{staffProfileModalName}</Text>
+            {staffProfileModalImage && (
+              <Image
+                source={{ uri: staffProfileModalImage }}
+                style={styles.profileModalImage}
+              />
+            )}
+            <TouchableOpacity
+              style={styles.profileModalCloseButton}
+              onPress={() => setStaffProfileModalVisible(false)}
+            >
+              <Text style={styles.profileModalCloseText}>Close</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -10871,7 +11158,7 @@ export default function AdminDashboard({ navigation, route }) {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, dynamicStyles.modalContent]}>
             <Text style={[styles.modalTitle, dynamicStyles.modalTitle]}>Select Year</Text>
-            
+
             <ScrollView style={styles.monthPicker}>
               {Array.from({ length: 10 }, (_, i) => {
                 const year = new Date().getFullYear() - 2 + i;
@@ -11041,10 +11328,10 @@ export default function AdminDashboard({ navigation, route }) {
                       }]}>
                         {selectedDayDetails.summary?.clockIn
                           ? new Date(selectedDayDetails.summary.clockIn.timestamp).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              hour12: true
-                            })
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                          })
                           : 'Not recorded'}
                       </Text>
                     </View>
@@ -11059,10 +11346,10 @@ export default function AdminDashboard({ navigation, route }) {
                       }]}>
                         {selectedDayDetails.summary?.startBreak
                           ? new Date(selectedDayDetails.summary.startBreak.timestamp).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              hour12: true
-                            })
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                          })
                           : 'Not recorded'}
                       </Text>
                     </View>
@@ -11077,10 +11364,10 @@ export default function AdminDashboard({ navigation, route }) {
                       }]}>
                         {selectedDayDetails.summary?.endBreak
                           ? new Date(selectedDayDetails.summary.endBreak.timestamp).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              hour12: true
-                            })
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                          })
                           : 'Not recorded'}
                       </Text>
                     </View>
@@ -11092,10 +11379,10 @@ export default function AdminDashboard({ navigation, route }) {
                       }]}>
                         {selectedDayDetails.summary?.clockOut
                           ? new Date(selectedDayDetails.summary.clockOut.timestamp).toLocaleTimeString('en-US', {
-                              hour: '2-digit',
-                              minute: '2-digit',
-                              hour12: true
-                            })
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            hour12: true
+                          })
                           : 'Not recorded'}
                       </Text>
                     </View>
@@ -11159,7 +11446,7 @@ export default function AdminDashboard({ navigation, route }) {
                         flexDirection: 'row',
                         paddingVertical: 14,
                         paddingHorizontal: 16,
-                        backgroundColor: index % 2 === 0 
+                        backgroundColor: index % 2 === 0
                           ? (isDarkMode ? '#1e293b' : '#fff')
                           : (isDarkMode ? '#243447' : '#f8fafc'),
                         borderBottomWidth: index < selectedDayDetails.logs.length - 1 ? 1 : 0,
@@ -11174,9 +11461,9 @@ export default function AdminDashboard({ navigation, route }) {
                             marginBottom: 4,
                           }}>
                             {log.clockType === 'in' ? 'Clock-In' :
-                             log.clockType === 'break_start' ? 'Start Break' :
-                             log.clockType === 'break_end' ? 'End Break' :
-                             'Clock-Out'}
+                              log.clockType === 'break_start' ? 'Start Break' :
+                                log.clockType === 'break_end' ? 'End Break' :
+                                  'Clock-Out'}
                           </Text>
                         </View>
                         <View style={{ flex: 1.5 }}>
@@ -11360,7 +11647,7 @@ export default function AdminDashboard({ navigation, route }) {
                       </Text>
                       {loadingDepartmentInterns && <ActivityIndicator size="small" color={theme.primary} />}
                     </View>
-                    
+
                     {loadingDepartmentInterns ? (
                       <Text style={[styles.detailValue, dynamicStyles.staffDetails]}>Loading staff members...</Text>
                     ) : departmentInterns.length === 0 ? (
@@ -11476,7 +11763,7 @@ export default function AdminDashboard({ navigation, route }) {
                       <Text style={[styles.detailSectionTitle, dynamicStyles.staffName, { marginBottom: 12 }]}>
                         {intern.name} {intern.surname}
                       </Text>
-                      
+
                       <View style={styles.detailSection}>
                         <Text style={[styles.detailLabel, dynamicStyles.modalLabel]}>Personal Information</Text>
                         <View style={styles.detailRow}>
@@ -11570,7 +11857,7 @@ export default function AdminDashboard({ navigation, route }) {
         <View style={styles.modalOverlay}>
           <View style={[styles.modalContent, dynamicStyles.modalContent]}>
             <Text style={[styles.modalTitle, dynamicStyles.modalTitle]}>Select Month & Year</Text>
-            
+
             <View style={styles.pickerContainer}>
               <TouchableOpacity
                 style={[styles.yearButton, dynamicStyles.yearButton]}
@@ -11580,7 +11867,7 @@ export default function AdminDashboard({ navigation, route }) {
                   Year: {selectedYear} ▼
                 </Text>
               </TouchableOpacity>
-              
+
               <ScrollView style={styles.monthPicker}>
                 {monthNames.map((month, index) => (
                   <TouchableOpacity
@@ -12271,6 +12558,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     borderWidth: 1,
     borderColor: '#3166AE55',
+  },
+  staffDetailsAvatarImage: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+  },
+  staffListAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
   },
   staffAvatarLarge: {
     fontSize: 22,
@@ -13746,5 +14043,43 @@ const styles = StyleSheet.create({
     color: '#6b7280',
     textAlign: 'center',
     paddingVertical: 20,
+  },
+  profileModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  profileModalContent: {
+    width: '90%',
+    maxWidth: 400,
+    borderRadius: 18,
+    padding: 24,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+  },
+  profileModalImage: {
+    width: 220,
+    height: 220,
+    borderRadius: 18,
+    marginVertical: 12,
+  },
+  profileModalName: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#111827',
+  },
+  profileModalCloseButton: {
+    marginTop: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 24,
+    borderRadius: 10,
+    backgroundColor: '#3166AE',
+  },
+  profileModalCloseText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
   },
 });

@@ -48,6 +48,7 @@ export default function InternDashboard({ navigation, route }) {
     let isMounted = true;
 
     const loadStoredProfilePicture = async () => {
+      if (!profilePictureKey) return;
       try {
         const storedPicture = await AsyncStorage.getItem(profilePictureKey);
         if (!isMounted) return;
@@ -55,6 +56,7 @@ export default function InternDashboard({ navigation, route }) {
         if (userInfo?.profilePicture) {
           if (storedPicture !== userInfo.profilePicture) {
             await AsyncStorage.setItem(profilePictureKey, userInfo.profilePicture);
+            await AsyncStorage.setItem('internProfilePicture', userInfo.profilePicture);
           }
           setProfilePicture(userInfo.profilePicture);
           return;
@@ -62,6 +64,12 @@ export default function InternDashboard({ navigation, route }) {
 
         if (storedPicture) {
           setProfilePicture(storedPicture);
+          return;
+        }
+
+        const fallbackPicture = await AsyncStorage.getItem('internProfilePicture');
+        if (fallbackPicture) {
+          setProfilePicture(fallbackPicture);
         }
       } catch (error) {
         console.error('Error loading profile picture:', error);
@@ -198,12 +206,15 @@ export default function InternDashboard({ navigation, route }) {
             }
           );
 
-          if (uploadResponse.data?.profilePicture) {
-            const newProfilePicture = uploadResponse.data.profilePicture;
-            setProfilePicture(newProfilePicture);
-            await AsyncStorage.setItem(profilePictureKey, newProfilePicture);
-            Alert.alert('Success', 'Profile picture updated successfully!');
-          }
+            if (uploadResponse.data?.profilePicture) {
+              const newProfilePicture = uploadResponse.data.profilePicture;
+              setProfilePicture(newProfilePicture);
+              await AsyncStorage.multiSet([
+                [profilePictureKey, newProfilePicture],
+                ['internProfilePicture', newProfilePicture],
+              ]);
+              Alert.alert('Success', 'Profile picture updated successfully!');
+            }
         } catch (error) {
           console.error('Upload error:', error);
           Alert.alert('Upload Failed', error.response?.data?.error || 'Failed to upload profile picture');

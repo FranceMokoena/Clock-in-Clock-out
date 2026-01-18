@@ -266,6 +266,59 @@ async function getRecipientsForAction(actionType, payload) {
         }
         break;
 
+      // ===== ROTATION NOTIFICATIONS =====
+      case 'ROTATION_PLAN_CREATED':
+      case 'ROTATION_PLAN_UPDATED':
+      case 'ROTATION_DUE_SOON':
+      case 'ROTATION_COMPLETED':
+      case 'ROTATION_REGRESSED':
+      case 'ROTATION_DEPARTMENT_CHANGED':
+        if (payload.hostCompanyId) {
+          recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        if (payload.staffId) {
+          recipients.specific = [payload.staffId];
+        }
+        break;
+
+      case 'ROTATION_APPROVAL_PENDING':
+      case 'ROTATION_EVALUATION_SUBMITTED':
+        recipients.admins = await getAdmins();
+        if (payload.hostCompanyId) {
+          recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        if (payload.staffId) {
+          recipients.specific = [payload.staffId];
+        }
+        break;
+
+      case 'ROTATION_EVIDENCE_FAILED':
+        recipients.admins = await getAdmins();
+        if (payload.hostCompanyId) {
+          recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        break;
+
+      case 'ROTATION_APPROVED':
+      case 'ROTATION_DENIED':
+        if (payload.staffId) {
+          recipients.specific = [payload.staffId];
+        }
+        if (payload.hostCompanyId) {
+          recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        break;
+
+      case 'ROTATION_DECLINED':
+        recipients.admins = await getAdmins();
+        if (payload.staffId) {
+          recipients.specific = [payload.staffId];
+        }
+        if (payload.hostCompanyId) {
+          recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        break;
+
       default:
         // Default: notify admins only
         recipients.admins = await getAdmins();
@@ -460,6 +513,43 @@ function getNotificationMetadata(actionType) {
       break;
 
     case 'REPORT_ACTION_TAKEN':
+      metadata.notificationType = 'staff_action';
+      metadata.priority = 'high';
+      metadata.sendPush = true;
+      break;
+
+    case 'ROTATION_PLAN_CREATED':
+    case 'ROTATION_PLAN_UPDATED':
+      metadata.notificationType = 'staff_action';
+      metadata.priority = 'medium';
+      metadata.sendPush = true;
+      break;
+
+    case 'ROTATION_DUE_SOON':
+      metadata.notificationType = 'staff_action';
+      metadata.priority = 'medium';
+      metadata.sendPush = true;
+      break;
+
+    case 'ROTATION_APPROVAL_PENDING':
+    case 'ROTATION_EVALUATION_SUBMITTED':
+      metadata.notificationType = 'staff_action';
+      metadata.priority = 'high';
+      metadata.sendPush = true;
+      break;
+
+    case 'ROTATION_EVIDENCE_FAILED':
+      metadata.notificationType = 'staff_action';
+      metadata.priority = 'high';
+      metadata.sendPush = true;
+      break;
+
+    case 'ROTATION_APPROVED':
+    case 'ROTATION_DENIED':
+    case 'ROTATION_COMPLETED':
+    case 'ROTATION_REGRESSED':
+    case 'ROTATION_DECLINED':
+    case 'ROTATION_DEPARTMENT_CHANGED':
       metadata.notificationType = 'staff_action';
       metadata.priority = 'high';
       metadata.sendPush = true;

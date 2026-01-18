@@ -12,7 +12,15 @@ const createEmptyWorkingHoursInput = () => ({
   monthlyHours: '',
 });
 
-function StaffList({ hostCompanyId, isHostCompany }) {
+const getInitials = (member) => {
+  const name = `${member?.name || ''} ${member?.surname || ''}`.trim();
+  if (!name) return 'NA';
+  const parts = name.split(' ');
+  if (parts.length === 1) return parts[0][0] || 'N';
+  return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
+};
+
+function StaffList({ hostCompanyId, isHostCompany, onSelectStaff }) {
   const [staff, setStaff] = useState([]);
   const [filteredStaff, setFilteredStaff] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -34,6 +42,12 @@ function StaffList({ hostCompanyId, isHostCompany }) {
   const [exportingPayslip, setExportingPayslip] = useState(false);
   const [payslipError, setPayslipError] = useState('');
   const [detailedAttendanceStats, setDetailedAttendanceStats] = useState(null);
+  const [rotationPlan, setRotationPlan] = useState(null);
+  const [rotationTargetDepartment, setRotationTargetDepartment] = useState('');
+  const [rotationNotes, setRotationNotes] = useState('');
+  const [rotationStatus, setRotationStatus] = useState('active');
+  const [showRotationForm, setShowRotationForm] = useState(true);
+  const [savingRotation, setSavingRotation] = useState(false);
   
   // Filtering state
   const [searchTerm, setSearchTerm] = useState('');
@@ -177,8 +191,27 @@ function StaffList({ hostCompanyId, isHostCompany }) {
         console.error('Error fetching detailed attendance:', error?.response?.data || error);
         setDetailedAttendanceStats(null);
       }
+      await loadRotationPlan(staffId);
     } catch (error) {
       console.error('Error loading payroll data:', error?.response?.data || error);
+    }
+  };
+
+  const loadRotationPlan = async (staffId) => {
+    try {
+      const response = await staffAPI.getRotationPlan(staffId);
+      if (response?.success) {
+        const plan = response.rotationPlan || {};
+        setRotationPlan(plan);
+        setRotationTargetDepartment(plan.currentDepartment?.departmentId || '');
+        setRotationStatus(plan.status || 'active');
+        setRotationNotes(plan.notes || '');
+      } else {
+        setRotationPlan(null);
+      }
+    } catch (error) {
+      console.error('Error loading rotation plan:', error);
+      setRotationPlan(null);
     }
   };
 
@@ -191,6 +224,9 @@ function StaffList({ hostCompanyId, isHostCompany }) {
       if (!member) {
         console.error('Staff member not found in list');
         return;
+      }
+      if (onSelectStaff) {
+        onSelectStaff(member._id, `${member.name} ${member.surname}`.trim());
       }
 
       // Start with the basic staff record we already have (matches mobile app approach)
@@ -233,15 +269,20 @@ function StaffList({ hostCompanyId, isHostCompany }) {
         }
       }
 
-      setStaffDetails(fullDetails);
-      setSelectedStaff(staffId);
-      setStipendData(null);
-      setStipendInput('');
-      setWorkingHoursData(null);
-      setWorkingHoursInput(createEmptyWorkingHoursInput());
-      setDetailedAttendanceStats(null);
-      await fetchPayrollData(staffId);
-      setShowDetails(true);
+    setStaffDetails(fullDetails);
+    setSelectedStaff(staffId);
+    setStipendData(null);
+    setStipendInput('');
+    setWorkingHoursData(null);
+    setWorkingHoursInput(createEmptyWorkingHoursInput());
+    setDetailedAttendanceStats(null);
+    setRotationPlan(null);
+    setRotationTargetDepartment('');
+    setRotationStatus('active');
+    setRotationNotes('');
+    setShowRotationForm(true);
+    await fetchPayrollData(staffId);
+    setShowDetails(true);
     } catch (error) {
       console.error('Error loading staff details:', error);
     } finally {
@@ -365,6 +406,38 @@ function StaffList({ hostCompanyId, isHostCompany }) {
       alert('Failed to save working hours.');
     } finally {
       setSavingWorkingHours(false);
+    }
+  };
+
+  const handleSaveRotationPlan = async () => {
+    if (!selectedStaff) {
+      alert('Please select a staff member first.');
+      return;
+    }
+    const department = departments.find(d => d._id === rotationTargetDepartment);
+    try {
+      setSavingRotation(true);
+      const payload = {
+        departmentId: rotationTargetDepartment || null,
+        departmentName: department?.name || rotationPlan?.currentDepartment?.departmentName || 'Unassigned',
+        notes: rotationNotes,
+        status: rotationStatus,
+        startDate: new Date().toISOString()
+      };
+      const response = await staffAPI.updateRotationPlan(selectedStaff, payload, getPayrollScopeParams());
+      if (response?.success) {
+        setRotationPlan(response.rotationPlan);
+        setRotationTargetDepartment(response.rotationPlan.currentDepartment?.departmentId || '');
+        setRotationStatus(response.rotationPlan.status || 'active');
+        alert('Rotation plan updated.');
+      } else {
+        alert(response?.error || 'Failed to update rotation plan.');
+      }
+    } catch (error) {
+      console.error('Error saving rotation plan:', error);
+      alert('Failed to update rotation plan.');
+    } finally {
+      setSavingRotation(false);
     }
   };
 
@@ -560,6 +633,7 @@ function StaffList({ hostCompanyId, isHostCompany }) {
           <table className="staff-table">
             <thead>
                 <tr>
+                  <th>Profile</th>
                   <th>Name</th>
                   <th>Role</th>
                   <th>Department</th>
@@ -572,6 +646,18 @@ function StaffList({ hostCompanyId, isHostCompany }) {
             <tbody>
               {filteredStaff.map((member) => (
                 <tr key={member._id}>
+                  <td>
+                    <div className="profile-avatar-cell">
+                      {member.profilePicture ? (
+                        <img
+                          src={member.profilePicture}
+                          alt={`${member.name || 'User'} avatar`}
+                        />
+                      ) : (
+                        <span>{getInitials(member)}</span>
+                      )}
+                    </div>
+                  </td>
                   <td>{member.name} {member.surname}</td>
                   <td>
                     <span className={`role-badge role-${member.role?.toLowerCase()}`}>
@@ -621,14 +707,32 @@ function StaffList({ hostCompanyId, isHostCompany }) {
       {showDetails && staffDetails && (
         <div className="staff-details-modal">
               <div className="modal-content large-modal">
-                <div className="modal-header">
-              <h3>{staffDetails.role === 'Intern' ? 'Intern' : 'Staff'} Details</h3>
+                                <div className="modal-header">
+              <div className="modal-avatar-group">
+                <div className="modal-avatar">
+                  {staffDetails.profilePicture ? (
+                    <img
+                      src={staffDetails.profilePicture}
+                      alt={`${staffDetails.name || 'Profile'} avatar`}
+                    />
+                  ) : (
+                    <span>{getInitials(staffDetails)}</span>
+                  )}
+                </div>
+                <div>
+                  <h3>{staffDetails.role === 'Intern' ? 'Intern' : 'Staff'} Details</h3>
+                  <p className="modal-avatar-subtitle">
+                    {staffDetails.name} {staffDetails.surname || ''}
+                  </p>
+                </div>
+              </div>
               <button onClick={() => {
                 setShowDetails(false);
                 setStaffDetails(null);
                 setSelectedStaff(null);
                 setDetailedAttendanceStats(null);
-              }}>✕</button>
+              }}>?
+              </button>
             </div>
             <div className="modal-body">
               <div className="official-ribbon">
@@ -859,7 +963,95 @@ function StaffList({ hostCompanyId, isHostCompany }) {
                   </table>
                 </div>
               </div>
-            )}
+              )}
+
+              {rotationPlan && (
+                <div className="details-section rotation-section">
+                  <div className="section-header-row">
+                    <h4>Rotation Plan</h4>
+                    <button className="collapse-toggle" onClick={() => setShowRotationForm(prev => !prev)}>
+                      {showRotationForm ? 'Hide' : 'Show'}
+                    </button>
+                  </div>
+                  <div className="rotation-current">
+                    <div className="detail-row">
+                      <span className="detail-label">Current Department</span>
+                      <span className="detail-value">
+                        {rotationPlan.currentDepartment?.departmentName || 'Unassigned'}
+                      </span>
+                    </div>
+                    <div className="detail-row">
+                      <span className="detail-label">Status</span>
+                      <span className="detail-value">{rotationPlan.status || 'active'}</span>
+                    </div>
+                    {rotationPlan.startDate && (
+                      <div className="detail-row">
+                        <span className="detail-label">Assigned</span>
+                        <span className="detail-value">
+                          {new Date(rotationPlan.startDate).toLocaleDateString()}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                  {showRotationForm && (
+                    <div className="rotation-form">
+                      <label className="detail-label">Assign Department</label>
+                      <select
+                        value={rotationTargetDepartment}
+                        onChange={(e) => setRotationTargetDepartment(e.target.value)}
+                        className="rotation-select"
+                      >
+                        <option value="">-- Select Department --</option>
+                        {departments.map((dept) => (
+                          <option key={dept._id} value={dept._id}>
+                            {dept.name} {dept.departmentCode ? `(${dept.departmentCode})` : ''}
+                          </option>
+                        ))}
+                      </select>
+                      <label className="detail-label">Status</label>
+                      <select
+                        value={rotationStatus}
+                        onChange={(e) => setRotationStatus(e.target.value)}
+                        className="rotation-select"
+                      >
+                        <option value="active">Active</option>
+                        <option value="paused">Paused</option>
+                        <option value="completed">Completed</option>
+                      </select>
+                      <label className="detail-label">Notes</label>
+                      <textarea
+                        value={rotationNotes}
+                        onChange={(e) => setRotationNotes(e.target.value)}
+                        className="rotation-textarea"
+                        placeholder="Optional notes for this rotation"
+                      />
+                      <button
+                        className="modal-save-button"
+                        onClick={handleSaveRotationPlan}
+                        disabled={savingRotation}
+                      >
+                        {savingRotation ? 'Saving...' : 'Save Rotation'}
+                      </button>
+                    </div>
+                  )}
+                  {rotationPlan.history?.length > 0 && (
+                    <div className="rotation-history">
+                      <h5>Rotation History</h5>
+                      {rotationPlan.history.map((entry, idx) => (
+                        <div key={`${entry.recordedAt || idx}-${idx}`} className="rotation-history-item">
+                          <span className="history-dept">{entry.departmentName || '—'}</span>
+                          <span className="history-dates">
+                            {entry.startDate ? new Date(entry.startDate).toLocaleDateString() : 'N/A'}
+                            {' – '}
+                            {entry.endDate ? new Date(entry.endDate).toLocaleDateString() : 'Present'}
+                          </span>
+                          <span className="history-status">{entry.status || 'completed'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="details-section payroll-section">
                 <div className="section-header-row">

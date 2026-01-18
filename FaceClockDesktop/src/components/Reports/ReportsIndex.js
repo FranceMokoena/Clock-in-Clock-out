@@ -80,8 +80,8 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
     },
     {
       id: 'intern-reports',
-      title: 'Intern Reports Management',
-      description: 'Review and acknowledge reports from Host Companies about interns',
+      title: 'Intern CaseLogs Management',
+      description: 'Review and acknowledge CaseLogs submitted by Host Companies about interns',
       icon: '📝',
       color: '#d32f2f'
     }
@@ -192,7 +192,7 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
         // Calculate overview stats
         const totalInterns = staff.filter(s => s.role === 'Intern').length;
         const totalDepartments = [...new Set(staff.map(s => s.department))].length;
-        
+
         // Calculate attendance rate
         const presentToday = attendance.filter(a => {
           const logDate = new Date(a.clockInTime).toDateString();
@@ -230,14 +230,8 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
           <button className="back-button" onClick={() => setActiveSection('overview')}>
             <MdArrowBack /> Back to Overview
           </button>
-          <h2>{reportSections.find(s => s.id === activeSection)?.title}</h2>
-          <div style={{marginLeft: 16}}>
-            <small style={{color: '#666'}}>
-              {isHostCompany
-                ? `Report Scope: Company — ID: ${hostCompanyId}`
-                : 'Report Scope: System-wide (Admin)'}
-            </small>
-          </div>
+
+
         </div>
         {SectionComponent && (
           <SectionComponent isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />
@@ -254,9 +248,9 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
           {/* Header */}
           <div className="reports-header">
             <div>
-              <h1>Intern Reports & Complaints</h1>
+              <h1>Intern CaseLogs & Complaints</h1>
               <p className="reports-subtitle">
-                Submit and review formal reports related to interns assigned to your company
+                Submit and review formal caselog reports related to interns assigned to your company
               </p>
             </div>
           </div>
@@ -401,7 +395,7 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
                   }}
                 >
                   <MdAdd size={20} />
-                  Submit New Report
+                  Submit New CaseLog Report
                 </button>
               </div>
 
@@ -415,7 +409,7 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
                 }}
               >
                 <h2 style={{ margin: '0 0 16px 0', fontSize: 16, fontWeight: 600, color: '#222' }}>
-                  Step 3: Submitted Reports for this Intern
+                  Step 3: Submitted Caselogs for this Intern
                 </h2>
 
                 {loadingReports ? (
@@ -492,14 +486,14 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
                                     report.severity === 'High'
                                       ? '#ffebee'
                                       : report.severity === 'Medium'
-                                      ? '#fff3e0'
-                                      : '#e8f5e9',
+                                        ? '#fff3e0'
+                                        : '#e8f5e9',
                                   color:
                                     report.severity === 'High'
                                       ? '#c62828'
                                       : report.severity === 'Medium'
-                                      ? '#f57c00'
-                                      : '#2e7d32'
+                                        ? '#f57c00'
+                                        : '#2e7d32'
                                 }}
                               >
                                 {report.severity}
@@ -520,14 +514,14 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
                                     report.status === 'Submitted'
                                       ? '#e3f2fd'
                                       : report.status === 'Reviewed'
-                                      ? '#f3e5f5'
-                                      : '#e8f5e9',
+                                        ? '#f3e5f5'
+                                        : '#e8f5e9',
                                   color:
                                     report.status === 'Submitted'
                                       ? '#1565c0'
                                       : report.status === 'Reviewed'
-                                      ? '#6a1b9a'
-                                      : '#2e7d32'
+                                        ? '#6a1b9a'
+                                        : '#2e7d32'
                                 }}
                               >
                                 {report.status}
@@ -555,58 +549,39 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
       ) : (
         <>
           <div className="reports-header">
-            <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%'}}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%' }}>
               <div>
-                <h1>Reports & Compliance Monitoring</h1>
-                <p className="reports-subtitle">Official system-generated analytical and compliance reports</p>
+                <h1>CaseLogs Management</h1>
+                <p className="reports-subtitle">Track every host-company incident with severity, status, and admin accountability.</p>
               </div>
-              <div style={{display: 'flex', alignItems: 'center', gap: 12}}>
-                <div style={{textAlign: 'right'}}>
-                  <div style={{fontSize: 12, color: '#666'}}>
-                    Report Scope: System-wide (Admin)
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 12, color: '#666' }}>
+                    CaseLog scope: System-wide (Admin)
                   </div>
                 </div>
                 <div>
                   <button
-                    aria-label="Open reports help"
+                    aria-label="Open CaseLog help"
                     className="help-button"
                     onClick={() => setShowHelp(true)}
-                    style={{background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8}}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8 }}
                   >
                     <MdHelpOutline size={22} />
-                    <span style={{fontSize: 14}}>Help</span>
+                    <span style={{ fontSize: 14 }}>Need guidance?</span>
                   </button>
                 </div>
               </div>
             </div>
           </div>
 
-          <div className="reports-overview-stats">
-            <div className="stat-card metric-panel">
-              <div className="stat-content">
-                <div className="stat-value">{stats?.totalInterns || 0}</div>
-                <div className="stat-label">Intern</div>
-              </div>
-            </div>
-            <div className="stat-card metric-panel">
-              <div className="stat-content">
-                <div className="stat-value">{stats?.totalCompanies || 0}</div>
-                <div className="stat-label">Host Companies</div>
-              </div>
-            </div>
-            <div className="stat-card metric-panel">
-              <div className="stat-content">
-                <div className="stat-value">{stats?.presentToday || 0}</div>
-                <div className="stat-label">Present Today</div>
-              </div>
-            </div>
-            <div className="stat-card metric-panel">
-              <div className="stat-content">
-                <div className="stat-value">{stats?.totalAttendanceRecords || 0}</div>
-                <div className="stat-label">Total Records</div>
-              </div>
-            </div>
+          <div className="caselog-callout" style={{ marginBottom: 24 }}>
+            <p>
+              CaseLogs highlight behavior flags, attendance gaps, and compliance incidents filed by host companies. Refresh, export, or click a CaseLog to review the full details with admin notes.
+            </p>
           </div>
+
+
           {showHelp && (
             <div
               role="dialog"
@@ -638,30 +613,19 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
                   color: '#222'
                 }}
               >
-                <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8}}>
-                  <h2 style={{margin: 0}}>Reports: What this screen shows❓</h2>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <h2 style={{ margin: 0 }}>What CaseLogs deliver</h2>
                   <button
                     aria-label="Close help"
                     onClick={() => setShowHelp(false)}
-                    style={{background: 'transparent', border: 'none', cursor: 'pointer'}}
+                    style={{ background: 'transparent', border: 'none', cursor: 'pointer' }}
                   >
                     <MdClose size={20} />
                   </button>
                 </div>
-                <div style={{lineHeight: 1.5}}>
-                  <p style={{marginTop: 8}}>
-                    This Reports screen gives you a clear summary of attendance and compliance across the organisation. Use the modules below to access more detailed reports.
-                  </p>
-                  <ul style={{marginTop: 8}}>
-                    <li><strong>Attendance Reports:</strong> Daily, weekly and monthly attendance summaries and records.</li>
-                    <li><strong>Behavioral Reports:</strong> Patterns like punctuality, consistency and trends over time.</li>
-                    <li><strong>Compliance & Audit:</strong> Any ethics or policy violations and audit-ready records.</li>
-                    <li><strong>Performance:</strong> Supervisor-validated productivity and task-related measures.</li>
-                    <li><strong>Risk Monitoring:</strong> Early warning indicators and recommended actions for at-risk cases.</li>
-                    <li><strong>Institutional Reports:</strong> Company-level rankings, scorecards and exportable reports.</li>
-                  </ul>
-                  <p style={{marginTop: 8}}>
-                    Quick tips: Click any module to open detailed reports. Use the overview cards to see immediate metrics like staff count and who is present today.
+                <div style={{ lineHeight: 1.5 }}>
+                  <p style={{ marginTop: 8 }}>
+                    Maintain oversight over every CaseLog by watching severity badges, refreshing the list, and opening each entry to add status updates or admin commentary.
                   </p>
                 </div>
               </div>
@@ -682,20 +646,20 @@ function ReportsIndex({ isAdmin, hostCompanyId, isHostCompany }) {
                   return false;
                 })
                 .map((section) => (
-                <div
-                  key={section.id}
-                  className="section-card"
-                  style={{ borderLeftColor: section.color }}
-                  onClick={() => setActiveSection(section.id)}
-                >
-                  <div className="section-icon">{section.icon}</div>
-                  <div className="section-content">
-                    <h3>{section.title}</h3>
-                    <p className="section-desc">{section.description}</p>
+                  <div
+                    key={section.id}
+                    className="section-card"
+                    style={{ borderLeftColor: section.color }}
+                    onClick={() => setActiveSection(section.id)}
+                  >
+                    <div className="section-icon">{section.icon}</div>
+                    <div className="section-content">
+                      <h3>{section.title}</h3>
+                      <p className="section-desc">{section.description}</p>
+                    </div>
+                    <div className="section-arrow" aria-hidden>→</div>
                   </div>
-                  <div className="section-arrow" aria-hidden>→</div>
-                </div>
-              ))}
+                ))}
             </div>
           </div>
         </>
