@@ -95,9 +95,6 @@ const handleMulterError = (err, req, res, next) => {
 
 const ADMIN_OWNER_ID = '000000000000000000000001';
 
-const pickEarlier = (current, next) => (!current || next < current ? next : current);
-const pickLater = (current, next) => (!current || next > current ? next : current);
-
 const getRegistrationSettings = async (ownerType, ownerId) => {
   if (!ownerId || !mongoose.Types.ObjectId.isValid(ownerId)) return null;
   const settings = await ReportSettings.findOne({ ownerType, ownerId }).lean();
@@ -611,6 +608,31 @@ router.post('/register', upload.fields([
       email: staff.email
     }, null);
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    //THSIS IS WHERE EMAILS ARE SENT TO HOST COMPANY OR INTERN AFTER SUCCESSFULL REGISTRATION!!!!!!!!!!!
+
+
+
+
+
+
+
     // ✉️ Send registration email with credentials (if enabled and email provided)
     try {
       const shouldSendRegistrationEmail =
@@ -621,16 +643,8 @@ router.post('/register', upload.fields([
 
       if (shouldSendRegistrationEmail) {
         const settings = await resolveRegistrationOwnerSettings(validatedHostCompanyId);
-        const fallbackSettings = new ReportSettings({
-          ownerType: validatedHostCompanyId ? 'HostCompany' : 'Admin',
-          ownerId: validatedHostCompanyId || ADMIN_OWNER_ID,
-        }).toObject();
-        const registrationTemplate = settings?.registrationTemplates?.staff
-          || fallbackSettings?.registrationTemplates?.staff
-          || {};
-        const signature = settings?.templates?.emailSignature
-          || fallbackSettings?.templates?.emailSignature
-          || 'Internship Success';
+        const registrationTemplate = settings?.registrationTemplates?.staff || {};
+        const signature = settings?.templates?.emailSignature || 'Internship Success';
         const loginUrl = process.env.PORTAL_LOGIN_URL || process.env.APP_LOGIN_URL || '';
         const companyName = resolvedHostCompany?.companyName || resolvedHostCompany?.name || 'Internship Success';
 
@@ -2182,21 +2196,21 @@ router.get('/intern/dashboard', async (req, res) => {
 
       const timeStr = log.timestamp;
       if (log.clockType === 'in') {
-        attendanceByDate[dateKey].clockIn = pickEarlier(attendanceByDate[dateKey].clockIn, timeStr);
+        attendanceByDate[dateKey].clockIn = timeStr;
       } else if (log.clockType === 'out') {
-        attendanceByDate[dateKey].clockOut = pickLater(attendanceByDate[dateKey].clockOut, timeStr);
+        attendanceByDate[dateKey].clockOut = timeStr;
       } else if (log.clockType === 'break_start') {
-        attendanceByDate[dateKey].breakStart = pickEarlier(attendanceByDate[dateKey].breakStart, timeStr);
+        attendanceByDate[dateKey].breakStart = timeStr;
       } else if (log.clockType === 'break_end') {
-        attendanceByDate[dateKey].breakEnd = pickLater(attendanceByDate[dateKey].breakEnd, timeStr);
+        attendanceByDate[dateKey].breakEnd = timeStr;
       } else if (log.clockType === 'lunch_start') {
-        attendanceByDate[dateKey].lunchStart = pickEarlier(attendanceByDate[dateKey].lunchStart, timeStr);
+        attendanceByDate[dateKey].lunchStart = timeStr;
       } else if (log.clockType === 'lunch_end') {
-        attendanceByDate[dateKey].lunchEnd = pickLater(attendanceByDate[dateKey].lunchEnd, timeStr);
+        attendanceByDate[dateKey].lunchEnd = timeStr;
       } else if (log.clockType === 'extra_shift_in') {
-        attendanceByDate[dateKey].extraShiftIn = pickEarlier(attendanceByDate[dateKey].extraShiftIn, timeStr);
+        attendanceByDate[dateKey].extraShiftIn = timeStr;
       } else if (log.clockType === 'extra_shift_out') {
-        attendanceByDate[dateKey].extraShiftOut = pickLater(attendanceByDate[dateKey].extraShiftOut, timeStr);
+        attendanceByDate[dateKey].extraShiftOut = timeStr;
       }
     });
 
@@ -2657,21 +2671,21 @@ router.get('/intern/attendance/detailed', async (req, res) => {
       }
 
       if (log.clockType === 'in') {
-        attendanceByDate[dateKey].clockIn = pickEarlier(attendanceByDate[dateKey].clockIn, log.timestamp);
+        attendanceByDate[dateKey].clockIn = log.timestamp;
       } else if (log.clockType === 'out') {
-        attendanceByDate[dateKey].clockOut = pickLater(attendanceByDate[dateKey].clockOut, log.timestamp);
+        attendanceByDate[dateKey].clockOut = log.timestamp;
       } else if (log.clockType === 'break_start') {
-        attendanceByDate[dateKey].breakStart = pickEarlier(attendanceByDate[dateKey].breakStart, log.timestamp);
+        attendanceByDate[dateKey].breakStart = log.timestamp;
       } else if (log.clockType === 'break_end') {
-        attendanceByDate[dateKey].breakEnd = pickLater(attendanceByDate[dateKey].breakEnd, log.timestamp);
+        attendanceByDate[dateKey].breakEnd = log.timestamp;
       } else if (log.clockType === 'lunch_start') {
-        attendanceByDate[dateKey].lunchStart = pickEarlier(attendanceByDate[dateKey].lunchStart, log.timestamp);
+        attendanceByDate[dateKey].lunchStart = log.timestamp;
       } else if (log.clockType === 'lunch_end') {
-        attendanceByDate[dateKey].lunchEnd = pickLater(attendanceByDate[dateKey].lunchEnd, log.timestamp);
+        attendanceByDate[dateKey].lunchEnd = log.timestamp;
       } else if (log.clockType === 'extra_shift_in') {
-        attendanceByDate[dateKey].extraShiftIn = pickEarlier(attendanceByDate[dateKey].extraShiftIn, log.timestamp);
+        attendanceByDate[dateKey].extraShiftIn = log.timestamp;
       } else if (log.clockType === 'extra_shift_out') {
-        attendanceByDate[dateKey].extraShiftOut = pickLater(attendanceByDate[dateKey].extraShiftOut, log.timestamp);
+        attendanceByDate[dateKey].extraShiftOut = log.timestamp;
       }
     });
 
@@ -3024,39 +3038,6 @@ router.get('/admin/staff', async (req, res) => {
         .lean()
     ]);
 
-    const staffIdsForStatus = staff
-      .map(member => member?._id)
-      .filter(Boolean);
-
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-
-    const todayLogs = staffIdsForStatus.length > 0
-      ? await ClockLog.find({
-        staffId: { $in: staffIdsForStatus },
-        clockType: { $in: ['in', 'out'] },
-        timestamp: { $gte: today, $lt: tomorrow }
-      })
-        .select('staffId clockType timestamp')
-        .sort({ timestamp: 1 })
-        .lean()
-      : [];
-
-    const latestInOutByStaff = {};
-    todayLogs.forEach(log => {
-      const staffId = log.staffId?.toString();
-      if (!staffId) return;
-      const current = latestInOutByStaff[staffId];
-      if (!current || log.timestamp > current.timestamp) {
-        latestInOutByStaff[staffId] = {
-          type: log.clockType,
-          timestamp: log.timestamp
-        };
-      }
-    });
-
     // Group logs by staffId in memory (much faster than N+1 queries)
     const logsByStaffId = {};
     allLogs.forEach(log => {
@@ -3110,8 +3091,6 @@ router.get('/admin/staff', async (req, res) => {
     // Build timesheets for each staff member
     const staffWithTimesheets = await Promise.all(staff.map(async (member) => {
       const staffId = member._id.toString();
-      const latestInOut = latestInOutByStaff[staffId];
-      const isClockedIn = latestInOut ? latestInOut.type === 'in' : false;
       const logs = logsByStaffId[staffId] || [];
 
       // Get working hours for this staff member
@@ -3161,13 +3140,9 @@ router.get('/admin/staff', async (req, res) => {
         });
 
         if (log.clockType === 'in') {
-          if (!timesheetByDate[dateKey].timeIn) {
-            timesheetByDate[dateKey].timeIn = timeStr;
-          }
+          timesheetByDate[dateKey].timeIn = timeStr;
         } else if (log.clockType === 'break_start') {
-          if (!timesheetByDate[dateKey].startLunch) {
-            timesheetByDate[dateKey].startLunch = timeStr;
-          }
+          timesheetByDate[dateKey].startLunch = timeStr;
         } else if (log.clockType === 'break_end') {
           timesheetByDate[dateKey].endLunch = timeStr;
         } else if (log.clockType === 'out') {
@@ -3250,7 +3225,6 @@ router.get('/admin/staff', async (req, res) => {
         hostCompanyName: hostCompanyName, // 🔧 FIX: Extract company name from populated object
         hostCompany: hostCompany, // Populated hostCompany object (if populated)
         createdAt: member.createdAt,
-        isClockedIn,
         timesheet
       };
     }));
@@ -4591,13 +4565,9 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
       });
 
       if (log.clockType === 'in') {
-        if (!entry.timeIn) {
-          entry.timeIn = timeStr;
-        }
+        entry.timeIn = timeStr;
       } else if (log.clockType === 'break_start') {
-        if (!entry.startLunch) {
-          entry.startLunch = timeStr;
-        }
+        entry.startLunch = timeStr;
       } else if (log.clockType === 'break_end') {
         entry.endLunch = timeStr;
       } else if (log.clockType === 'out') {
@@ -4832,15 +4802,11 @@ router.get('/admin/reports/data', async (req, res) => {
       });
 
       if (log.clockType === 'in') {
-        if (!entry.timeIn) {
-          entry.timeIn = timeStr;
-          entry.confidence.timeIn = log.confidence;
-        }
+        entry.timeIn = timeStr;
+        entry.confidence.timeIn = log.confidence;
       } else if (log.clockType === 'break_start') {
-        if (!entry.startLunch) {
-          entry.startLunch = timeStr;
-          entry.confidence.startLunch = log.confidence;
-        }
+        entry.startLunch = timeStr;
+        entry.confidence.startLunch = log.confidence;
       } else if (log.clockType === 'break_end') {
         entry.endLunch = timeStr;
         entry.confidence.endLunch = log.confidence;
@@ -5632,16 +5598,8 @@ router.post('/admin/host-companies', async (req, res) => {
     try {
       if (cleanedEmailAddress && password) {
         const settings = await getRegistrationSettings('Admin', ADMIN_OWNER_ID);
-        const fallbackSettings = new ReportSettings({
-          ownerType: 'Admin',
-          ownerId: ADMIN_OWNER_ID,
-        }).toObject();
-        const registrationTemplate = settings?.registrationTemplates?.hostCompany
-          || fallbackSettings?.registrationTemplates?.hostCompany
-          || {};
-        const signature = settings?.templates?.emailSignature
-          || fallbackSettings?.templates?.emailSignature
-          || 'Internship Success';
+        const registrationTemplate = settings?.registrationTemplates?.hostCompany || {};
+        const signature = settings?.templates?.emailSignature || 'Internship Success';
         const loginUrl = process.env.PORTAL_LOGIN_URL || process.env.APP_LOGIN_URL || '';
 
         const templateData = {
