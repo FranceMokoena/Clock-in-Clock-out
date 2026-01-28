@@ -1,0 +1,363 @@
+.attendance-timesheet-page {
+  background: #f4f6fb;
+  min-height: 100vh;
+  padding: 32px;
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  overflow-y: auto;
+}
+
+.attendance-timesheet-shell {
+  max-width: 1100px;
+  margin: 0 auto;
+  background: #ffffff;
+  border-radius: 18px;
+  border: 1px solid #adbedf;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.15);
+  padding: 32px;
+  max-height: calc(100vh - 64px);
+  overflow: hidden;
+}
+
+.attendance-timesheet-header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 24px;
+}
+
+.attendance-timesheet-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.icon-back-button {
+  border: none;
+  border-radius: 12px;
+  width: 36px;
+  height: 36px;
+  background: #e0e7ff;
+  color: #111827;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s ease;
+}
+
+.icon-back-button:hover {
+  background: #c7d2fe;
+}
+
+.attendance-timesheet-title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 700;
+  color: #111827;
+  letter-spacing: 0.02em;
+}
+
+.attendance-timesheet-subtitle {
+  margin: 4px 0 0;
+  color: #4b5563;
+  font-size: 14px;
+}
+
+.attendance-timesheet-filters {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.attendance-timesheet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.attendance-timesheet-hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+}
+
+.back-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #111827;
+  background: #e0e7ff;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.back-button:hover {
+  background: #c7d2fe;
+}
+
+.filter-group {
+  background: #f8fafc;
+  border: 1px solid #e3e8f4;
+  border-radius: 12px;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.filter-label {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #475467;
+}
+
+.period-selector {
+  display: flex;
+  gap: 8px;
+}
+
+.period-button {
+  flex: 1;
+  border-radius: 8px;
+  border: 1px solid #dbe2f0;
+  background: transparent;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #475467;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.period-button.active {
+  background: #7d92cc;
+  border-color: #6b89db;
+  color: #ffffff;
+}
+
+.controls-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.controls-row input,
+.controls-row select,
+.search-control input {
+  border-radius: 10px;
+  border: 1px solid #dbe2f0;
+  padding: 10px 12px;
+  background: #ffffff;
+  font-size: 13px;
+  width: 100%;
+}
+
+.search-control {
+  flex: 1;
+  min-width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.action-button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  font-weight: 600;
+  font-size: 13px;
+  color: #ffffff;
+  cursor: pointer;
+  background: #5971b4;
+  transition: background 0.2s ease;
+}
+
+.action-button.secondary {
+  background: #111827;
+}
+
+.filters-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  font-size: 13px;
+  color: #475467;
+  margin-bottom: 14px;
+}
+
+.attendance-table-wrapper {
+  overflow-x: auto;
+  border-radius: 12px;
+  scroll-behavior: smooth;
+  max-height: calc(100vh - 320px);
+  overflow-y: auto;
+}
+
+.attendance-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  min-width: 1200px;
+}
+
+.attendance-table thead {
+  background: #f8fafc;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.attendance-table th,
+.attendance-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #edf2f7;
+  text-align: left;
+  color: #375170;
+}
+
+.attendance-table th {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: #576f92;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: 999px;
+  color: #fff;
+  background: #b42318;
+  margin-right: 4px;
+}
+
+.badge-neutral {
+  background: #475467;
+}
+
+.cell-secondary {
+  color: #475467;
+  font-size: 12px;
+}
+
+.summary-card {
+  margin-top: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  border: 1px solid #e3e8f4;
+  background: #f8fafc;
+  font-size: 13px;
+  color: #4b5d79;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+
+.cell-time {
+  font-weight: 600;
+  color: #111827;
+}
+
+.print-note {
+  margin-top: 12px;
+  font-size: 11px;
+  color: #94a3b8;
+}
+
+.more-indicator {
+  font-weight: 600;
+  font-size: 11px;
+  color: #1d4ed8;
+  margin-left: 4px;
+}
+
+.attendance-table td .exceptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.attendance-table td .exceptions .badge {
+  background: #f97316;
+}
+
+@media (max-width: 900px) {
+  .attendance-timesheet-shell {
+    padding: 24px;
+  }
+
+  .attendance-table {
+    min-width: 900px;
+  }
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .attendance-timesheet-page {
+    padding: 0;
+  }
+
+  .attendance-timesheet-shell {
+    box-shadow: none;
+    border: none;
+    border-radius: 0;
+    margin: 0;
+    width: 100%;
+    page-break-after: auto;
+  }
+
+  .attendance-timesheet-header,
+  .attendance-timesheet-actions,
+  .filters-summary {
+    display: block;
+  }
+
+  .attendance-table-wrapper {
+    overflow: visible;
+  }
+
+  .attendance-timesheet-actions,
+  .attendance-timesheet-filters,
+  .filters-summary,
+  .back-button,
+  .icon-back-button,
+  .print-note {
+    display: none;
+  }
+
+  .attendance-table thead {
+    display: table-header-group;
+  }
+
+  .attendance-table td,
+  .attendance-table th {
+    border: 1px solid #e8eaf0;
+  }
+
+  .attendance-table td .exceptions .badge {
+    font-size: 10px;
+  }
+
+  .action-button {
+    display: none;
+  }
+}

@@ -6,9 +6,7 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
   const [recents, setRecents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
-  // Filter states
-  const [filterType, setFilterType] = useState('last10'); // last10, all
+  const [filterType, setFilterType] = useState('last10');
   const [selectedHostCompany, setSelectedHostCompany] = useState(hostCompanyId || '');
   const [selectedDepartment, setSelectedDepartment] = useState('');
   const [hostCompanies, setHostCompanies] = useState([]);
@@ -16,21 +14,18 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
   const [hostCompaniesLoading, setHostCompaniesLoading] = useState(false);
   const [departmentsLoading, setDepartmentsLoading] = useState(false);
 
-  // Load host companies for filter (only for admin)
   useEffect(() => {
     if (isAdmin) {
       loadHostCompanies();
     }
   }, [isAdmin]);
 
-  // Load departments when host company changes
   useEffect(() => {
     if (selectedHostCompany) {
       loadDepartments();
     }
   }, [selectedHostCompany]);
 
-  // Load recents when filters change
   useEffect(() => {
     loadRecents();
   }, [filterType, selectedHostCompany, selectedDepartment]);
@@ -39,24 +34,13 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
     try {
       setHostCompaniesLoading(true);
       const response = await hostCompanyAPI.getAll();
-      console.log('✅ Host companies response:', response);
-      
-      // Backend returns 'companies' field
       if (response.success) {
         const companies = response.companies || response.hostCompanies || response.data || [];
-        if (Array.isArray(companies) && companies.length > 0) {
-          setHostCompanies(companies);
-          console.log(`✅ Loaded ${companies.length} host companies`);
-        } else {
-          console.warn('⚠️ No companies found in response');
-          setHostCompanies([]);
-        }
+        setHostCompanies(Array.isArray(companies) ? companies : []);
       } else {
-        console.warn('⚠️ Failed to load host companies:', response.error);
         setHostCompanies([]);
       }
     } catch (err) {
-      console.error('❌ Error loading host companies:', err);
       setHostCompanies([]);
     } finally {
       setHostCompaniesLoading(false);
@@ -68,24 +52,13 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
       setDepartmentsLoading(true);
       const params = selectedHostCompany ? { hostCompanyId: selectedHostCompany } : {};
       const response = await departmentAPI.getAll(params);
-      console.log('Departments response:', response);
-      
-      // Handle different response formats
       if (response.success) {
         const depts = response.departments || response.data || [];
-        if (Array.isArray(depts)) {
-          setDepartments(depts);
-          console.log('✅ Loaded departments:', depts.length);
-        } else {
-          console.warn('⚠️ Departments not in expected format');
-          setDepartments([]);
-        }
+        setDepartments(Array.isArray(depts) ? depts : []);
       } else {
-        console.warn('⚠️ Failed to load departments:', response.error);
         setDepartments([]);
       }
     } catch (err) {
-      console.error('❌ Error loading departments:', err);
       setDepartments([]);
     } finally {
       setDepartmentsLoading(false);
@@ -96,44 +69,25 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
     try {
       setLoading(true);
       setError(null);
-      
-      // Determine limit based on filter
-      let limit = 100;
-      if (filterType === 'last10') {
-        limit = 10;
-      }
-      
-      // Build params
+      let limit = filterType === 'last10' ? 10 : 100;
       const params = { limit };
-      
-      // Add host company filter
       let queryHostCompanyId = hostCompanyId;
       if (isAdmin && selectedHostCompany) {
         queryHostCompanyId = selectedHostCompany;
       }
-      
       if (queryHostCompanyId) {
         params.hostCompanyId = queryHostCompanyId;
       }
-      
-      // Add department filter
       if (selectedDepartment) {
         params.departmentId = selectedDepartment;
       }
-      
-      // Fetch notifications
-      const response = await dashboardAPI.getRecentActivity(
-        queryHostCompanyId,
-        params
-      );
-      
-      if (response.success && response.activity) {
+      const response = await dashboardAPI.getRecentActivity(queryHostCompanyId, params);
+      if (response.success && Array.isArray(response.activity)) {
         setRecents(response.activity);
       } else {
         setRecents([]);
       }
     } catch (err) {
-      console.error('Error loading recents:', err);
       setError('Failed to load recent activities');
       setRecents([]);
     } finally {
@@ -143,41 +97,29 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
 
   const getActivityIcon = (type) => {
     switch (type) {
-      case 'CLOCK_IN':
-        return '🟢';
-      case 'CLOCK_OUT':
-        return '🔴';
-      case 'LEAVE_REQUEST':
-        return '🏖️';
-      case 'LEAVE_APPROVED':
-        return '✅';
-      case 'LEAVE_REJECTED':
-        return '❌';
-      case 'ATTENDANCE_CORRECTION_REQUEST':
-        return '📝';
-      case 'ATTENDANCE_CORRECTION_APPROVED':
-        return '✅';
-      case 'ATTENDANCE_CORRECTION_REJECTED':
-        return '❌';
-      case 'STAFF_REGISTERED':
-        return '👤';
-      case 'DEVICE_APPROVED':
-        return '📱';
-      case 'DEPARTMENT_CREATED':
-        return '🏢';
-      default:
-        return 'ℹ️';
+      case 'CLOCK_IN': return 'CI';
+      case 'CLOCK_OUT': return 'CO';
+      case 'LEAVE_REQUEST': return 'LR';
+      case 'LEAVE_APPROVED': return 'LA';
+      case 'LEAVE_REJECTED': return 'LR';
+      case 'ATTENDANCE_CORRECTION_REQUEST': return 'CR';
+      case 'ATTENDANCE_CORRECTION_APPROVED': return 'CA';
+      case 'ATTENDANCE_CORRECTION_REJECTED': return 'CR';
+      case 'STAFF_REGISTERED': return 'SR';
+      case 'DEVICE_APPROVED': return 'DA';
+      case 'DEPARTMENT_CREATED': return 'DC';
+      default: return 'EV';
     }
   };
 
   const getActivityColor = (type) => {
-    if (type.includes('CLOCK_IN')) return '#4CAF50';
-    if (type.includes('CLOCK_OUT')) return '#F44336';
-    if (type.includes('LEAVE')) return '#2196F3';
-    if (type.includes('CORRECTION')) return '#FF9800';
-    if (type.includes('APPROVED')) return '#4CAF50';
-    if (type.includes('REJECTED')) return '#F44336';
-    return '#9C27B0';
+    if (type.includes('CLOCK_IN')) return '#047857';
+    if (type.includes('CLOCK_OUT')) return '#b91c1c';
+    if (type.includes('LEAVE')) return '#1d4ed8';
+    if (type.includes('CORRECTION')) return '#9d174d';
+    if (type.includes('APPROVED')) return '#047857';
+    if (type.includes('REJECTED')) return '#b91c1c';
+    return '#0f172a';
   };
 
   const formatTime = (timestamp) => {
@@ -188,42 +130,28 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
     const diffMins = Math.floor(diffMs / 60000);
     const diffHours = Math.floor(diffMs / 3600000);
     const diffDays = Math.floor(diffMs / 86400000);
-
     if (diffMins < 1) return 'Just now';
     if (diffMins < 60) return `${diffMins}m ago`;
     if (diffHours < 24) return `${diffHours}h ago`;
     if (diffDays < 7) return `${diffDays}d ago`;
-    
     return date.toLocaleDateString();
   };
 
   const getActivityTitle = (activity) => {
     const data = activity.data || {};
     switch (activity.type) {
-      case 'CLOCK_IN':
-        return `${data.staffName} clocked in`;
-      case 'CLOCK_OUT':
-        return `${data.staffName} clocked out`;
-      case 'LEAVE_REQUEST':
-        return `${data.staffName} requested leave`;
-      case 'LEAVE_APPROVED':
-        return `Leave approved for ${data.staffName}`;
-      case 'LEAVE_REJECTED':
-        return `Leave rejected for ${data.staffName}`;
-      case 'ATTENDANCE_CORRECTION_REQUEST':
-        return `${data.staffName} requested attendance correction`;
-      case 'ATTENDANCE_CORRECTION_APPROVED':
-        return `Attendance correction approved`;
-      case 'ATTENDANCE_CORRECTION_REJECTED':
-        return `Attendance correction rejected`;
-      case 'STAFF_REGISTERED':
-        return `${data.staffName} registered as ${data.role}`;
-      case 'DEVICE_APPROVED':
-        return `Device approved: ${data.deviceName}`;
-      case 'DEPARTMENT_CREATED':
-        return `Department created: ${data.departmentName}`;
-      default:
-        return activity.title || 'System Activity';
+      case 'CLOCK_IN': return `${data.staffName} clocked in`;
+      case 'CLOCK_OUT': return `${data.staffName} clocked out`;
+      case 'LEAVE_REQUEST': return `${data.staffName} submitted a leave request`;
+      case 'LEAVE_APPROVED': return `Leave approved for ${data.staffName}`;
+      case 'LEAVE_REJECTED': return `Leave rejected for ${data.staffName}`;
+      case 'ATTENDANCE_CORRECTION_REQUEST': return `${data.staffName} requested correction`;
+      case 'ATTENDANCE_CORRECTION_APPROVED': return `Attendance correction approved`;
+      case 'ATTENDANCE_CORRECTION_REJECTED': return `Attendance correction rejected`;
+      case 'STAFF_REGISTERED': return `${data.staffName || 'New staff'} registered`;
+      case 'DEVICE_APPROVED': return `Device approved: ${data.deviceName || 'Unknown device'}`;
+      case 'DEPARTMENT_CREATED': return `Department created: ${data.departmentName}`;
+      default: return activity.title || 'System activity logged';
     }
   };
 
@@ -232,52 +160,60 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
     switch (activity.type) {
       case 'CLOCK_IN':
       case 'CLOCK_OUT':
-        return `${data.location || 'Unknown location'} • ${new Date(data.timestamp).toLocaleTimeString()}`;
+        return `${data.location || 'Location not recorded'} � ${new Date(data.timestamp || activity.createdAt).toLocaleTimeString()}`;
       case 'LEAVE_REQUEST':
         return `From ${new Date(data.startDate).toLocaleDateString()} to ${new Date(data.endDate).toLocaleDateString()}`;
       case 'ATTENDANCE_CORRECTION_REQUEST':
         return `For ${new Date(data.date).toLocaleDateString()}`;
       default:
-        return activity.message || '';
+        return activity.message || 'No additional details';
     }
   };
 
   if (loading) {
     return (
-      <div className="recents-container">
-        <div className="loading-container">
-          <div className="spinner"></div>
-          <p>Loading recent activities...</p>
+      <div className="recents-page">
+        <div className="recents-panel">
+          <div className="loading-container">
+            <div className="spinner"></div>
+            <p>Loading recent activities...</p>
+          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="recents-container">
-      <div className="recents-header">
-        <h2>📋 Recent Activities</h2>
-        <button onClick={loadRecents} className="refresh-button" title="Refresh">
-          🔄
-        </button>
-      </div>
+    <div className="recents-page">
+      <section className="recents-panel recents-hero">
+        <div className="recents-hero-content">
+          <span className="official-tag">OFFICIAL ACTIVITY REGISTER</span>
+          <h2>Recent Activity Log</h2>
+          <p>Chronological summary of clocks, leave requests, corrections, approvals, and operational alerts.</p>
+        </div>
+        <div className="recents-hero-actions">
+          <span className="hero-meta">Updated every 5 minutes</span>
+          <button onClick={loadRecents} className="refresh-button" title="Refresh recent activity log">
+            Refresh
+          </button>
+        </div>
+      </section>
 
-      {/* Filter Controls */}
-      <div className="recents-filters">
+      <section className="recents-panel recents-filters">
         <div className="filter-group">
-          <label>Show:</label>
+          <label>Record Scope:</label>
           <div className="filter-buttons">
-            <button 
+            <button
               className={`filter-btn ${filterType === 'last10' ? 'active' : ''}`}
               onClick={() => setFilterType('last10')}
             >
-              Last 10
+              Latest 10
             </button>
-            <button 
+            <button
               className={`filter-btn ${filterType === 'all' ? 'active' : ''}`}
               onClick={() => setFilterType('all')}
             >
-              All
+              Full Register
             </button>
           </div>
         </div>
@@ -285,11 +221,11 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
         {isAdmin && (
           <div className="filter-group">
             <label>Host Company:</label>
-            <select 
-              value={selectedHostCompany} 
+            <select
+              value={selectedHostCompany}
               onChange={(e) => {
                 setSelectedHostCompany(e.target.value);
-                setSelectedDepartment(''); // Reset department when company changes
+                setSelectedDepartment('');
               }}
               disabled={hostCompaniesLoading}
               className="filter-select"
@@ -307,8 +243,8 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
         {selectedHostCompany && (
           <div className="filter-group">
             <label>Department:</label>
-            <select 
-              value={selectedDepartment} 
+            <select
+              value={selectedDepartment}
               onChange={(e) => setSelectedDepartment(e.target.value)}
               disabled={departmentsLoading}
               className="filter-select"
@@ -324,48 +260,43 @@ function Recents({ isAdmin, hostCompanyId, isHostCompany }) {
         )}
 
         <div className="filter-info">
-          Showing {recents.length} {recents.length === 1 ? 'activity' : 'activities'}
+          Showing <strong>{recents.length}</strong> {recents.length === 1 ? 'event' : 'events'}
         </div>
-      </div>
+      </section>
 
       {error && (
-        <div className="error-message">
+        <section className="recents-panel error-panel">
           {error}
-        </div>
+        </section>
       )}
 
-      {loading ? (
-        <div className="loading-container">
-          <div className="spinner"></div>
-          <p>Loading recent activities...</p>
-        </div>
-      ) : recents.length === 0 ? (
-        <div className="empty-state">
-          <div className="empty-icon">📭</div>
-          <p>No recent activities yet</p>
-        </div>
-      ) : (
-        <div className="recents-list">
-          {recents.map((activity) => (
-            <div key={activity._id} className="recent-item" style={{ borderLeftColor: getActivityColor(activity.type) }}>
-              <div className="recent-icon">
-                {getActivityIcon(activity.type)}
-              </div>
-              <div className="recent-content">
-                <div className="recent-title">
-                  {getActivityTitle(activity)}
+      <section className="recents-panel recents-list-panel">
+        {recents.length === 0 ? (
+          <div className="empty-state">
+            <div className="empty-icon">ℹ️</div>
+            <p>No recorded activity for the selected filters.</p>
+          </div>
+        ) : (
+          <div className="recents-list">
+            {recents.map((activity) => (
+              <div
+                key={activity._id}
+                className="recent-item"
+                style={{ borderLeftColor: getActivityColor(activity.type) }}
+              >
+                <div className="recent-icon">
+                  {getActivityIcon(activity.type)}
                 </div>
-                <div className="recent-details">
-                  {getActivityDetails(activity)}
+                <div className="recent-content">
+                  <div className="recent-title">{getActivityTitle(activity)}</div>
+                  <div className="recent-details">{getActivityDetails(activity)}</div>
                 </div>
+                <div className="recent-time">{formatTime(activity.createdAt)}</div>
               </div>
-              <div className="recent-time">
-                {formatTime(activity.createdAt)}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

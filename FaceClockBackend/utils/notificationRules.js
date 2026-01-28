@@ -9,6 +9,7 @@
  * - Priority level
  */
 
+const mongoose = require('mongoose');
 const Staff = require('../models/Staff');
 const HostCompany = require('../models/HostCompany');
 const Department = require('../models/Department');
@@ -170,6 +171,17 @@ async function getRecipientsForAction(actionType, payload) {
         recipients.admins = await getAdmins();
         if (payload.hostCompanyId) {
           recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        break;
+
+      case 'SHARED_DEVICE_CLOCKIN':
+        // Notify admin, host company, and department manager about shared device usage
+        recipients.admins = await getAdmins();
+        if (payload.hostCompanyId) {
+          recipients.hostCompany = await getHostCompanyAdmins(payload.hostCompanyId);
+        }
+        if (payload.departmentId) {
+          recipients.department = await getDepartmentManagers(payload.departmentId);
         }
         break;
 
@@ -362,23 +374,32 @@ async function getAdmins() {
  */
 async function getHostCompanyAdmins(hostCompanyId) {
   try {
+    const adminIds = new Set();
+    if (hostCompanyId && mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+      adminIds.add(hostCompanyId.toString());
+    }
+
     const hostCompany = await HostCompany.findById(hostCompanyId)
-      .select('representativeId admins')
+      .select('_id representativeId admins')
       .lean();
     
-    if (!hostCompany) return [];
+    if (!hostCompany) return Array.from(adminIds);
     
-    const adminIds = [];
     if (hostCompany.representativeId) {
-      adminIds.push(hostCompany.representativeId);
+      adminIds.add(hostCompany.representativeId.toString());
     }
     if (hostCompany.admins && Array.isArray(hostCompany.admins)) {
-      adminIds.push(...hostCompany.admins);
+      hostCompany.admins.forEach((id) => {
+        if (id) adminIds.add(id.toString());
+      });
     }
     
-    return adminIds;
+    return Array.from(adminIds);
   } catch (error) {
     console.error('❌ Error fetching host company admins:', error);
+    if (hostCompanyId && mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+      return [hostCompanyId.toString()];
+    }
     return [];
   }
 }
@@ -473,6 +494,12 @@ function getNotificationMetadata(actionType) {
       metadata.notificationType = 'security';
       metadata.priority = 'urgent';
       metadata.sendEmail = true;
+      break;
+
+    case 'SHARED_DEVICE_CLOCKIN':
+      metadata.notificationType = 'security';
+      metadata.priority = 'high';
+      metadata.sendPush = true;
       break;
 
     case 'SYSTEM_ALERT':

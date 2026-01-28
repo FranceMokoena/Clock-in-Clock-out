@@ -15,6 +15,51 @@ const mongoose = require('mongoose');
 const eventEmitter = require('./eventEmitter');
 const { getRecipientsForAction, getNotificationMetadata } = require('./notificationRules');
 
+const normalizeClockTypeKey = (value) => {
+  if (!value) return '';
+  return value.toString().replace(/-/g, '_').replace(/\s+/g, '_').toUpperCase();
+};
+
+const SHARED_DEVICE_ACTIVITY_TITLES = {
+  IN: 'Clock-In',
+  OUT: 'Clock-Out',
+  BREAK_START: 'Break Start',
+  BREAK_END: 'Break End',
+  LUNCH_START: 'Lunch Start',
+  LUNCH_END: 'Lunch End',
+};
+
+const SHARED_DEVICE_ACTION_PHRASES = {
+  IN: 'clocked in',
+  OUT: 'clocked out',
+  BREAK_START: 'started a break',
+  BREAK_END: 'ended a break',
+  LUNCH_START: 'started lunch',
+  LUNCH_END: 'ended lunch',
+};
+
+const getSharedDeviceActivityTitle = (type) => {
+  const key = normalizeClockTypeKey(type);
+  return SHARED_DEVICE_ACTIVITY_TITLES[key] || 'Shared Activity';
+};
+
+const getSharedDeviceActionPhrase = (type) => {
+  const key = normalizeClockTypeKey(type);
+  return SHARED_DEVICE_ACTION_PHRASES[key] || 'performed an action';
+};
+
+const parseObjectIdInput = (value) => {
+  if (!value) return null;
+  const toStringValue = typeof value === 'string'
+    ? value.trim()
+    : (typeof value.toString === 'function' ? value.toString() : null);
+  if (!toStringValue) return null;
+  const match = toStringValue.match(/^ObjectId\("([0-9a-fA-F]{24})"\)$/);
+  const candidate = match ? match[1] : toStringValue;
+  if (!mongoose.Types.ObjectId.isValid(candidate)) return null;
+  return new mongoose.Types.ObjectId(candidate);
+};
+
 /**
  * Log and notify for an action
  */
@@ -74,13 +119,13 @@ async function createNotification(actionType, payload, recipients, metadata, ini
         message,
         recipientType: 'Admin',
         recipientId: adminId,
-        subjectUserId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : (payload.internId ? new mongoose.Types.ObjectId(payload.internId) : null),
-        actorId: initiatedBy || null,
+        subjectUserId: payload.staffId ? parseObjectIdInput(payload.staffId) : (payload.internId ? parseObjectIdInput(payload.internId) : null),
+        actorId: parseObjectIdInput(initiatedBy) || null,
         priority: metadata.priority,
         relatedEntities: {
-          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
-          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
-          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+          staffId: payload.staffId ? parseObjectIdInput(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? parseObjectIdInput(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? parseObjectIdInput(payload.departmentId) : null
         },
         data: {
           actionType,
@@ -106,13 +151,13 @@ async function createNotification(actionType, payload, recipients, metadata, ini
         message,
         recipientType: 'HostCompany',
         recipientId: hostCompanyAdminId,
-        subjectUserId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : (payload.internId ? new mongoose.Types.ObjectId(payload.internId) : null),
-        actorId: initiatedBy || null,
+        subjectUserId: payload.staffId ? parseObjectIdInput(payload.staffId) : (payload.internId ? parseObjectIdInput(payload.internId) : null),
+        actorId: parseObjectIdInput(initiatedBy) || null,
         priority: metadata.priority,
         relatedEntities: {
-          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
-          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
-          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+          staffId: payload.staffId ? parseObjectIdInput(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? parseObjectIdInput(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? parseObjectIdInput(payload.departmentId) : null
         },
         data: {
           actionType,
@@ -138,13 +183,13 @@ async function createNotification(actionType, payload, recipients, metadata, ini
         message,
         recipientType: 'DepartmentManager',
         recipientId: deptManagerId,
-        subjectUserId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : (payload.internId ? new mongoose.Types.ObjectId(payload.internId) : null),
-        actorId: initiatedBy || null,
+        subjectUserId: payload.staffId ? parseObjectIdInput(payload.staffId) : (payload.internId ? parseObjectIdInput(payload.internId) : null),
+        actorId: parseObjectIdInput(initiatedBy) || null,
         priority: metadata.priority,
         relatedEntities: {
-          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
-          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
-          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+          staffId: payload.staffId ? parseObjectIdInput(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? parseObjectIdInput(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? parseObjectIdInput(payload.departmentId) : null
         },
         data: {
           actionType,
@@ -167,19 +212,20 @@ async function createNotification(actionType, payload, recipients, metadata, ini
       // Determine recipient type based on payload (Intern or Staff)
       const userRecipientType = payload.role === 'Staff' ? 'Staff' : 'Intern';
 
+      const subjectIdSource = payload.staffId || payload.internId || payload.requesterId || specificUserId;
       const notif = new Notification({
         type: metadata.notificationType,
         title,
         message,
         recipientType: userRecipientType,
         recipientId: specificUserId,
-        subjectUserId: payload.staffId || payload.internId || payload.requesterId || specificUserId, // Who it's about
-        actorId: initiatedBy || null, // Who triggered it
+        subjectUserId: parseObjectIdInput(subjectIdSource),
+        actorId: parseObjectIdInput(initiatedBy) || null,
         priority: metadata.priority,
         relatedEntities: {
-          staffId: payload.staffId ? new mongoose.Types.ObjectId(payload.staffId) : null,
-          hostCompanyId: payload.hostCompanyId ? new mongoose.Types.ObjectId(payload.hostCompanyId) : null,
-          departmentId: payload.departmentId ? new mongoose.Types.ObjectId(payload.departmentId) : null
+          staffId: payload.staffId ? parseObjectIdInput(payload.staffId) : null,
+          hostCompanyId: payload.hostCompanyId ? parseObjectIdInput(payload.hostCompanyId) : null,
+          departmentId: payload.departmentId ? parseObjectIdInput(payload.departmentId) : null
         },
         data: {
           actionType,
@@ -306,14 +352,31 @@ function getNotificationMessages(actionType, payload) {
 
   switch (actionType) {
     case 'CLOCK_IN':
-      title = '✅ Clock In Recorded';
-      message = `${payload.staffName} clocked in at ${new Date(payload.timestamp).toLocaleTimeString()}`;
+      title = 'バ. Clock In Recorded';
+      if (payload.sharedDeviceOwner?.staffName) {
+        const ownerName = payload.sharedDeviceOwner.staffName;
+        const possessiveOwner = ownerName.endsWith('s') ? `${ownerName}'` : `${ownerName}'s`;
+        message = `${payload.staffName} clocked in using ${possessiveOwner} device`;
+      } else {
+        message = `${payload.staffName} clocked in at ${new Date(payload.timestamp).toLocaleTimeString()}`;
+      }
       break;
 
     case 'CLOCK_OUT':
       title = '👋 Clock Out Recorded';
       message = `${payload.staffName} clocked out at ${new Date(payload.timestamp).toLocaleTimeString()}`;
       break;
+
+    case 'SHARED_DEVICE_CLOCKIN': {
+      const ownerName = payload?.sharedDeviceOwner?.staffName;
+      const ownerLabel = ownerName ? `${ownerName}'s device` : 'a shared device';
+      const actorName = payload?.staffName || 'Someone';
+      const activityTitle = getSharedDeviceActivityTitle(payload?.type);
+      const activityPhrase = getSharedDeviceActionPhrase(payload?.type);
+      title = `Shared ${activityTitle} Alert`;
+      message = `${actorName} ${activityPhrase} using ${ownerLabel}`;
+      break;
+    }
 
     case 'STAFF_REGISTERED':
       title = '👤 New Staff Registered';

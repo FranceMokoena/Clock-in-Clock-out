@@ -351,5 +351,33 @@ class MobileNotificationHandler {
   }
 }
 
-// Export singleton
-export default new MobileNotificationHandler();
+const mobileNotificationHandler = new MobileNotificationHandler();
+
+export const normalizeUserTypeForNotifications = (rawType = 'admin') => {
+  const normalized = rawType?.toString().trim().toLowerCase() || '';
+  if (['admin', 'hr'].includes(normalized)) return 'Admin';
+  if (['hostcompany', 'host_company', 'host-company'].includes(normalized)) return 'HostCompany';
+  if (normalized === 'intern') return 'Intern';
+  if (normalized === 'staff') return 'Staff';
+  return rawType && typeof rawType === 'string'
+    ? rawType.charAt(0).toUpperCase() + rawType.slice(1)
+    : 'Admin';
+};
+
+export async function ensureNotificationConnection(userId, rawType = 'admin', apiBaseUrl) {
+  if (!userId) return false;
+  mobileNotificationHandler.disconnect();
+  const socketUserType = normalizeUserTypeForNotifications(rawType);
+  try {
+    const connected = await mobileNotificationHandler.initialize(userId, socketUserType, apiBaseUrl);
+    if (!connected) {
+      console.warn('NotificationHandler failed to connect for user', userId);
+    }
+    return connected;
+  } catch (error) {
+    console.error('NotificationHandler initialization error:', error);
+    return false;
+  }
+}
+
+export default mobileNotificationHandler;

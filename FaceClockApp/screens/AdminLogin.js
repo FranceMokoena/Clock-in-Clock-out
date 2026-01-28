@@ -16,6 +16,7 @@ import { MaterialIcons } from '@expo/vector-icons';
 import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
 import API_BASE_URL from '../config/api';
+import { ensureNotificationConnection } from '../utils/notificationHandler';
 
 export default function AdminLogin({ navigation }) {
   const { theme } = useTheme();
@@ -54,6 +55,7 @@ export default function AdminLogin({ navigation }) {
       if (response.data && response.data.success) {
         // Store user info and navigate to dashboard
         const userInfo = response.data.user;
+        await ensureNotificationConnection(userInfo.id, userInfo.type || userInfo.role, API_BASE_URL);
         navigation.navigate('AdminDashboard', { userInfo });
       } else {
         showProfessionalMessage(

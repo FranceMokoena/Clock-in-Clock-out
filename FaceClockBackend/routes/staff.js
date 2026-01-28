@@ -12,7 +12,11 @@ const staffCache = require('../utils/staffCache');
 const rekognition = require('../utils/rekognitionClient');
 const AttendanceCorrection = require('../models/AttendanceCorrection');
 const LeaveApplication = require('../models/LeaveApplication');
+const ReportSettings = require('../models/ReportSettings');
 const { logAction } = require('../utils/actionLogger');
+const autoReports = require('../modules/autoReports');
+const { renderTemplate } = require('../modules/autoReports/reportTemplates');
+const { sendPlainEmail } = require('../modules/autoReports/reportDelivery');
 
 // ONNX Runtime is MANDATORY - face-api.js has been removed
 // Using SCRFD (face detection) + ArcFace (face recognition) for maximum accuracy
@@ -89,6 +93,34 @@ const handleMulterError = (err, req, res, next) => {
   next();
 };
 
+const ADMIN_OWNER_ID = '000000000000000000000001';
+
+const getRegistrationSettings = async (ownerType, ownerId) => {
+  if (!ownerId || !mongoose.Types.ObjectId.isValid(ownerId)) return null;
+  const settings = await ReportSettings.findOne({ ownerType, ownerId }).lean();
+  if (settings) return settings;
+  const defaults = new ReportSettings({ ownerType, ownerId });
+  return defaults.toObject();
+};
+
+const resolveRegistrationOwnerSettings = async (hostCompanyId) => {
+  if (hostCompanyId && mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+    const hostSettings = await getRegistrationSettings('HostCompany', hostCompanyId);
+    if (hostSettings) return hostSettings;
+  }
+  return getRegistrationSettings('Admin', ADMIN_OWNER_ID);
+};
+
+const sendRegistrationEmail = async ({ to, template, data }) => {
+  if (!to) return { sent: false, skipped: true, reason: 'No recipient email' };
+  if (template && template.enabled === false) {
+    return { sent: false, skipped: true, reason: 'Template disabled' };
+  }
+  const subject = renderTemplate(template?.subject || '', data);
+  const body = renderTemplate(template?.body || '', data);
+  return sendPlainEmail({ to, subject, text: body });
+};
+
 // Test route to verify router is working
 router.get('/test', (req, res) => {
   res.json({ success: true, message: 'Staff routes are working!' });
@@ -109,7 +141,7 @@ router.post('/register', upload.fields([
   }
 
   try {
-    const { name, surname, idNumber, phoneNumber, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime, password } = req.body;
+    const { name, surname, idNumber, phoneNumber, emailAddress, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime, password } = req.body;
     const registrationFingerprintResult = generateDeviceFingerprint(req.headers, { includeMeta: true });
     const registrationDeviceFingerprint = typeof registrationFingerprintResult === 'string'
       ? registrationFingerprintResult
@@ -139,6 +171,7 @@ router.post('/register', upload.fields([
 
     // Validate hostCompanyId if provided (should be valid ObjectId)
     let validatedHostCompanyId = null;
+    let resolvedHostCompany = null;
     if (hostCompanyId && hostCompanyId.trim()) {
       if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
         return res.status(400).json({ error: 'Invalid host company ID format' });
@@ -153,6 +186,18 @@ router.post('/register', upload.fields([
         return res.status(400).json({ error: 'Host company is not active' });
       }
       validatedHostCompanyId = hostCompanyId;
+      resolvedHostCompany = hostCompany;
+    }
+
+    // Validate and clean email address (optional)
+    let cleanedEmailAddress = undefined;
+    if (emailAddress && typeof emailAddress === 'string' && emailAddress.trim()) {
+      const trimmedEmail = emailAddress.trim().toLowerCase();
+      if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedEmail)) {
+        cleanedEmailAddress = trimmedEmail;
+      } else {
+        return res.status(400).json({ error: 'Please enter a valid email address or leave it blank' });
+      }
     }
 
     // Validate location or custom address
@@ -520,6 +565,7 @@ router.post('/register', upload.fields([
       surname: surname.trim(),
       idNumber: idNumber.trim(),
       phoneNumber: phoneNumber.trim(),
+      email: cleanedEmailAddress,
       role: role,
       department: department.trim(), // Department (required)
       hostCompanyId: validatedHostCompanyId, // Host company ID (optional)
@@ -561,6 +607,50 @@ router.post('/register', upload.fields([
       departmentId: staff.department?.toString(),
       email: staff.email
     }, null);
+
+    // ✉️ Send registration email with credentials (if enabled and email provided)
+    try {
+      const shouldSendRegistrationEmail =
+        cleanedEmailAddress &&
+        (role === 'Staff' || role === 'Intern') &&
+        password &&
+        password.trim();
+
+      if (shouldSendRegistrationEmail) {
+        const settings = await resolveRegistrationOwnerSettings(validatedHostCompanyId);
+        const fallbackSettings = new ReportSettings({
+          ownerType: validatedHostCompanyId ? 'HostCompany' : 'Admin',
+          ownerId: validatedHostCompanyId || ADMIN_OWNER_ID,
+        }).toObject();
+        const registrationTemplate = settings?.registrationTemplates?.staff
+          || fallbackSettings?.registrationTemplates?.staff
+          || {};
+        const signature = settings?.templates?.emailSignature
+          || fallbackSettings?.templates?.emailSignature
+          || 'Internship Success';
+        const loginUrl = process.env.PORTAL_LOGIN_URL || process.env.APP_LOGIN_URL || '';
+        const companyName = resolvedHostCompany?.companyName || resolvedHostCompany?.name || 'Internship Success';
+
+        const templateData = {
+          fullName: staff.name,
+          role: staff.role,
+          companyName,
+          mentorName: resolvedHostCompany?.name || '',
+          username: staff.idNumber,
+          temporaryPassword: password.trim(),
+          loginUrl,
+          signature,
+        };
+
+        await sendRegistrationEmail({
+          to: cleanedEmailAddress,
+          template: registrationTemplate,
+          data: templateData,
+        });
+      }
+    } catch (emailError) {
+      console.warn('⚠️ Registration email failed:', emailError?.message || emailError);
+    }
 
     // 🌐 AWS Rekognition integration (collection-based indexing)
     // This runs AFTER ONNX registration succeeds. Rekognition is best-effort:
@@ -1018,7 +1108,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
           deviceTrustStatus = 'trusted';
         }
       } else {
-        const existingDevice = trustedDevices.find(device => device.fingerprint === deviceFingerprint);
+        let existingDevice = trustedDevices.find(device => device.fingerprint === deviceFingerprint);
 
         if (!existingDevice) {
           // Check whether this fingerprint already belongs to another staff member
@@ -1032,42 +1122,77 @@ router.post('/clock', upload.single('image'), async (req, res) => {
               { name: 1, surname: 1 }
             ).lean();
           } catch (deviceLookupError) {
-
             console.warn('⚠️ Failed to look up fingerprint ownership:', deviceLookupError.message);
           }
 
           if (otherDeviceOwner) {
             console.warn(
               `⚠️ Device fingerprint already trusted for ${otherDeviceOwner.name} ${otherDeviceOwner.surname}. ` +
-              `Blocking ${staff.name}'s attempt and returning warning.`
+              `Sharing it with ${staff.name} ${staff.surname} without additional approval.`
             );
-            return res.status(403).json({
-              success: false,
-              error: `Warning: This device is registered under ${otherDeviceOwner.name} ${otherDeviceOwner.surname}. ` +
-                'Please clock in with your assigned device or contact an administrator.',
-              deviceStatus: 'blocked_shared_device',
-              warning: true,
+            const sharedDeviceEntry = createTrustedDeviceEntry(deviceFingerprint, requestDeviceInfo, {
+              label: `Shared Device (${otherDeviceOwner.name} ${otherDeviceOwner.surname})`,
+              status: 'trusted',
             });
-          }
 
-          const pendingDevice = createTrustedDeviceEntry(deviceFingerprint, requestDeviceInfo, {
-            label: 'Pending Approval',
-            status: 'pending',
-          });
+            if (!sharedDeviceEntry) {
+              return res.status(403).json({
+                success: false,
+                error: 'Unable to share the device at this time. Please try again later.',
+                deviceStatus: 'blocked_shared_device',
+                warning: true,
+              });
+            }
 
-          if (pendingDevice) {
-            await Staff.findByIdAndUpdate(staff._id, { $push: { trustedDevices: pendingDevice } }).catch(err => {
-              console.warn('⚠️ Failed to queue device for approval:', err.message);
+            await Staff.findByIdAndUpdate(staff._id, { $push: { trustedDevices: sharedDeviceEntry } }).catch(err => {
+              console.warn('⚠️ Failed to auto-share device:', err.message);
             });
             staffCache.invalidate();
-          }
+            trustedDevices.push(sharedDeviceEntry);
+            deviceTrustStatus = 'trusted';
+            existingDevice = sharedDeviceEntry;
 
-          return res.status(403).json({
-            success: false,
-            error: 'Unrecognized device. This device is pending approval by your administrator.',
-            requiresDeviceApproval: true,
-            deviceStatus: 'pending',
-          });
+            const sharedDeviceOwner = {
+              staffId: otherDeviceOwner._id?.toString?.() || null,
+              staffName: `${otherDeviceOwner.name} ${otherDeviceOwner.surname}`.trim(),
+            };
+            try {
+              await logAction('SHARED_DEVICE_CLOCKIN', {
+                staffId: staff._id.toString(),
+                staffName: staff.name,
+                hostCompanyId: staff.hostCompanyId?.toString(),
+                departmentId: staff.department?.toString(),
+                location: req.body.location || 'Unknown',
+                deviceFingerprint,
+                sharedDeviceOwner,
+                conflictWithStaffId: otherDeviceOwner._id?.toString?.() || null,
+                conflictWithStaffName: `${otherDeviceOwner.name} ${otherDeviceOwner.surname}`.trim(),
+                confidence,
+                type,
+              }, req.user?._id);
+            } catch (logError) {
+              console.warn('ƒsÿ‹,? Failed to log shared device event:', logError?.message || logError);
+            }
+          } else {
+            const pendingDevice = createTrustedDeviceEntry(deviceFingerprint, requestDeviceInfo, {
+              label: 'Pending Approval',
+              status: 'pending',
+            });
+
+            if (pendingDevice) {
+              await Staff.findByIdAndUpdate(staff._id, { $push: { trustedDevices: pendingDevice } }).catch(err => {
+                console.warn('⚠️ Failed to queue device for approval:', err.message);
+              });
+              staffCache.invalidate();
+            }
+
+            return res.status(403).json({
+              success: false,
+              error: 'Unrecognized device. This device is pending approval by your administrator.',
+              requiresDeviceApproval: true,
+              deviceStatus: 'pending',
+            });
+          }
         }
 
         if (existingDevice.status === 'revoked') {
@@ -1260,6 +1385,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     let timeWarning = null;
     let expectedTime = null;
     let isOnTime = true;
+    let timeDiffMinutes = null;
 
     // Helper to parse time string (HH:MM) to hour and minute
     const parseTime = (timeString) => {
@@ -1328,6 +1454,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
           expectedDate.setHours(expectedTimeObj.hour, expectedTimeObj.minute, 0, 0);
 
           const diffMinutes = (timestamp - expectedDate) / (1000 * 60);
+          timeDiffMinutes = diffMinutes;
 
           if (Math.abs(diffMinutes) > TOLERANCE) {
             isOnTime = false;
@@ -1424,7 +1551,8 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         console.log(`✅ Clock log saved for ${staff.name}`);
 
         // 🔔 LOG ACTION FOR REAL-TIME NOTIFICATIONS
-        await logAction('CLOCK_IN', {
+        const actionType = type === 'out' ? 'CLOCK_OUT' : 'CLOCK_IN';
+        await logAction(actionType, {
           staffId: staff._id.toString(),
           staffName: staff.name,
           timestamp: timestamp,
@@ -1436,8 +1564,20 @@ router.post('/clock', upload.single('image'), async (req, res) => {
           confidence: confidence
         }, req.user?._id);
 
+        if (type === 'in' && typeof timeDiffMinutes === 'number') {
+          try {
+            await autoReports.lateClockMonitor.handleLateClockIn({
+              staff,
+              timestamp,
+              timeDiffMinutes
+            });
+          } catch (notifyError) {
+            console.warn('Late clock-in report failed:', notifyError?.message || notifyError);
+          }
+        }
+
         // 🏦 BANK-GRADE Phase 4: Track device quality after successful clock-in
-        if (deviceFingerprint && embeddingResult.qualityMetrics) {
+        if (deviceFingerprint && embeddingResult?.qualityMetrics) {
           trackDeviceQuality(deviceFingerprint, embeddingResult.qualityMetrics).catch(err => {
             console.warn('⚠️ Failed to track device quality:', err.message);
             // Don't fail the clock-in if quality tracking fails
@@ -2970,7 +3110,8 @@ router.get('/admin/staff', async (req, res) => {
             startLunch: null,
             endLunch: null,
             timeOut: null,
-            extraHours: null
+            extraHours: null,
+            activities: []
           };
         }
 
@@ -3066,7 +3207,6 @@ router.get('/admin/staff', async (req, res) => {
         hostCompanyId: hostCompanyIdValue, // Include hostCompanyId (as ID)
         hostCompanyName: hostCompanyName, // 🔧 FIX: Extract company name from populated object
         hostCompany: hostCompany, // Populated hostCompany object (if populated)
-        profilePicture: member.profilePicture || null,
         createdAt: member.createdAt,
         timesheet
       };
@@ -4388,7 +4528,8 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
           startLunch: null,
           endLunch: null,
           timeOut: null,
-          extraHours: null
+          extraHours: null,
+          activities: []
         };
       }
 
@@ -4398,15 +4539,22 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
         second: '2-digit',
         hour12: true
       });
+      const entry = timesheetByDate[dateKey];
+      entry.activities.push({
+        clockType: log.clockType,
+        timestamp: log.timestamp,
+        time: timeStr,
+        confidence: log.confidence
+      });
 
       if (log.clockType === 'in') {
-        timesheetByDate[dateKey].timeIn = timeStr;
+        entry.timeIn = timeStr;
       } else if (log.clockType === 'break_start') {
-        timesheetByDate[dateKey].startLunch = timeStr;
+        entry.startLunch = timeStr;
       } else if (log.clockType === 'break_end') {
-        timesheetByDate[dateKey].endLunch = timeStr;
+        entry.endLunch = timeStr;
       } else if (log.clockType === 'out') {
-        timesheetByDate[dateKey].timeOut = timeStr;
+        entry.timeOut = timeStr;
       }
     });
 
@@ -4429,7 +4577,8 @@ router.get('/admin/staff/:staffId/timesheet', async (req, res) => {
               startLunch: null,
               endLunch: null,
               timeOut: null,
-              extraHours: null
+              extraHours: null,
+              activities: []
             };
           }
 
@@ -4615,7 +4764,8 @@ router.get('/admin/reports/data', async (req, res) => {
           startLunch: null,
           endLunch: null,
           timeOut: null,
-          confidence: {}
+          confidence: {},
+          activities: []
         };
       }
 
@@ -4626,18 +4776,26 @@ router.get('/admin/reports/data', async (req, res) => {
         hour12: true
       });
 
+      const entry = timesheetsByStaff[staffId].timesheet[dateKey];
+      entry.activities.push({
+        clockType: log.clockType,
+        timestamp: log.timestamp,
+        time: timeStr,
+        confidence: log.confidence
+      });
+
       if (log.clockType === 'in') {
-        timesheetsByStaff[staffId].timesheet[dateKey].timeIn = timeStr;
-        timesheetsByStaff[staffId].timesheet[dateKey].confidence.timeIn = log.confidence;
+        entry.timeIn = timeStr;
+        entry.confidence.timeIn = log.confidence;
       } else if (log.clockType === 'break_start') {
-        timesheetsByStaff[staffId].timesheet[dateKey].startLunch = timeStr;
-        timesheetsByStaff[staffId].timesheet[dateKey].confidence.startLunch = log.confidence;
+        entry.startLunch = timeStr;
+        entry.confidence.startLunch = log.confidence;
       } else if (log.clockType === 'break_end') {
-        timesheetsByStaff[staffId].timesheet[dateKey].endLunch = timeStr;
-        timesheetsByStaff[staffId].timesheet[dateKey].confidence.endLunch = log.confidence;
+        entry.endLunch = timeStr;
+        entry.confidence.endLunch = log.confidence;
       } else if (log.clockType === 'out') {
-        timesheetsByStaff[staffId].timesheet[dateKey].timeOut = timeStr;
-        timesheetsByStaff[staffId].timesheet[dateKey].confidence.timeOut = log.confidence;
+        entry.timeOut = timeStr;
+        entry.confidence.timeOut = log.confidence;
       }
     });
 
@@ -4719,8 +4877,8 @@ router.get('/admin/departments/all', async (req, res) => {
   }
 });
 
-// 🎯 STRATEGIC ENDPOINT: Get all departments WITH staff counts (interns AND staff)
-// This endpoint efficiently calculates member counts for each department
+// 🎯 STRATEGIC ENDPOINT: Get all departments WITH intern counts
+// This endpoint efficiently calculates intern counts for each department
 router.get('/admin/departments-with-counts', async (req, res) => {
   try {
     const { hostCompanyId } = req.query;
@@ -4738,66 +4896,46 @@ router.get('/admin/departments-with-counts', async (req, res) => {
       .sort({ name: 1 })
       .lean();
 
-    // 🔧 Efficiently count staff members (interns AND staff) for each department
+    // 🔧 Efficiently count interns for each department
     const departmentsWithCounts = await Promise.all(
       departments.map(async (dept) => {
         try {
-          // Get all active staff members (both Interns and Staff roles)
-          const allMembers = await Staff.find({
-            role: { $in: ['Intern', 'Staff'] },
+          // First, get all interns in the system (active only)
+          const allInterns = await Staff.find({
+            role: 'Intern',
             isActive: true
-          }).select('department hostCompanyId').lean();
-
-          // Filter by hostCompanyId if provided
-          let filteredMembers = allMembers;
-          if (hostCompanyId) {
-            filteredMembers = allMembers.filter(m =>
-              m.hostCompanyId && m.hostCompanyId.toString() === hostCompanyId.toString()
-            );
-          }
+          }).select('department').lean();
 
           // Normalize department name for matching
           const normalizedDeptName = dept.name.trim().toLowerCase();
 
-          // Count members where department matches (normalized)
-          const memberCount = filteredMembers.filter(staff => {
+          // Count interns where department matches (normalized)
+          const internCount = allInterns.filter(staff => {
             if (!staff.department) return false;
             const normalizedStaffDept = staff.department.trim().toLowerCase();
             return normalizedStaffDept === normalizedDeptName;
           }).length;
 
-          // Also count interns separately for backward compatibility
-          const internCount = filteredMembers.filter(staff => {
-            if (!staff.department || staff.role !== 'Intern') return false;
-            const normalizedStaffDept = staff.department.trim().toLowerCase();
-            return normalizedStaffDept === normalizedDeptName;
-          }).length;
-
-          if (memberCount > 0 || dept.name === 'HR & ADMIN') {
-            console.log(`📊 Department "${dept.name}": ${memberCount} members (${internCount} interns)`);
+          if (internCount > 0 || dept.name === 'HR & ADMIN') {
+            console.log(`📊 Department "${dept.name}": ${internCount} interns (normalized match)`);
           }
 
           return {
             ...dept,
-            internCount, // Keep for backward compatibility
-            memberCount, // New field: total interns + staff
-            staffCount: memberCount - internCount // Staff count (excluding interns)
+            internCount
           };
         } catch (error) {
-          console.error(`❌ Error counting members for department "${dept.name}":`, error.message);
+          console.error(`❌ Error counting interns for department "${dept.name}":`, error.message);
           return {
             ...dept,
-            internCount: 0,
-            memberCount: 0,
-            staffCount: 0
+            internCount: 0
           };
         }
       })
     );
 
-    const totalMembers = departmentsWithCounts.reduce((sum, d) => sum + (d.memberCount || 0), 0);
     const totalInterns = departmentsWithCounts.reduce((sum, d) => sum + (d.internCount || 0), 0);
-    console.log(`📊 Fetched ${departmentsWithCounts.length} departments with ${totalMembers} total members (${totalInterns} interns)`);
+    console.log(`📊 Fetched ${departmentsWithCounts.length} departments with ${totalInterns} total interns`);
 
     res.json({
       success: true,
@@ -5439,6 +5577,41 @@ router.post('/admin/host-companies', async (req, res) => {
 
     await company.save();
 
+    // ✉️ Send host company account creation email (if enabled and email provided)
+    try {
+      if (cleanedEmailAddress && password) {
+        const settings = await getRegistrationSettings('Admin', ADMIN_OWNER_ID);
+        const fallbackSettings = new ReportSettings({
+          ownerType: 'Admin',
+          ownerId: ADMIN_OWNER_ID,
+        }).toObject();
+        const registrationTemplate = settings?.registrationTemplates?.hostCompany
+          || fallbackSettings?.registrationTemplates?.hostCompany
+          || {};
+        const signature = settings?.templates?.emailSignature
+          || fallbackSettings?.templates?.emailSignature
+          || 'Internship Success';
+        const loginUrl = process.env.PORTAL_LOGIN_URL || process.env.APP_LOGIN_URL || '';
+
+        const templateData = {
+          companyName: company.companyName || company.name,
+          mentorName: company.name || '',
+          username: company.username,
+          temporaryPassword: password,
+          loginUrl,
+          signature,
+        };
+
+        await sendRegistrationEmail({
+          to: cleanedEmailAddress,
+          template: registrationTemplate,
+          data: templateData,
+        });
+      }
+    } catch (emailError) {
+      console.warn('⚠️ Host company registration email failed:', emailError?.message || emailError);
+    }
+
     // Don't send password in response
     const companyResponse = company.toObject();
     delete companyResponse.password;
@@ -5813,106 +5986,6 @@ router.get('/admin/diagnostics/:id', async (req, res) => {
   } catch (error) {
     console.error('Error fetching staff diagnostics:', error);
     res.status(500).json({ error: 'Failed to fetch staff diagnostics' });
-  }
-});
-
-router.get('/admin/staff/:staffId/rotation-plan', async (req, res) => {
-  try {
-    const { staffId } = req.params;
-    if (!mongoose.Types.ObjectId.isValid(staffId)) {
-      return res.status(400).json({ success: false, error: 'Invalid staff ID' });
-    }
-    const staff = await Staff.findById(staffId).lean();
-    if (!staff) {
-      return res.status(404).json({ success: false, error: 'Staff not found' });
-    }
-    return res.json({
-      success: true,
-      rotationPlan: staff.rotationPlan || {}
-    });
-  } catch (error) {
-    console.error('Error fetching rotation plan:', error);
-    res.status(500).json({ success: false, error: 'Failed to load rotation plan' });
-  }
-});
-
-router.put('/admin/staff/:staffId/rotation-plan', async (req, res) => {
-  try {
-    const { staffId } = req.params;
-    const hostCompanyId = req.query.hostCompanyId || req.body.hostCompanyId;
-    const { departmentId, departmentName, notes, status, startDate, supervisorId, approvalStatus } = req.body;
-
-    if (!mongoose.Types.ObjectId.isValid(staffId)) {
-      return res.status(400).json({ success: false, error: 'Invalid staff ID' });
-    }
-
-    const staff = await Staff.findById(staffId);
-    if (!staff) {
-      return res.status(404).json({ success: false, error: 'Staff member not found' });
-    }
-
-    if (!staff.rotationPlan) {
-      staff.rotationPlan = {
-        currentDepartment: { departmentId: null, departmentName: 'Unassigned' },
-        startDate: null,
-        status: 'active',
-        notes: '',
-        history: [],
-        approvals: []
-      };
-    }
-    staff.rotationPlan.history = staff.rotationPlan.history || [];
-    staff.rotationPlan.approvals = staff.rotationPlan.approvals || [];
-
-    if (hostCompanyId) {
-      if (!staff.hostCompanyId || staff.hostCompanyId.toString() !== hostCompanyId.toString()) {
-        return res.status(403).json({ success: false, error: 'You can only manage staff from your company' });
-      }
-    }
-
-    const previous = staff.rotationPlan?.currentDepartment || null;
-    const now = startDate ? new Date(startDate) : new Date();
-
-    if (previous?.departmentId || previous?.departmentName) {
-      staff.rotationPlan.history.push({
-        departmentId: previous.departmentId,
-        departmentName: previous.departmentName,
-        startDate: staff.rotationPlan.startDate,
-        endDate: now,
-        status: staff.rotationPlan.status || 'completed',
-        notes: staff.rotationPlan.notes || '',
-        recordedAt: new Date()
-      });
-    }
-
-    staff.rotationPlan.currentDepartment = {
-      departmentId: departmentId && mongoose.Types.ObjectId.isValid(departmentId) ? departmentId : null,
-      departmentName: departmentName || previous?.departmentName || 'Unassigned'
-    };
-    staff.rotationPlan.startDate = now;
-    staff.rotationPlan.status = status || 'active';
-    staff.rotationPlan.notes = notes || staff.rotationPlan.notes;
-
-    if (approvalStatus) {
-      staff.rotationPlan.approvals.push({
-        supervisorId: supervisorId && mongoose.Types.ObjectId.isValid(supervisorId) ? supervisorId : null,
-        adminId: null,
-        status: approvalStatus,
-        notes: notes || '',
-        createdAt: new Date()
-      });
-    }
-
-    await staff.save();
-    staffCache.invalidate();
-
-    res.json({
-      success: true,
-      rotationPlan: staff.rotationPlan
-    });
-  } catch (error) {
-    console.error('Error updating rotation plan:', error);
-    res.status(500).json({ success: false, error: 'Failed to update rotation plan' });
   }
 });
 

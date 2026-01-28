@@ -227,6 +227,13 @@ export const dashboardAPI = {
   },
 };
 
+export const notificationAPI = {
+  getAll: async (params = {}) => {
+    const response = await api.get('/notifications', { params });
+    return response.data;
+  }
+};
+
 // Host Company API
 export const hostCompanyAPI = {
   getAll: async () => {
@@ -281,6 +288,10 @@ export const leaveAPI = {
     const response = await api.get('/staff/admin/leave-applications', { params });
     return response.data;
   },
+  getById: async (id, params = {}) => {
+    const response = await api.get(`/staff/admin/leave-applications/${id}`, { params });
+    return response.data;
+  },
   getInternApplications: async (internId) => {
     const response = await api.get('/staff/intern/leave-applications', {
       params: { internId }
@@ -324,6 +335,10 @@ export const attendanceAPI = {
     const response = await api.get('/staff/admin/attendance-corrections', { params });
     return response.data;
   },
+  getById: async (id, params = {}) => {
+    const response = await api.get(`/staff/admin/attendance-corrections/${id}`, { params });
+    return response.data;
+  },
   getInternCorrections: async (internId) => {
     const response = await api.get('/staff/intern/attendance-corrections', {
       params: { internId }
@@ -359,6 +374,28 @@ export const reportsAPI = {
   },
 };
 
+// Auto Reports Settings API (SMTP status + test)
+export const reportSettingsAPI = {
+  getSettings: async (ownerType, ownerId) => {
+    const response = await api.get('/report-settings', {
+      params: { ownerType, ownerId }
+    });
+    return response.data;
+  },
+  saveSettings: async (payload) => {
+    const response = await api.post('/report-settings', payload);
+    return response.data;
+  },
+  getSmtpStatus: async () => {
+    const response = await api.get('/report-settings/smtp/status');
+    return response.data;
+  },
+  sendSmtpTest: async (to) => {
+    const response = await api.post('/report-settings/smtp/test', { to });
+    return response.data;
+  },
+};
+
 // Locations API
 export const locationsAPI = {
   getAll: async () => {
@@ -375,14 +412,15 @@ export const internReportsAPI = {
     return response.data;
   },
   // Fetch reports for a specific intern or host company
-  getReports: async (internId, hostCompanyId, userRole, limit = 50, skip = 0) => {
+  getReports: async (internId, hostCompanyId, userRole, limit = 50, skip = 0, filters = {}) => {
     const response = await api.get('/intern-reports', {
       params: {
         internId,
         hostCompanyId,
         userRole,
         limit,
-        skip
+        skip,
+        ...filters
       }
     });
     return response.data;

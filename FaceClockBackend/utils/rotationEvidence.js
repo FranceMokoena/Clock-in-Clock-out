@@ -256,21 +256,21 @@ const buildDailyAttendance = (logs) => {
       };
     }
 
-    if (log.clockType === 'in') {
+    if (log.activityType === 'in') {
       attendanceByDate[dateKey].clockIn = log.timestamp;
-    } else if (log.clockType === 'out') {
+    } else if (log.activityType === 'out') {
       attendanceByDate[dateKey].clockOut = log.timestamp;
-    } else if (log.clockType === 'break_start') {
+    } else if (log.activityType === 'break_start') {
       attendanceByDate[dateKey].breakStart = log.timestamp;
-    } else if (log.clockType === 'break_end') {
+    } else if (log.activityType === 'break_end') {
       attendanceByDate[dateKey].breakEnd = log.timestamp;
-    } else if (log.clockType === 'lunch_start') {
+    } else if (log.activityType === 'lunch_start') {
       attendanceByDate[dateKey].lunchStart = log.timestamp;
-    } else if (log.clockType === 'lunch_end') {
+    } else if (log.activityType === 'lunch_end') {
       attendanceByDate[dateKey].lunchEnd = log.timestamp;
-    } else if (log.clockType === 'extra_shift_in') {
+    } else if (log.activityType === 'extra_shift_in') {
       attendanceByDate[dateKey].extraShiftIn = log.timestamp;
-    } else if (log.clockType === 'extra_shift_out') {
+    } else if (log.activityType === 'extra_shift_out') {
       attendanceByDate[dateKey].extraShiftOut = log.timestamp;
     }
   });
@@ -374,7 +374,7 @@ async function computeRotationEvidence({ userId, startDate, endDate }) {
     staffId: userId,
     timestamp: { $gte: rangeStart, $lte: rangeEnd }
   })
-    .select('clockType timestamp')
+    .select('activityType timestamp')
     .sort({ timestamp: 1 })
     .lean();
 

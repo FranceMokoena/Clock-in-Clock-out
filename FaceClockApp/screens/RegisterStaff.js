@@ -229,6 +229,7 @@ export default function RegisterStaff({ navigation, route }) {
   const [surname, setSurname] = useState('');
   const [idNumber, setIdNumber] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
+  const [emailAddress, setEmailAddress] = useState('');
   const [password, setPassword] = useState('');
   const [role, setRole] = useState('Staff');
   const [hostCompany, setHostCompany] = useState(userHostCompanyId || ''); // Auto-set for host company users
@@ -600,6 +601,14 @@ export default function RegisterStaff({ navigation, route }) {
     return { valid: true };
   };
 
+  const validateEmailAddress = (email) => {
+    if (!email) return { valid: true };
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return { valid: false, error: 'Please enter a valid email address' };
+    }
+    return { valid: true };
+  };
+
   // Handle form submission
   const handleFormSubmit = () => {
     // Validate all fields - show professional modals
@@ -637,6 +646,16 @@ export default function RegisterStaff({ navigation, route }) {
         phoneValidation.error || 'Invalid Phone Number',
         phoneValidation.details || 'Please check your phone number and try again.',
         'error'
+      );
+      return;
+    }
+
+    const emailValidation = validateEmailAddress(emailAddress.trim().toLowerCase());
+    if (!emailValidation.valid) {
+      showProfessionalMessage(
+        emailValidation.error || 'Invalid Email',
+        'Please enter a valid email address to receive login credentials.',
+        'warning'
       );
       return;
     }
@@ -956,6 +975,9 @@ export default function RegisterStaff({ navigation, route }) {
       formData.append('surname', surname.trim());
       formData.append('idNumber', idNumber.trim());
       formData.append('phoneNumber', phoneNumber.trim());
+      if (emailAddress && emailAddress.trim()) {
+        formData.append('emailAddress', emailAddress.trim().toLowerCase());
+      }
       formData.append('role', role);
       // Add password for Staff and Intern roles
       if (role === 'Staff' || role === 'Intern') {
@@ -1693,6 +1715,24 @@ export default function RegisterStaff({ navigation, route }) {
               onChangeText={setPhoneNumber}
               keyboardType="phone-pad"
             />
+
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <Text style={[styles.label, dynamicStyles.label]}>Email Address</Text>
+              <Text style={{ color: '#718096', fontSize: 12, marginLeft: 6 }}>(for credentials)</Text>
+            </View>
+            <TextInput
+              style={[styles.input, dynamicStyles.input]}
+              placeholder="Enter email address"
+              placeholderTextColor={theme.textTertiary}
+              value={emailAddress}
+              onChangeText={setEmailAddress}
+              keyboardType="email-address"
+              autoCapitalize="none"
+              autoCorrect={false}
+            />
+            <Text style={[styles.hint, dynamicStyles.hint]}>
+              Login details will be sent to this email if provided.
+            </Text>
 
             <View style={{ flexDirection: 'row', alignItems: 'center' }}>
               <Text style={[styles.label, dynamicStyles.label]}>Role</Text>

@@ -31,6 +31,7 @@ export default function InternAttendance({ navigation, route }) {
   const [exportingPDF, setExportingPDF] = useState(false);
   const [showExportModal, setShowExportModal] = useState(false);
   const [workingHours, setWorkingHours] = useState(null);
+  const [rotationContext, setRotationContext] = useState(null);
 
   useEffect(() => {
     loadAttendanceData();
@@ -67,6 +68,43 @@ export default function InternAttendance({ navigation, route }) {
       if (hoursResponse.data?.success) {
         setWorkingHours(hoursResponse.data.workingHours || null);
       }
+
+      try {
+        const rotationResponse = await axios.get(`${API_BASE_URL}/rotations/users/${userInfo.id}/dossier`, {
+          params: {
+            userRole: 'INTERN',
+            requesterId: userInfo.id,
+          },
+        });
+
+        if (rotationResponse.data?.success) {
+          const rotationAssignment = rotationResponse.data.currentAssignment || null;
+          const currentDepartment = rotationAssignment?.departmentName
+            || userInfo.department
+            || 'N/A';
+          setRotationContext({
+            currentDepartment,
+            rotationDepartment: rotationAssignment?.departmentName || null,
+            rotationStartDate: rotationAssignment?.startDate || null,
+            rotationEndDate: rotationAssignment?.endDate || null,
+          });
+        } else {
+          setRotationContext({
+            currentDepartment: userInfo.department || 'N/A',
+            rotationDepartment: null,
+            rotationStartDate: null,
+            rotationEndDate: null,
+          });
+        }
+      } catch (rotationError) {
+        console.warn('Rotation context not available:', rotationError?.message || rotationError);
+        setRotationContext({
+          currentDepartment: userInfo.department || 'N/A',
+          rotationDepartment: null,
+          rotationStartDate: null,
+          rotationEndDate: null,
+        });
+      }
     } catch (error) {
       console.error('Error loading attendance:', error);
       Alert.alert('Error', 'Failed to load attendance data. Please try again.');
@@ -82,6 +120,12 @@ export default function InternAttendance({ navigation, route }) {
         attendanceRate: 0,
       });
       setWorkingHours(null);
+      setRotationContext({
+        currentDepartment: userInfo.department || 'N/A',
+        rotationDepartment: null,
+        rotationStartDate: null,
+        rotationEndDate: null,
+      });
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -518,6 +562,41 @@ export default function InternAttendance({ navigation, route }) {
           </View>
         ) : (
           <>
+            {rotationContext && (
+              <View style={[styles.detailedStatsCard, dynamicStyles.card]}>
+                <Text style={[styles.sectionTitle, dynamicStyles.text]}>Rotation Context</Text>
+                <View style={styles.detailedStatsRow}>
+                  <Text style={[styles.detailedStatLabel, dynamicStyles.textSecondary]}>
+                    Current Department:
+                  </Text>
+                  <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
+                    {rotationContext.currentDepartment || 'N/A'}
+                  </Text>
+                </View>
+                {rotationContext.rotationDepartment && (
+                  <>
+                    <View style={styles.detailedStatsRow}>
+                      <Text style={[styles.detailedStatLabel, dynamicStyles.textSecondary]}>
+                        Current Rotation Department:
+                      </Text>
+                      <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
+                        {rotationContext.rotationDepartment}
+                      </Text>
+                    </View>
+                    <View style={styles.detailedStatsRow}>
+                      <Text style={[styles.detailedStatLabel, dynamicStyles.textSecondary]}>
+                        Rotation Period:
+                      </Text>
+                      <Text style={[styles.detailedStatValue, dynamicStyles.text]}>
+                        {rotationContext.rotationStartDate && rotationContext.rotationEndDate
+                          ? `${formatDateOnly(rotationContext.rotationStartDate)} - ${formatDateOnly(rotationContext.rotationEndDate)}`
+                          : 'Not scheduled'}
+                      </Text>
+                    </View>
+                  </>
+                )}
+              </View>
+            )}
             {/* Statistics Cards */}
             {stats && (
               <View style={styles.statsContainer}>

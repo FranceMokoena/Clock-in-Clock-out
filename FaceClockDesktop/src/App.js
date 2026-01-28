@@ -2,6 +2,10 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './screens/Login';
 import Dashboard from './screens/Dashboard';
+import StaffDetailsScreen from './screens/StaffDetails';
+import LeaveApplicationDetails from './screens/LeaveApplicationDetails';
+import AttendanceCorrectionDetails from './screens/AttendanceCorrectionDetails';
+import AttendanceTimesheetReport from './screens/AttendanceTimesheetReport';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import './App.css';
 
@@ -100,6 +104,38 @@ function App() {
                     <Dashboard />
                   </ProtectedRoute>
                 } 
+              />
+              <Route
+                path="/staff/:staffId"
+                element={
+                  <ProtectedRoute>
+                    <StaffDetailsScreen />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/leave-applications/:applicationId"
+                element={
+                  <ProtectedRoute>
+                    <LeaveApplicationDetails />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/attendance-corrections/:correctionId"
+                element={
+                  <ProtectedRoute>
+                    <AttendanceCorrectionDetails />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/reports/attendance-timesheet"
+                element={
+                  <ProtectedRoute>
+                    <AttendanceTimesheetReport />
+                  </ProtectedRoute>
+                }
               />
               <Route path="/" element={<Navigate to="/login" replace />} />
               <Route path="*" element={<Navigate to="/login" replace />} />

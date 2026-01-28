@@ -30,7 +30,7 @@ const getApiUrl = () => {
     // For iOS simulator: http://localhost:5000/api
     // For physical device (Expo Go): Use your computer's IP from the QR code
     // For multi-device testing: Set EXPO_PUBLIC_BACKEND_IP env variable (e.g., 192.168.88.41)
-    const backendIp = process.env.EXPO_PUBLIC_BACKEND_IP || '192.168.0.113';
+    const backendIp = process.env.EXPO_PUBLIC_BACKEND_IP || '192.168.88.29';
     const localUrl = `http://${backendIp}:5000/api`;
     console.log('📌 Development mode - FORCING local backend:', localUrl);
     console.log('💡 To change backend IP, set EXPO_PUBLIC_BACKEND_IP environment variable');

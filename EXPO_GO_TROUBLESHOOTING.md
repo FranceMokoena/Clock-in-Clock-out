@@ -46,7 +46,7 @@ OR configure it with the IP explicitly:
 
 ```powershell
 # For Windows PowerShell:
-$env:EXPO_PUBLIC_API_URL = "http://192.168.0.135:5000/api"
+$env:EXPO_PUBLIC_API_URL = "http://192.168.88.29:5000/api"
 npm start
 ```
 

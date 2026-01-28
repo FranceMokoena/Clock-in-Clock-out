@@ -104,7 +104,9 @@ router.get('/', async (req, res) => {
       hostCompanyId,
       userRole,
       limit = 50,
-      skip = 0
+      skip = 0,
+      startDate,
+      endDate
     } = req.query;
 
     // Build query based on role
@@ -147,6 +149,27 @@ router.get('/', async (req, res) => {
         success: false,
         error: 'Invalid userRole. Must be HOST_COMPANY, ADMIN, or INTERN'
       });
+    }
+
+    if (startDate || endDate) {
+      const dateFilter = {};
+      if (startDate) {
+        const parsedStart = new Date(startDate);
+        if (!Number.isNaN(parsedStart.getTime())) {
+          parsedStart.setHours(0, 0, 0, 0);
+          dateFilter.$gte = parsedStart;
+        }
+      }
+      if (endDate) {
+        const parsedEnd = new Date(endDate);
+        if (!Number.isNaN(parsedEnd.getTime())) {
+          parsedEnd.setHours(23, 59, 59, 999);
+          dateFilter.$lte = parsedEnd;
+        }
+      }
+      if (Object.keys(dateFilter).length > 0) {
+        query.incidentDate = dateFilter;
+      }
     }
 
     // Fetch reports with pagination

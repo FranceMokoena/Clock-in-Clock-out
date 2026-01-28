@@ -17,6 +17,7 @@ import { useTheme } from '../context/ThemeContext';
 import axios from 'axios';
 import API_BASE_URL from '../config/api';
 import { getDeviceHeaders } from '../utils/deviceInfo';
+import { ensureNotificationConnection } from '../utils/notificationHandler';
 
 export default function UnifiedLogin({ navigation }) {
   const { theme } = useTheme();
@@ -56,6 +57,7 @@ export default function UnifiedLogin({ navigation }) {
         
         if (response.data && response.data.success) {
           const userInfo = response.data.user;
+          await ensureNotificationConnection(userInfo.id, userInfo.type || userInfo.role, API_BASE_URL);
           
           // Route based on user type
           if (userInfo.type === 'admin') {
@@ -106,6 +108,7 @@ export default function UnifiedLogin({ navigation }) {
         
         if (response.data && response.data.success) {
           const userInfo = response.data.user;
+          await ensureNotificationConnection(userInfo.id, userInfo.type || userInfo.role, API_BASE_URL);
           navigation.navigate('InternDashboard', { userInfo });
           setLoading(false);
           return;

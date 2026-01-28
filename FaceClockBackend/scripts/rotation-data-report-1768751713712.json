@@ -1,0 +1,445 @@
+{
+  "generatedAt": "2026-01-18T15:55:13.711Z",
+  "filters": {
+    "activeOnly": false,
+    "hostCompanyId": null,
+    "limit": 0
+  },
+  "summary": {
+    "staffCount": 4,
+    "internCount": 3,
+    "staffRoleCount": 1,
+    "planCount": 2,
+    "assignmentCount": 3,
+    "historyCount": 2,
+    "approvalCount": 0,
+    "decisionCount": 4,
+    "issueCount": 4
+  },
+  "issues": [
+    {
+      "staffId": "694407fa5e86c2db2fa55a40",
+      "staffName": "France Mokoena Mokoena",
+      "code": "ASSIGNMENT_OVERLAP",
+      "detail": "Assignment date ranges overlap"
+    },
+    {
+      "staffId": "695bc092be5d3a845a86f559",
+      "staffName": "Senzo Mkhize Mkhize",
+      "code": "ACTIVE_ASSIGNMENT_ENDED",
+      "detail": "Active assignment 696cbd195788cdb7202f10f4 ends in the past"
+    },
+    {
+      "staffId": "695fac4f021509b57cfeaee8",
+      "staffName": "Sethu Shongwe Shongwe",
+      "code": "MISSING_ROTATION_PLAN",
+      "detail": "No RotationPlan or legacy plan found"
+    },
+    {
+      "staffId": "6964f9e063699347aee394fa",
+      "staffName": "Thobeka Moyane Moyane",
+      "code": "MISSING_ROTATION_PLAN",
+      "detail": "No RotationPlan or legacy plan found"
+    }
+  ],
+  "staff": [
+    {
+      "staff": {
+        "id": "694407fa5e86c2db2fa55a40",
+        "name": "France Mokoena",
+        "surname": "Mokoena",
+        "idNumber": "0212315697087",
+        "role": "Intern",
+        "isActive": true,
+        "department": "DEPARTMENT OF SALES",
+        "hostCompanyId": "6943ea9f8584c15fa0f53493",
+        "hostCompanyName": "Internship Success",
+        "createdAt": "2025-12-18T13:56:10.384Z"
+      },
+      "plan": {
+        "_id": "696ca981ecdfe82a48b8e9d4",
+        "userId": "694407fa5e86c2db2fa55a40",
+        "__v": 0,
+        "createdAt": "2026-01-18T09:36:01.592Z",
+        "endDate": "2026-01-24T00:00:00.000Z",
+        "hostCompanyId": "6943ea9f8584c15fa0f53493",
+        "rotationPath": [
+          {
+            "departmentId": "6943ff8a8584c15fa0f534e6",
+            "departmentName": "ROADS AND TRAFFIC"
+          }
+        ],
+        "startDate": "2026-01-18T00:00:00.000Z",
+        "status": "REQUIRES_ACTION",
+        "updatedAt": "2026-01-18T09:36:01.592Z"
+      },
+      "legacyPlan": {
+        "approvals": [],
+        "currentDepartment": {
+          "departmentId": "695f71d79cf82b5a3c68f6a9",
+          "departmentName": "NEWS AND WEATHER"
+        },
+        "history": [
+          {
+            "departmentId": "6943ff8a8584c15fa0f534e6",
+            "departmentName": "ROADS AND TRAFFIC",
+            "startDate": "2026-01-17T20:36:01.046Z",
+            "endDate": "2026-01-17T22:12:57.927Z",
+            "status": "active",
+            "notes": "YOU COMPLETED YOUR DUTY ON THE PREVIOUS DEPARTMENT",
+            "recordedAt": "2026-01-17T22:12:58.155Z",
+            "_id": "696c096a0b3c3f5cab699743"
+          },
+          {
+            "departmentId": "6943ff8a8584c15fa0f534e6",
+            "departmentName": "ROADS AND TRAFFIC",
+            "startDate": "2026-01-17T22:12:57.927Z",
+            "endDate": "2026-01-17T22:29:59.766Z",
+            "status": "active",
+            "notes": "YOU COMPLETED YOUR DUTY ON THE PREVIOUS DEPARTMENT",
+            "recordedAt": "2026-01-17T22:29:59.944Z",
+            "_id": "696c0d674df037c1529dbc5a"
+          },
+          {
+            "departmentId": "6943ffec8584c15fa0f53500",
+            "departmentName": "DEPARTMENT OF SALES",
+            "startDate": "2026-01-17T22:29:59.766Z",
+            "endDate": "2026-01-18T11:13:55.759Z",
+            "status": "active",
+            "notes": "YOU COMPLETED YOUR DUTY ON THE PREVIOUS DEPARTMENT",
+            "recordedAt": "2026-01-18T11:13:56.219Z",
+            "_id": "696cc074743c78d48464a5b7"
+          }
+        ],
+        "notes": "YOU COMPLETED YOUR DUTY ON THE PREVIOUS DEPARTMENT",
+        "startDate": "2026-01-18T11:13:55.759Z",
+        "status": "active"
+      },
+      "assignments": [
+        {
+          "_id": "696ca9815788cdb7202f0555",
+          "planId": "696ca981ecdfe82a48b8e9d4",
+          "userId": "694407fa5e86c2db2fa55a40",
+          "hostCompanyId": "6943ea9f8584c15fa0f53493",
+          "departmentId": "6943ff8a8584c15fa0f534e6",
+          "startDate": "2026-01-18T00:00:00.000Z",
+          "endDate": "2026-01-24T00:00:00.000Z",
+          "durationType": "weeks",
+          "durationValue": 1,
+          "supervisorId": null,
+          "status": "DECLINED",
+          "notes": "DECLICNED DUE TO POOR PERFORMANCE",
+          "reviewDate": null,
+          "createdAt": "2026-01-18T09:36:01.693Z",
+          "updatedAt": "2026-01-18T12:02:06.473Z",
+          "__v": 0,
+          "departmentName": "ROADS AND TRAFFIC",
+          "supervisorName": null,
+          "approvals": [],
+          "decisions": [
+            {
+              "_id": "696ca99c5788cdb7202f05a1",
+              "assignmentId": "696ca9815788cdb7202f0555",
+              "decisionType": "COMPLETED",
+              "notes": "he is done",
+              "overrideFlag": true,
+              "actorId": "6943ea9f8584c15fa0f53493",
+              "decidedAt": "2026-01-18T09:36:28.439Z",
+              "__v": 0,
+              "actorName": null
+            },
+            {
+              "_id": "696ca9d95788cdb7202f0640",
+              "assignmentId": "696ca9815788cdb7202f0555",
+              "decisionType": "COMPLETED",
+              "notes": "noted",
+              "overrideFlag": true,
+              "actorId": "000000000000000000000001",
+              "decidedAt": "2026-01-18T09:37:29.459Z",
+              "__v": 0,
+              "actorName": null
+            },
+            {
+              "_id": "696ccbbe441ff20ad6e045c9",
+              "assignmentId": "696ca9815788cdb7202f0555",
+              "decisionType": "DECLINED",
+              "notes": "DECLICNED DUE TO POOR PERFORMANCE",
+              "overrideFlag": true,
+              "actorId": "6943ea9f8584c15fa0f53493",
+              "decidedAt": "2026-01-18T12:02:06.427Z",
+              "__v": 0,
+              "actorName": null
+            }
+          ]
+        },
+        {
+          "_id": "696cbcc65788cdb7202f108e",
+          "planId": "696ca981ecdfe82a48b8e9d4",
+          "userId": "694407fa5e86c2db2fa55a40",
+          "hostCompanyId": "6943ea9f8584c15fa0f53493",
+          "departmentId": "6943ff8a8584c15fa0f534e6",
+          "startDate": "2026-01-18T00:00:00.000Z",
+          "endDate": "2026-01-24T00:00:00.000Z",
+          "durationType": "weeks",
+          "durationValue": 1,
+          "supervisorId": null,
+          "status": "DECLINED",
+          "notes": "YOU WILL REVERT BACK TO PREVIOUS DEPARTMENT DUE TO POOR ATTENDENCE PERFORMENCE",
+          "reviewDate": null,
+          "createdAt": "2026-01-18T10:58:14.733Z",
+          "updatedAt": "2026-01-18T12:00:44.503Z",
+          "__v": 0,
+          "departmentName": "ROADS AND TRAFFIC",
+          "supervisorName": null,
+          "approvals": [],
+          "decisions": [
+            {
+              "_id": "696ccb6c441ff20ad6e04526",
+              "assignmentId": "696cbcc65788cdb7202f108e",
+              "decisionType": "DECLINED",
+              "notes": "YOU WILL REVERT BACK TO PREVIOUS DEPARTMENT DUE TO POOR ATTENDENCE PERFORMENCE",
+              "overrideFlag": true,
+              "actorId": "6943ea9f8584c15fa0f53493",
+              "decidedAt": "2026-01-18T12:00:44.406Z",
+              "__v": 0,
+              "actorName": null
+            }
+          ]
+        }
+      ],
+      "currentAssignmentId": "696ca9815788cdb7202f0555",
+      "history": [
+        {
+          "_id": "696ca99c5788cdb7202f05a4",
+          "userId": "694407fa5e86c2db2fa55a40",
+          "hostCompanyId": "6943ea9f8584c15fa0f53493",
+          "departmentId": "6943ff8a8584c15fa0f534e6",
+          "startDate": "2026-01-18T00:00:00.000Z",
+          "endDate": "2026-01-24T00:00:00.000Z",
+          "evaluationSummary": "he is done",
+          "outcome": "COMPLETED",
+          "supervisorId": null,
+          "adminId": "6943ea9f8584c15fa0f53493",
+          "decidedAt": "2026-01-18T09:36:28.527Z",
+          "createdAt": "2026-01-18T09:36:28.528Z",
+          "__v": 0,
+          "departmentName": "ROADS AND TRAFFIC",
+          "supervisorName": null,
+          "adminName": null
+        },
+        {
+          "_id": "696ca9d95788cdb7202f0643",
+          "userId": "694407fa5e86c2db2fa55a40",
+          "hostCompanyId": "6943ea9f8584c15fa0f53493",
+          "departmentId": "6943ff8a8584c15fa0f534e6",
+          "startDate": "2026-01-18T00:00:00.000Z",
+          "endDate": "2026-01-24T00:00:00.000Z",
+          "evaluationSummary": "noted",
+          "outcome": "COMPLETED",
+          "supervisorId": null,
+          "adminId": "000000000000000000000001",
+          "decidedAt": "2026-01-18T09:37:29.548Z",
+          "createdAt": "2026-01-18T09:37:29.548Z",
+          "__v": 0,
+          "departmentName": "ROADS AND TRAFFIC",
+          "supervisorName": null,
+          "adminName": null
+        }
+      ],
+      "analysis": {
+        "assignmentCount": 2,
+        "historyCount": 2,
+        "approvalCount": 0,
+        "decisionCount": 4,
+        "issues": [
+          {
+            "code": "ASSIGNMENT_OVERLAP",
+            "detail": "Assignment date ranges overlap"
+          }
+        ]
+      }
+    },
+    {
+      "staff": {
+        "id": "695bc092be5d3a845a86f559",
+        "name": "Senzo Mkhize",
+        "surname": "Mkhize",
+        "idNumber": "0109095708086",
+        "role": "Intern",
+        "isActive": true,
+        "department": "DEPARTMENT OF SALES",
+        "hostCompanyId": "6943ea9f8584c15fa0f53493",
+        "hostCompanyName": "Internship Success",
+        "createdAt": "2026-01-05T13:45:54.169Z"
+      },
+      "plan": {
+        "_id": "696ca2e9ecdfe82a48b8e990",
+        "userId": "695bc092be5d3a845a86f559",
+        "__v": 0,
+        "createdAt": "2026-01-18T09:07:53.182Z",
+        "endDate": "2026-01-18T00:00:00.000Z",
+        "hostCompanyId": "6943ea9f8584c15fa0f53493",
+        "rotationPath": [
+          {
+            "departmentId": "6943ffec8584c15fa0f53500",
+            "departmentName": "DEPARTMENT OF SALES"
+          }
+        ],
+        "startDate": "2026-01-18T00:00:00.000Z",
+        "status": "ACTIVE",
+        "updatedAt": "2026-01-18T09:07:53.182Z"
+      },
+      "legacyPlan": {
+        "approvals": [],
+        "currentDepartment": {
+          "departmentId": "695f822c7274f21772557ed5",
+          "departmentName": "HEALTHY AND ASSOSIATES"
+        },
+        "history": [
+          {
+            "departmentId": "6943ff8a8584c15fa0f534e6",
+            "departmentName": "ROADS AND TRAFFIC",
+            "startDate": "2026-01-17T22:30:25.518Z",
+            "endDate": "2026-01-17T22:31:57.756Z",
+            "status": "active",
+            "notes": "",
+            "recordedAt": "2026-01-17T22:31:57.955Z",
+            "_id": "696c0ddd4df037c1529dbd29"
+          },
+          {
+            "departmentId": "6960abfb47baf75d7ad935e0",
+            "departmentName": "HR & ADMIN",
+            "startDate": "2026-01-17T22:31:57.756Z",
+            "endDate": "2026-01-18T07:45:37.687Z",
+            "status": "active",
+            "notes": "",
+            "recordedAt": "2026-01-18T07:45:38.214Z",
+            "_id": "696c8fa2a80c6d8db4258e30"
+          },
+          {
+            "departmentId": "695f71d79cf82b5a3c68f6a9",
+            "departmentName": "NEWS AND WEATHER",
+            "startDate": "2026-01-18T07:45:37.687Z",
+            "endDate": "2026-01-18T07:48:05.015Z",
+            "status": "active",
+            "notes": "",
+            "recordedAt": "2026-01-18T07:48:05.217Z",
+            "_id": "696c9035a80c6d8db4258f51"
+          },
+          {
+            "departmentId": "695f822c7274f21772557ed5",
+            "departmentName": "HEALTHY AND ASSOSIATES",
+            "startDate": "2026-01-18T07:48:05.015Z",
+            "endDate": "2026-01-18T08:01:58.502Z",
+            "status": "active",
+            "notes": "",
+            "recordedAt": "2026-01-18T08:01:58.648Z",
+            "_id": "696c9376a80c6d8db42590de"
+          }
+        ],
+        "startDate": "2026-01-18T08:01:58.502Z",
+        "status": "active"
+      },
+      "assignments": [
+        {
+          "_id": "696cbd195788cdb7202f10f4",
+          "planId": "696ca2e9ecdfe82a48b8e990",
+          "userId": "695bc092be5d3a845a86f559",
+          "hostCompanyId": "6943ea9f8584c15fa0f53493",
+          "departmentId": "6943ffec8584c15fa0f53500",
+          "startDate": "2026-01-18T00:00:00.000Z",
+          "endDate": "2026-01-18T00:00:00.000Z",
+          "durationType": "days",
+          "durationValue": 1,
+          "supervisorId": null,
+          "status": "ACTIVE",
+          "notes": null,
+          "reviewDate": null,
+          "createdAt": "2026-01-18T10:59:37.570Z",
+          "updatedAt": "2026-01-18T10:59:37.572Z",
+          "__v": 0,
+          "departmentName": "DEPARTMENT OF SALES",
+          "supervisorName": null,
+          "approvals": [],
+          "decisions": []
+        }
+      ],
+      "currentAssignmentId": "696cbd195788cdb7202f10f4",
+      "history": [],
+      "analysis": {
+        "assignmentCount": 1,
+        "historyCount": 0,
+        "approvalCount": 0,
+        "decisionCount": 0,
+        "issues": [
+          {
+            "code": "ACTIVE_ASSIGNMENT_ENDED",
+            "detail": "Active assignment 696cbd195788cdb7202f10f4 ends in the past"
+          }
+        ]
+      }
+    },
+    {
+      "staff": {
+        "id": "695fac4f021509b57cfeaee8",
+        "name": "Sethu Shongwe",
+        "surname": "Shongwe",
+        "idNumber": "9710315608088",
+        "role": "Intern",
+        "isActive": true,
+        "department": "IT & COMPUTER SCIENCE",
+        "hostCompanyId": "695f71789cf82b5a3c68f659",
+        "hostCompanyName": "SABC NEWS",
+        "createdAt": "2026-01-08T13:08:31.354Z"
+      },
+      "plan": null,
+      "legacyPlan": null,
+      "assignments": [],
+      "currentAssignmentId": null,
+      "history": [],
+      "analysis": {
+        "assignmentCount": 0,
+        "historyCount": 0,
+        "approvalCount": 0,
+        "decisionCount": 0,
+        "issues": [
+          {
+            "code": "MISSING_ROTATION_PLAN",
+            "detail": "No RotationPlan or legacy plan found"
+          }
+        ]
+      }
+    },
+    {
+      "staff": {
+        "id": "6964f9e063699347aee394fa",
+        "name": "Thobeka Moyane",
+        "surname": "Moyane",
+        "idNumber": "9505220227085",
+        "role": "Staff",
+        "isActive": true,
+        "department": "6960abfb47baf75d7ad935e0",
+        "hostCompanyId": "6960ab7b47baf75d7ad9354b",
+        "hostCompanyName": "INTERNSHIP SUCCESS",
+        "createdAt": "2026-01-12T13:40:48.999Z"
+      },
+      "plan": null,
+      "legacyPlan": null,
+      "assignments": [],
+      "currentAssignmentId": null,
+      "history": [],
+      "analysis": {
+        "assignmentCount": 0,
+        "historyCount": 0,
+        "approvalCount": 0,
+        "decisionCount": 0,
+        "issues": [
+          {
+            "code": "MISSING_ROTATION_PLAN",
+            "detail": "No RotationPlan or legacy plan found"
+          }
+        ]
+      }
+    }
+  ]
+}

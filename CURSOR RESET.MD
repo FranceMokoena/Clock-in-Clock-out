@@ -1,6 +1,7 @@
 powershell -ExecutionPolicy Bypass -File .\h.ps1
 
 https://www.youtube.com/watch?v=OFDle2QAGfg
+scrcpy.exe --no-audio
 
 C:\Users\ACER\Downloads\cursor files
 

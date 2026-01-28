@@ -143,15 +143,15 @@
   z-index: 1000;
 }
 
-  .modal-content {
-    background: white;
-    border-radius: 12px;
-    width: 95%;
-    max-width: 1000px;
-    max-height: 92vh;
-    overflow-y: auto;
-    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
-  }
+.modal-content {
+  background: white;
+  border-radius: 12px;
+  width: 95%;
+  max-width: 1000px;
+  max-height: 92vh;
+  overflow-y: auto;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+}
 
 .modal-header {
   display: flex;
@@ -447,12 +447,14 @@
 .error-text {
   color: #b91c1c;
 }
+
 .rotation-section {
   border: 1px solid #e5e7eb;
   border-radius: 12px;
   margin-bottom: 16px;
   background: #fff;
 }
+
 .rotation-current {
   padding: 16px;
   border-bottom: 1px solid #e5e7eb;
@@ -460,12 +462,14 @@
   flex-direction: column;
   gap: 8px;
 }
+
 .rotation-form {
   padding: 16px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
+
 .rotation-select,
 .rotation-textarea {
   border: 1px solid #e2e8f0;
@@ -474,22 +478,26 @@
   font-size: 14px;
   font-family: inherit;
 }
+
 .rotation-textarea {
   min-height: 80px;
   resize: vertical;
 }
+
 .rotation-history {
   padding: 16px;
   border-top: 1px solid #e5e7eb;
   background: #f8fafc;
   border-radius: 0 0 12px 12px;
 }
+
 .rotation-history h5 {
   margin-bottom: 8px;
   font-size: 14px;
   font-weight: 700;
   color: #0f172a;
 }
+
 .rotation-history-item {
   display: flex;
   align-items: center;
@@ -497,17 +505,21 @@
   padding: 8px 0;
   border-bottom: 1px solid #e2e8f0;
 }
+
 .rotation-history-item:last-child {
   border-bottom: none;
 }
+
 .history-dept {
   font-weight: 600;
   color: #1d4ed8;
 }
+
 .history-dates {
   font-size: 12px;
   color: #64748b;
 }
+
 .history-status {
   font-size: 12px;
   padding: 4px 8px;
@@ -516,4 +528,3 @@
   color: #0369a1;
   font-weight: 600;
 }
-

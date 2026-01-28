@@ -31,6 +31,12 @@ const staffSchema = new mongoose.Schema({
     required: true,
     trim: true
   },
+  email: {
+    type: String,
+    required: false,
+    trim: true,
+    lowercase: true
+  },
   role: {
     type: String,
     required: true,

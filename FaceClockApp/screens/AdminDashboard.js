@@ -29,6 +29,7 @@ import * as Sharing from 'expo-sharing';
 import { Asset } from 'expo-asset';
 import { generateDashboardPDF } from '../utils/pdfGenerator';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { AutoReportsSettingsScreen } from '../features/autoReports';
 
 // Global helper function for correction type labels - defined outside component for maximum accessibility
 const getCorrectionTypeLabelGlobal = (type) => {
@@ -70,6 +71,8 @@ export default function AdminDashboard({ navigation, route }) {
   const { unreadCount } = useNotifications();
   const [leaveNotificationViewed, setLeaveNotificationViewed] = useState(false);
   const [correctionsNotificationViewed, setCorrectionsNotificationViewed] = useState(false);
+  const bellShake = useRef(new Animated.Value(0)).current;
+  const bellShakeAnimation = useRef(null);
 
   // Dashboard stats
   const [stats, setStats] = useState(null);
@@ -117,8 +120,44 @@ export default function AdminDashboard({ navigation, route }) {
   const [exportingAllDepartments, setExportingAllDepartments] = useState(false);
   const [exportingAllHostCompanies, setExportingAllHostCompanies] = useState(false);
   const [exportingLeavePDF, setExportingLeavePDF] = useState(false);
+  const [exportingActiveViewPDF, setExportingActiveViewPDF] = useState(false);
   const [pendingLeaveCount, setPendingLeaveCount] = useState(0);
   const [pendingCorrectionsCount, setPendingCorrectionsCount] = useState(0);
+
+  const bellBadgeCount = isHostCompany ? unreadCount : (pendingLeaveCount + pendingCorrectionsCount);
+
+  useEffect(() => {
+    if (!isHostCompany) return;
+    const shouldShake = unreadCount > 0 && activeView !== 'recents';
+
+    if (shouldShake) {
+      if (!bellShakeAnimation.current) {
+        bellShakeAnimation.current = Animated.loop(
+          Animated.sequence([
+            Animated.timing(bellShake, { toValue: -5, duration: 60, useNativeDriver: true }),
+            Animated.timing(bellShake, { toValue: 5, duration: 60, useNativeDriver: true }),
+            Animated.timing(bellShake, { toValue: -4, duration: 60, useNativeDriver: true }),
+            Animated.timing(bellShake, { toValue: 4, duration: 60, useNativeDriver: true }),
+            Animated.timing(bellShake, { toValue: 0, duration: 60, useNativeDriver: true }),
+            Animated.delay(800),
+          ])
+        );
+      }
+      bellShakeAnimation.current.start();
+    } else if (bellShakeAnimation.current) {
+      bellShakeAnimation.current.stop();
+      bellShakeAnimation.current = null;
+      bellShake.setValue(0);
+    }
+
+    return () => {
+      if (bellShakeAnimation.current) {
+        bellShakeAnimation.current.stop();
+        bellShakeAnimation.current = null;
+        bellShake.setValue(0);
+      }
+    };
+  }, [isHostCompany, unreadCount, activeView, bellShake]);
   const [reportsGeneratedCount, setReportsGeneratedCount] = useState(0);
 
   // Attendance Corrections state
@@ -300,6 +339,17 @@ export default function AdminDashboard({ navigation, route }) {
       </div>
     `;
   };
+
+  const sharePdfUri = async (uri, title) => {
+    if (await Sharing.isAvailableAsync()) {
+      await Sharing.shareAsync(uri, {
+        mimeType: 'application/pdf',
+        dialogTitle: title,
+      });
+    } else {
+      Alert.alert('Success', `PDF saved to: ${uri}`);
+    }
+  };
   const [showMonthPicker, setShowMonthPicker] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
 
@@ -417,6 +467,9 @@ export default function AdminDashboard({ navigation, route }) {
         await loadHostCompanies();
       } else if (activeView === 'recents') {
         // Recents view uses its own data hooks; nothing to preload here
+        await Promise.resolve();
+      } else if (activeView === 'settings') {
+        // Settings view uses its own inputs; nothing to preload here
         await Promise.resolve();
       } else if (activeView === 'reports') {
         await loadReportsData();
@@ -2106,6 +2159,177 @@ export default function AdminDashboard({ navigation, route }) {
     }
   };
 
+  const exportStaffListPDF = async () => {
+    if (!staff || staff.length === 0) {
+      return { success: false, error: 'No staff records available to export.' };
+    }
+    try {
+      const rows = staff.map((member) => {
+        const fullName = `${member.name || ''} ${member.surname || ''}`.trim() || 'Unknown';
+        const idNumber = member.idNumber || member._id || 'N/A';
+        const role = member.role || 'Staff';
+        const department = member.department || member.departmentName || 'Not assigned';
+        const hostLabel = member.hostCompanyName
+          || (member.hostCompany && (member.hostCompany.companyName || member.hostCompany.name))
+          || 'N/A';
+        const status = member.isActive === false ? 'Inactive' : 'Active';
+        return `
+          <tr>
+            <td>${fullName}</td>
+            <td>${idNumber}</td>
+            <td>${role}</td>
+            <td>${department}</td>
+            <td>${hostLabel}</td>
+            <td>${status}</td>
+          </tr>
+        `;
+      }).join('');
+
+      const exportedOn = new Date().toLocaleString();
+      const html = `
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="utf-8">
+            <style>
+              ${getWatermarkCSS()}
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto;
+                margin: 0;
+                padding: 24px;
+                color: #1f2937;
+                background: white;
+              }
+              .header {
+                text-align: center;
+                margin-bottom: 20px;
+                border-bottom: 3px solid #3166AE;
+                padding-bottom: 16px;
+              }
+              .header h1 {
+                margin: 0;
+                font-size: 24px;
+                letter-spacing: 1px;
+                color: #1f285a;
+              }
+              .header p {
+                margin: 4px 0 0;
+                color: #4b5563;
+                font-size: 11px;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 16px;
+                font-size: 12px;
+              }
+              th, td {
+                border: 1px solid #e5e7eb;
+                padding: 10px;
+                text-align: left;
+              }
+              th {
+                background-color: #f3f4f6;
+                font-weight: 600;
+                font-size: 11px;
+                color: #374151;
+              }
+              tr:nth-child(even) {
+                background-color: #fafafa;
+              }
+              .footer {
+                margin-top: 28px;
+                font-size: 11px;
+                color: #6b7280;
+                text-align: center;
+              }
+            </style>
+          </head>
+          <body>
+            ${getWatermarkHTML()}
+            <div class="header">
+              <h1>Staff & Intern List</h1>
+              <p>Exported by ${userInfo.name || 'Host Employer'} on ${exportedOn}</p>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>ID Number</th>
+                  <th>Role</th>
+                  <th>Department</th>
+                  <th>Host Company</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${rows}
+              </tbody>
+            </table>
+            <div class="footer">Internship Success – Professional Recruitment, Placement and Management</div>
+          </body>
+        </html>
+      `;
+
+      const { uri } = await Print.printToFileAsync({ html });
+      await sharePdfUri(uri, 'Staff & Intern List');
+      return { success: true };
+    } catch (error) {
+      console.error('Error exporting staff list PDF:', error);
+      return { success: false, error: 'Failed to export staff list' };
+    }
+  };
+
+  const buildDashboardExportPayload = () => ({
+    totalStaff: stats?.totalStaff || 0,
+    clockInsToday: stats?.clockInsToday || 0,
+    currentlyIn: stats?.currentlyIn || 0,
+    lateArrivals: stats?.lateArrivals || 0,
+    pendingLeaveCount: pendingLeaveCount || 0,
+    pendingCorrectionsCount: pendingCorrectionsCount || 0,
+    reportsGeneratedCount: reportsGeneratedCount || 0,
+    lateArrivalsList: stats?.lateArrivalsList || [],
+  });
+
+  const viewExportLabels = {
+    dashboard: 'Dashboard',
+    staff: 'Staff & Intern list',
+    notAccountable: 'Not Accountable log',
+    hostCompanies: 'Host company directory',
+    departments: 'Department list',
+    leaveApplications: 'Leave applications',
+    attendanceCorrections: 'Attendance corrections',
+    reports: 'Case logs',
+    devices: 'Devices',
+    hostCompanyDetails: 'Host company details',
+    recents: 'Recent activity',
+  };
+
+  const handleExportForActiveView = async () => {
+    if (exportingActiveViewPDF) return;
+    setExportingActiveViewPDF(true);
+    const viewLabel = viewExportLabels[activeView] || 'Dashboard';
+    let result = { success: false };
+    try {
+      if (activeView === 'staff') {
+        result = await exportStaffListPDF();
+      } else {
+        result = await generateDashboardPDF(buildDashboardExportPayload(), userInfo.name || 'Admin');
+      }
+
+      if (result.success) {
+        Alert.alert('Success', `${viewLabel} exported as PDF successfully!`);
+      } else {
+        Alert.alert('Error', result.error || `Failed to export ${viewLabel}.`);
+      }
+    } catch (error) {
+      console.error('Error exporting view:', error);
+      Alert.alert('Error', `Failed to export ${viewLabel}: ${error?.message || 'Unknown error'}`);
+    } finally {
+      setExportingActiveViewPDF(false);
+    }
+  };
+
   // Export reports list as PDF (table)
   const exportCaseLogsListPDF = async (reports = []) => {
     try {
@@ -2461,6 +2685,57 @@ export default function AdminDashboard({ navigation, route }) {
       { label: 'Late', value: stats.lateArrivals || 0, color: '#FF9800' },
     ];
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    {/* THE BEGINING OF THE DASHBOARD STATS!!! */ }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     return (
       <ScrollView style={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
         <View style={styles.dashboardContainer}>
@@ -2647,7 +2922,7 @@ export default function AdminDashboard({ navigation, route }) {
                   </View>
                   <Text style={[styles.statValue, dynamicStyles.statValue]}>{reportsGeneratedCount}</Text>
                 </View>
-                    <Text style={[styles.statLabel, dynamicStyles.statLabel]}>Official CaseLogs</Text>
+                <Text style={[styles.statLabel, dynamicStyles.statLabel]}>Official CaseLogs</Text>
               </View>
             </TouchableOpacity>
 
@@ -2747,7 +3022,7 @@ export default function AdminDashboard({ navigation, route }) {
         }
       }
 
-    const cachedPicture = await loadStaffProfile(member._id);
+      const cachedPicture = await loadStaffProfile(member._id);
       const compensation = await loadStaffCompensation(member._id);
       setStaffDetails({
         ...fullDetails,
@@ -3458,35 +3733,35 @@ export default function AdminDashboard({ navigation, route }) {
                 >
                   {/* Name Column with Avatar */}
                   <View style={{ flex: 2.5, flexDirection: 'row', alignItems: 'center' }}>
-                        <TouchableOpacity
-                          onPress={() => openStaffProfileModal(member)}
-                          disabled={!member.profilePicture && !staffProfileCache[member._id]}
-                          style={{
-                            width: 40,
-                            height: 40,
-                            borderRadius: 20,
-                            backgroundColor: theme.primary,
-                            justifyContent: 'center',
-                            alignItems: 'center',
-                            marginRight: 12,
-                            overflow: 'hidden',
-                          }}
-                        >
-                          {(member.profilePicture || staffProfileCache[member._id]) ? (
-                            <Image
-                              source={{ uri: member.profilePicture || staffProfileCache[member._id] }}
-                              style={styles.staffListAvatarImage}
-                            />
-                          ) : (
-                            <Text style={{
-                              color: '#fff',
-                              fontSize: 14,
-                              fontWeight: '700',
-                            }}>
-                              {getInitials(member.name, member.surname)}
-                            </Text>
-                          )}
-                        </TouchableOpacity>
+                    <TouchableOpacity
+                      onPress={() => openStaffProfileModal(member)}
+                      disabled={!member.profilePicture && !staffProfileCache[member._id]}
+                      style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: theme.primary,
+                        justifyContent: 'center',
+                        alignItems: 'center',
+                        marginRight: 12,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {(member.profilePicture || staffProfileCache[member._id]) ? (
+                        <Image
+                          source={{ uri: member.profilePicture || staffProfileCache[member._id] }}
+                          style={styles.staffListAvatarImage}
+                        />
+                      ) : (
+                        <Text style={{
+                          color: '#fff',
+                          fontSize: 14,
+                          fontWeight: '700',
+                        }}>
+                          {getInitials(member.name, member.surname)}
+                        </Text>
+                      )}
+                    </TouchableOpacity>
                     <View style={{ flex: 1 }}>
                       <Text style={{
                         fontSize: 14,
@@ -5164,7 +5439,7 @@ export default function AdminDashboard({ navigation, route }) {
         <ScrollView style={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
           <View style={styles.dashboardContainer}>
             {/* Header */}
-                <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Intern CaseLogs</Text>
+            <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Intern CaseLogs</Text>
             <Text style={[styles.sectionSubtitle, dynamicStyles.sectionSubtitle]}>
               Submit and review formal reports about interns assigned to your company
             </Text>
@@ -5265,7 +5540,7 @@ export default function AdminDashboard({ navigation, route }) {
     // Fallback
     return (
       <View style={styles.emptyContainer}>
-                  <Text style={[styles.emptyText, dynamicStyles.emptyText]}>CaseLogs feature not available</Text>
+        <Text style={[styles.emptyText, dynamicStyles.emptyText]}>CaseLogs feature not available</Text>
       </View>
     );
   };
@@ -10022,18 +10297,7 @@ export default function AdminDashboard({ navigation, route }) {
   };
 
   const renderSettings = () => {
-    return (
-      <ScrollView style={styles.content} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}>
-        <View style={styles.dashboardContainer}>
-          <Text style={[styles.sectionTitle, dynamicStyles.sectionTitle]}>Settings</Text>
-          <View style={[styles.infoCard, dynamicStyles.infoCard]}>
-            <Text style={[styles.infoText, dynamicStyles.infoText]}>
-              Settings feature coming soon. Configure system preferences here.
-            </Text>
-          </View>
-        </View>
-      </ScrollView>
-    );
+    return <AutoReportsSettingsScreen userInfo={userInfo} />;
   };
 
   const renderNotAccountable = () => {
@@ -10339,37 +10603,21 @@ export default function AdminDashboard({ navigation, route }) {
           Internship Success Clock-In Management System
         </Text>
         <View style={styles.headerRight}>
-          {/* Export Dashboard Button */}
+          {/* Export button for current view */}
           <TouchableOpacity
-            onPress={async () => {
-              try {
-                const result = await generateDashboardPDF({
-                  totalStaff: stats.totalStaff || 0,
-                  clockInsToday: stats.clockInsToday || 0,
-                  currentlyIn: stats.currentlyIn || 0,
-                  lateArrivals: stats.lateArrivals || 0,
-                  pendingLeaveCount: pendingLeaveCount || 0,
-                  pendingCorrectionsCount: pendingCorrectionsCount || 0,
-                  reportsGeneratedCount: reportsGeneratedCount || 0,
-                  lateArrivalsList: stats.lateArrivalsList || [],
-                }, userInfo.name || 'Admin');
-
-                if (result.success) {
-                  Alert.alert('✅ Success', 'Dashboard exported as PDF successfully!');
-                } else {
-                  Alert.alert('❌ Error', 'Failed to export dashboard: ' + result.error);
-                }
-              } catch (error) {
-                console.error('Error exporting dashboard:', error);
-                Alert.alert('Error', 'Failed to export dashboard');
-              }
-            }}
+            onPress={handleExportForActiveView}
             style={styles.exportButton}
+            disabled={exportingActiveViewPDF}
           >
-            <Text style={styles.exportIcon}>📄</Text>
+            {exportingActiveViewPDF ? (
+              <ActivityIndicator size="small" color="#fff" />
+            ) : (
+              <Text style={styles.exportIcon}>📤</Text>
+            )}
           </TouchableOpacity>
 
-          {/* Notification Bell */}
+          {/* Notification Bell on the side bar of every dashboard ,intern,staff
+          and admins */}
           <TouchableOpacity
             onPress={() => {
               // Open Recents view when bell is tapped
@@ -10378,11 +10626,13 @@ export default function AdminDashboard({ navigation, route }) {
             }}
             style={styles.notificationButton}
           >
-            <Text style={styles.notificationIcon}>🔔</Text>
-            {(pendingLeaveCount + pendingCorrectionsCount) > 0 && (
+            <Animated.View style={isHostCompany ? { transform: [{ translateX: bellShake }] } : null}>
+              <Text style={styles.notificationIcon}>🔔</Text>
+            </Animated.View>
+            {bellBadgeCount > 0 && (
               <View style={styles.notificationBadge}>
                 <Text style={styles.notificationBadgeText}>
-                  {pendingLeaveCount + pendingCorrectionsCount > 99 ? '99+' : pendingLeaveCount + pendingCorrectionsCount}
+                  {bellBadgeCount > 99 ? '99+' : bellBadgeCount}
                 </Text>
               </View>
             )}
@@ -10496,7 +10746,8 @@ export default function AdminDashboard({ navigation, route }) {
               </Text>
             </TouchableOpacity>
 
-            {/* Register Staff - Available for all users */}
+            {/* Register Staff - Available for all users (interns and staffs,no new admin
+            host companies*/}
             <TouchableOpacity
               style={[
                 styles.sidebarItem,
@@ -10546,7 +10797,7 @@ export default function AdminDashboard({ navigation, route }) {
               ]}>
                 Recents
               </Text>
-              {unreadCount > 0 && (
+              {!isHostCompany && unreadCount > 0 && (
                 <View style={{ marginLeft: 'auto', backgroundColor: '#FF3B30', paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4 }}>
                   <Text style={{ color: '#fff', fontSize: 10, fontWeight: 'bold' }}>{unreadCount > 99 ? '99+' : unreadCount}</Text>
                 </View>
@@ -10733,6 +10984,35 @@ export default function AdminDashboard({ navigation, route }) {
               )}
             </TouchableOpacity>
 
+            {/* THIS IS WHERE SETTINGS START IN THE SIDE BAR OPTIONS */}
+
+            {/* Settings - Available for both admin and host company users */}
+            <TouchableOpacity
+              style={[
+                styles.sidebarItem,
+                dynamicStyles.sidebarItem,
+                activeView === 'settings' && [styles.sidebarItemActive, dynamicStyles.sidebarItemActive]
+              ]}
+              onPress={() => {
+                setActiveView('settings');
+                setSidebarCollapsed(true);
+              }}
+            >
+              <MaterialIcons
+                name="settings"
+                size={20}
+                color={activeView === 'settings' ? '#fff' : theme.text}
+                style={{ marginRight: 12 }}
+              />
+              <Text style={[
+                styles.sidebarItemText,
+                dynamicStyles.sidebarItemText,
+                activeView === 'settings' && [styles.sidebarItemTextActive, dynamicStyles.sidebarItemTextActive]
+              ]}>
+                Settings
+              </Text>
+            </TouchableOpacity>
+
             {/* Admin-only menu items */}
             {isAdmin && (
               <>
@@ -10787,6 +11067,7 @@ export default function AdminDashboard({ navigation, route }) {
               {activeView === 'reports' && renderReports()}
               {activeView === 'recents' && <Recents navigation={navigation} route={{ params: { userInfo } }} onBack={() => setActiveView('dashboard')} />}
               {activeView === 'devices' && renderDevices()}
+              {activeView === 'settings' && renderSettings()}
             </>
           )}
         </View>
@@ -10857,7 +11138,7 @@ export default function AdminDashboard({ navigation, route }) {
                 style={[styles.modalInput, dynamicStyles.modalInput]}
                 value={hostCompanyRegistrationNumber}
                 onChangeText={setHostCompanyRegistrationNumber}
-                placeholder="Enter registration/company number (optional)"
+                placeholder="Enter registration/company number"
                 placeholderTextColor={theme.textTertiary}
               />
 
@@ -10866,7 +11147,7 @@ export default function AdminDashboard({ navigation, route }) {
                 style={[styles.modalInput, dynamicStyles.modalInput]}
                 value={hostCompanyOperatingHours}
                 onChangeText={setHostCompanyOperatingHours}
-                placeholder="e.g., Mon-Fri: 8:00 AM - 5:00 PM (optional)"
+                placeholder="e.g., Mon-Fri: 8:00 AM - 5:00 PM "
                 placeholderTextColor={theme.textTertiary}
               />
 
@@ -10933,7 +11214,7 @@ export default function AdminDashboard({ navigation, route }) {
                 style={[styles.modalInput, dynamicStyles.modalInput]}
                 value={hostCompanyEmail}
                 onChangeText={setHostCompanyEmail}
-                placeholder="Enter email address (optional)"
+                placeholder="Enter email address (required)"
                 placeholderTextColor={theme.textTertiary}
                 keyboardType="email-address"
                 autoCapitalize="none"
@@ -10958,7 +11239,7 @@ export default function AdminDashboard({ navigation, route }) {
                   dynamicStyles.dropdownButtonText,
                   !hostCompanyBusinessType && styles.dropdownButtonPlaceholder
                 ]}>
-                  {hostCompanyBusinessType || 'Select business type (optional)'}
+                  {hostCompanyBusinessType || 'Select business type'}
                 </Text>
                 <Text style={[styles.dropdownArrow, dynamicStyles.dropdownArrow]}>▼</Text>
               </TouchableOpacity>

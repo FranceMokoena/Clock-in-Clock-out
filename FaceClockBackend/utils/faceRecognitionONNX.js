@@ -2886,7 +2886,7 @@ async function checkAndAdjustThresholds() {
  * Validate time-based pattern for clock-in/out
  * ENTERPRISE: Checks if clock time matches expected work hours
  */
-function validateTimePattern(clockType, timestamp) {
+function validateTimePattern(activityType, timestamp) {
   try {
     if (!CONFIG.ENABLE_TIME_VALIDATION) {
       return { valid: true };
@@ -2897,7 +2897,7 @@ function validateTimePattern(clockType, timestamp) {
     const minute = now.getMinutes();
     
     // Only validate clock-in times
-    if (clockType !== 'in') {
+    if (activityType !== 'in') {
       return { valid: true };
     }
     

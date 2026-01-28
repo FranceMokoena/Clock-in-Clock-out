@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('path');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+const overrideDevMode = process.env.FORCE_DESKTOP_PROD === 'true';
+const useDevServer = !overrideDevMode && isDev;
 
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
@@ -31,20 +33,20 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       webSecurity: true
     },
-    icon: path.join(__dirname, 'build', 'icon.png'),
+    icon: path.join(__dirname, 'assets', 'app-icon.ico'),
     titleBarStyle: 'default',
     show: true, // Show immediately
     autoHideMenuBar: true, // Hide menu bar for cleaner look
   });
 
   // Load the app
-  if (isDev) {
+  if (useDevServer) {
     // Set up console logging before loading
     mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
       const levelNames = ['', 'INFO', 'WARNING', 'ERROR'];
       console.log(`[React ${levelNames[level] || 'LOG'}]`, message);
     });
-    
+
     // Open DevTools after a short delay to ensure page is loading
     setTimeout(() => {
       mainWindow.webContents.openDevTools();
@@ -52,16 +54,16 @@ function createWindow() {
     // Load the URL directly - wait-on already confirmed server is ready
     console.log('🚀 Loading React app from http://localhost:3000...');
     mainWindow.loadURL('http://localhost:3000');
-    
+
     // Listen for page load events
     mainWindow.webContents.once('did-finish-load', () => {
       console.log('✅ Page finished loading successfully');
     });
-    
+
     mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
       console.error('❌ Page failed to load:', errorCode, errorDescription);
       console.error('Failed URL:', validatedURL);
-      
+
       // Show error page
       if (errorCode === -105 || errorCode === -106) {
         const errorHtml = `

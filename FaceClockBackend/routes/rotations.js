@@ -10,6 +10,7 @@ const Staff = require('../models/Staff');
 const Department = require('../models/Department');
 const HostCompany = require('../models/HostCompany');
 const Notification = require('../models/Notification');
+const staffCache = require('../utils/staffCache');
 const { computeRotationEvidence } = require('../utils/rotationEvidence');
 const { logAction } = require('../utils/actionLogger');
 
@@ -22,6 +23,14 @@ const DUE_SOON_DAYS = Number.isFinite(Number(process.env.ROTATION_DUE_SOON_DAYS)
 const ROTATION_ATTENDANCE_THRESHOLD = Number.isFinite(Number(process.env.ROTATION_ATTENDANCE_THRESHOLD))
   ? Number(process.env.ROTATION_ATTENDANCE_THRESHOLD)
   : 75;
+const EMPTY_EVIDENCE = {
+  actualHours: null,
+  expectedHours: null,
+  attendanceRate: null,
+  lateCount: null,
+  missedClockOutCount: null,
+  unresolvedCorrectionsCount: null
+};
 
 const getRoleContext = (req = {}) => {
   const query = req.query || {};
@@ -53,6 +62,23 @@ const resolveDepartmentMap = async (departmentIds) => {
     map[dept._id.toString()] = dept.name;
   });
   return map;
+};
+
+const updateStaffDepartment = async ({ userId, departmentId, departmentName }) => {
+  if (!userId) return null;
+  let resolvedName = departmentName || null;
+
+  if (!resolvedName && departmentId && mongoose.Types.ObjectId.isValid(departmentId)) {
+    const department = await Department.findById(departmentId).select('name').lean();
+    resolvedName = department?.name || null;
+  }
+
+  if (!resolvedName) return null;
+  await Staff.findByIdAndUpdate(userId, { department: resolvedName });
+  if (staffCache && typeof staffCache.invalidate === 'function') {
+    staffCache.invalidate();
+  }
+  return resolvedName;
 };
 
 const getCurrentAssignment = (assignments) => {
@@ -202,9 +228,10 @@ const buildTimelinePayload = async (userId) => {
   }
   const departmentMap = await resolveDepartmentMap(departmentIds);
 
-  const supervisorIds = assignments
-    .map((assignment) => assignment.supervisorId)
-    .filter(Boolean);
+  const supervisorIds = [
+    ...assignments.map((assignment) => assignment.supervisorId),
+    ...history.map((entry) => entry.supervisorId)
+  ].filter(Boolean);
   const supervisors = supervisorIds.length
     ? await Staff.find({ _id: { $in: supervisorIds } })
       .select('name surname')
@@ -303,13 +330,7 @@ const buildTimelinePayload = async (userId) => {
       startDate: currentAssignment.startDate || currentAssignment.start,
       endDate: currentAssignment.endDate || currentAssignment.end || new Date()
     })
-    : {
-      actualHours: 0,
-      expectedHours: 0,
-      attendanceRate: 0,
-      lateCount: 0,
-      missedClockOutCount: 0
-    };
+    : { ...EMPTY_EVIDENCE };
 
   return {
     user: {
@@ -391,9 +412,10 @@ const buildDossierPayload = async (userId) => {
 
   const departmentMap = await resolveDepartmentMap(departmentIds);
 
-  const supervisorIds = assignments
-    .map((assignment) => assignment.supervisorId)
-    .filter(Boolean);
+  const supervisorIds = [
+    ...assignments.map((assignment) => assignment.supervisorId),
+    ...history.map((entry) => entry.supervisorId)
+  ].filter(Boolean);
   const supervisors = supervisorIds.length
     ? await Staff.find({ _id: { $in: supervisorIds } })
       .select('name surname')
@@ -415,6 +437,22 @@ const buildDossierPayload = async (userId) => {
   const adminMap = {};
   adminUsers.forEach((admin) => {
     adminMap[admin._id.toString()] = `${admin.name} ${admin.surname}`.trim();
+  });
+  if (adminIds.some((id) => id.toString() === '000000000000000000000001')) {
+    adminMap['000000000000000000000001'] = 'System Administrator';
+  }
+
+  const adminIdStrings = adminIds.map((id) => id.toString());
+  const missingAdminIds = adminIdStrings.filter((id) => !adminMap[id]);
+  const uniqueMissingAdminIds = Array.from(new Set(missingAdminIds));
+  const hostCompanyApprovers = uniqueMissingAdminIds.length
+    ? await HostCompany.find({ _id: { $in: uniqueMissingAdminIds } })
+      .select('name companyName')
+      .lean()
+    : [];
+  const hostCompanyApproverMap = {};
+  hostCompanyApprovers.forEach((company) => {
+    hostCompanyApproverMap[company._id.toString()] = company.companyName || company.name || null;
   });
 
   let normalizedAssignments = assignments.map((assignment) => {
@@ -521,30 +559,46 @@ const buildDossierPayload = async (userId) => {
       startDate: currentAssignment.startDate || new Date(),
       endDate: currentAssignment.endDate || new Date()
     })
-    : {
-      actualHours: 0,
-      expectedHours: 0,
-      attendanceRate: 0,
-      lateCount: 0,
-      missedClockOutCount: 0,
-      unresolvedCorrectionsCount: 0
-    };
+    : { ...EMPTY_EVIDENCE };
 
   const hostCompany = staff.hostCompanyId
     ? await HostCompany.findById(staff.hostCompanyId).select('name companyName').lean()
     : null;
 
   const rotationPath = plan?.rotationPath || [];
-  const historyRows = history.map((entry) => ({
-    id: entry._id,
-    departmentName: departmentMap[entry.departmentId?.toString()] || 'Unknown',
-    startDate: entry.startDate,
-    endDate: entry.endDate,
-    outcome: entry.outcome || 'COMPLETED',
-    evaluationSummary: entry.evaluationSummary || null,
-    decidedAt: entry.decidedAt || entry.endDate || null,
-    adminName: entry.adminId ? (adminMap[entry.adminId.toString()] || null) : null
-  }));
+  const historyRows = history.map((entry) => {
+    const adminId = entry.adminId ? entry.adminId.toString() : null;
+    const supervisorId = entry.supervisorId ? entry.supervisorId.toString() : null;
+    const adminName = adminId ? (adminMap[adminId] || null) : null;
+    const supervisorName = supervisorId ? (supervisorMap[supervisorId] || null) : null;
+    let approvedByRole = null;
+    let approvedByName = null;
+
+    if (adminId && adminMap[adminId]) {
+      approvedByRole = 'Admin';
+      approvedByName = adminMap[adminId];
+    } else if (adminId && hostCompanyApproverMap[adminId]) {
+      approvedByRole = 'Host Company';
+      approvedByName = hostCompanyApproverMap[adminId];
+    } else if (supervisorName) {
+      approvedByRole = 'Host Company';
+      approvedByName = supervisorName;
+    }
+
+    return {
+      id: entry._id,
+      departmentName: departmentMap[entry.departmentId?.toString()] || 'Unknown',
+      startDate: entry.startDate,
+      endDate: entry.endDate,
+      outcome: entry.outcome || 'COMPLETED',
+      evaluationSummary: entry.evaluationSummary || null,
+      decidedAt: entry.decidedAt || entry.endDate || null,
+      adminName,
+      supervisorName,
+      approvedByRole,
+      approvedByName
+    };
+  });
 
   return {
     user: {
@@ -1022,6 +1076,14 @@ router.post('/users/:userId/plan', async (req, res) => {
       createdAssignments.push(assignment);
     }
 
+    const activeAssignmentEntry = createdAssignments.find((entry) => entry?.status === 'ACTIVE');
+    if (activeAssignmentEntry) {
+      await updateStaffDepartment({
+        userId,
+        departmentId: activeAssignmentEntry.departmentId
+      });
+    }
+
     const actionType = existingPlan ? 'ROTATION_PLAN_UPDATED' : 'ROTATION_PLAN_CREATED';
     await logAction(
       actionType,
@@ -1165,6 +1227,13 @@ router.post('/users/:userId/assign', async (req, res) => {
     });
 
     const createdAssignments = await RotationAssignment.insertMany(normalizedAssignments);
+    const activeAssignment = createdAssignments.find((entry) => entry?.status === 'ACTIVE');
+    if (activeAssignment) {
+      await updateStaffDepartment({
+        userId,
+        departmentId: activeAssignment.departmentId
+      });
+    }
 
     await logAction(
       'ROTATION_DEPARTMENT_CHANGED',
@@ -1323,6 +1392,29 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
       return res.status(400).json({ success: false, error: 'Notes are required for this decision' });
     }
 
+    const [staffRecord, departmentRecord] = await Promise.all([
+      Staff.findById(assignment.userId)
+        .select('name surname role hostCompanyId department')
+        .lean(),
+      assignment.departmentId
+        ? Department.findById(assignment.departmentId).select('name').lean()
+        : Promise.resolve(null)
+    ]);
+
+    const staffName = staffRecord ? `${staffRecord.name} ${staffRecord.surname}`.trim() : null;
+    const staffRole = staffRecord?.role || null;
+    const resolvedHostCompanyId = assignment.hostCompanyId || staffRecord?.hostCompanyId || null;
+    const departmentName = departmentRecord?.name || staffRecord?.department || null;
+    const baseLogPayload = {
+      staffId: assignment.userId,
+      staffName: staffName || undefined,
+      role: staffRole || undefined,
+      hostCompanyId: resolvedHostCompanyId,
+      assignmentId: assignment._id,
+      departmentId: assignment.departmentId,
+      departmentName: departmentName || undefined
+    };
+
     const evidence = await computeRotationEvidence({
       userId: assignment.userId,
       startDate: assignment.startDate,
@@ -1336,9 +1428,7 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
       await logAction(
         'ROTATION_EVIDENCE_FAILED',
         {
-          staffId: assignment.userId,
-          hostCompanyId: assignment.hostCompanyId || null,
-          assignmentId: assignment._id,
+          ...baseLogPayload,
           attendanceRate: evidence.attendanceRate,
           unresolvedCorrectionsCount: evidence.unresolvedCorrectionsCount
         },
@@ -1354,9 +1444,7 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
       await logAction(
         'ROTATION_EVIDENCE_FAILED',
         {
-          staffId: assignment.userId,
-          hostCompanyId: assignment.hostCompanyId || null,
-          assignmentId: assignment._id,
+          ...baseLogPayload,
           attendanceRate: evidence.attendanceRate,
           unresolvedCorrectionsCount: evidence.unresolvedCorrectionsCount,
           overrideFlag: true
@@ -1393,10 +1481,7 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
       await logAction(
         'ROTATION_REGRESSED',
         {
-          staffId: assignment.userId,
-          hostCompanyId: assignment.hostCompanyId || null,
-          assignmentId: assignment._id,
-          departmentId: assignment.departmentId
+          ...baseLogPayload
         },
         actorId || null
       );
@@ -1418,10 +1503,7 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
       await logAction(
         'ROTATION_DECLINED',
         {
-          staffId: assignment.userId,
-          hostCompanyId: assignment.hostCompanyId || null,
-          assignmentId: assignment._id,
-          departmentId: assignment.departmentId
+          ...baseLogPayload
         },
         actorId || null
       );
@@ -1457,21 +1539,18 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
       nextAssignment.status = 'ACTIVE';
       await nextAssignment.save();
 
-      const department = await Department.findById(nextAssignment.departmentId).select('name').lean();
-      if (department) {
-        await Staff.findByIdAndUpdate(
-          assignment.userId,
-          { department: department.name }
-        );
-      }
+      const nextDepartmentName = await updateStaffDepartment({
+        userId: assignment.userId,
+        departmentId: nextAssignment.departmentId
+      });
 
       await logAction(
         'ROTATION_DEPARTMENT_CHANGED',
         {
-          staffId: assignment.userId,
-          hostCompanyId: assignment.hostCompanyId || null,
+          ...baseLogPayload,
           assignmentId: nextAssignment._id,
-          departmentId: nextAssignment.departmentId
+          departmentId: nextAssignment.departmentId,
+          departmentName: nextDepartmentName || undefined
         },
         actorId || null
       );
@@ -1485,10 +1564,7 @@ router.patch('/assignments/:assignmentId/status', async (req, res) => {
     await logAction(
       'ROTATION_COMPLETED',
       {
-        staffId: assignment.userId,
-        hostCompanyId: assignment.hostCompanyId || null,
-        assignmentId: assignment._id,
-        departmentId: assignment.departmentId
+        ...baseLogPayload
       },
       actorId || null
     );
@@ -1615,6 +1691,11 @@ router.post('/assignments/:assignmentId/decide', async (req, res) => {
             endDate: nextEntry.endDate
           }
         );
+
+        await updateStaffDepartment({
+          userId: assignment.userId,
+          departmentId: nextEntry.departmentId
+        });
 
         if (staff) {
           await logAction(

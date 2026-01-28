@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   MdMenu,
   MdDashboard,
@@ -10,11 +10,15 @@ import {
   MdWarning,
   MdBarChart,
   MdLogout,
+  MdSecurity,
   MdAutoAwesome,
   MdFileDownload,
   MdPhoneAndroid,
   MdHistory,
+  MdReceiptLong,
+  MdSettings,
 } from 'react-icons/md';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { dashboardAPI, staffAPI, leaveAPI, attendanceAPI, hostCompanyAPI } from '../services/api';
 import { generateDashboardPDF } from '../utils/pdfGenerator';
@@ -31,10 +35,14 @@ import Reports from '../components/Reports';
 import RotationPlan from '../components/RotationPlan';
 import Devices from '../components/Devices';
 import Recents from '../components/Recents';
+import AuditCenter from '../components/AuditCenter/AuditCenter';
+import { AutoReportsSettingsPanel } from '../features/autoReports';
 import './Dashboard.css';
 
 function Dashboard() {
   const { user, logout, isAdmin, isHostCompany } = useAuth();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [activeView, setActiveView] = useState('overview');
   const [showNotifications, setShowNotifications] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
@@ -233,6 +241,14 @@ function Dashboard() {
           <aside className={`dashboard-sidebar ${sidebarCollapsed ? 'collapsed' : ''}`}>
             <nav className="sidebar-nav">
               <SidebarButton icon={<MdDashboard />} label="Overview" active={activeView === 'overview'} onClick={() => setActiveView('overview')} />
+              {(isAdmin || isHostCompany) && (
+                <SidebarButton
+                  icon={<MdReceiptLong />}
+                  label="Attendance Timesheet"
+                  active={location.pathname === '/reports/attendance-timesheet'}
+                  onClick={() => navigate('/reports/attendance-timesheet')}
+                />
+              )}
               <SidebarButton icon={<MdHistory />} label="Recents" active={activeView === 'recents'} onClick={() => setActiveView('recents')} />
               <SidebarButton icon={<MdPeople />} label="Staff & Interns" active={activeView === 'staff'} onClick={() => setActiveView('staff')} />
               <SidebarButton icon={<MdAssignment />} label="Leave Applications" badge={pendingLeaveCount} active={activeView === 'leaveApplications'} onClick={() => setActiveView('leaveApplications')} />
@@ -242,7 +258,12 @@ function Dashboard() {
               <SidebarButton icon={<MdWarning />} label="Not Accountable" active={activeView === 'notAccountable'} onClick={() => setActiveView('notAccountable')} />
               <SidebarButton icon={<MdAutoAwesome />} label="Rotation Plan" active={activeView === 'rotationPlan'} onClick={() => setActiveView('rotationPlan')} />
               <SidebarButton icon={<MdBarChart />} label="Case Logs" active={activeView === 'reports'} onClick={() => setActiveView('reports')} />
+
               <SidebarButton icon={<MdPhoneAndroid />} label="Devices" active={activeView === 'devices'} onClick={() => setActiveView('devices')} />
+              {(isAdmin || isHostCompany) && (
+                <SidebarButton icon={<MdSecurity />} label="Audit Center" active={activeView === 'auditCenter'} onClick={() => setActiveView('auditCenter')} />
+              )}
+              <SidebarButton icon={<MdSettings />} label="Settings" active={activeView === 'settings'} onClick={() => setActiveView('settings')} />
             </nav>
           </aside>
 
@@ -258,6 +279,8 @@ function Dashboard() {
             {activeView === 'notAccountable' && <NotAccountable isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
             {activeView === 'rotationPlan' && <RotationPlan isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
             {activeView === 'reports' && <Reports isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'auditCenter' && <AuditCenter isAdmin={isAdmin} hostCompanyId={hostCompanyId} isHostCompany={isHostCompany} />}
+            {activeView === 'settings' && <AutoReportsSettingsPanel user={user} isHostCompany={isHostCompany} />}
           </main>
         </div>
       </div>

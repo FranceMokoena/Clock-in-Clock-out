@@ -10,8 +10,10 @@ const locationsRoutes = require('./routes/locations');
 const internReportsRoutes = require('./routes/internReports');
 const notificationsRoutes = require('./routes/notifications');
 const rotationsRoutes = require('./routes/rotations');
+const reportSettingsRoutes = require('./routes/reportSettings');
 const staffCache = require('./utils/staffCache');
 const eventEmitter = require('./utils/eventEmitter');
+const autoReports = require('./modules/autoReports');
 const API_BASE_URL = process.env.API_BASE_URL;
 
 
@@ -99,6 +101,7 @@ app.use('/api/locations', locationsRoutes);
 app.use('/api/intern-reports', internReportsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/rotations', rotationsRoutes);
+app.use('/api/report-settings', reportSettingsRoutes);
 
 // Health check - supports GET, POST, OPTIONS
 const healthHandler = (req, res) => {
@@ -153,7 +156,10 @@ const apiRootHandler = (req, res) => {
       rotationAssign: 'POST /api/rotations/users/:userId/assign',
       rotationEvaluate: 'POST /api/rotations/assignments/:assignmentId/evaluate',
       rotationStatus: 'PATCH /api/rotations/assignments/:assignmentId/status',
-      rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide'
+      rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide',
+      reportSettings: 'GET/POST /api/report-settings',
+      reportSettingsSmtpStatus: 'GET /api/report-settings/smtp/status',
+      reportSettingsSmtpTest: 'POST /api/report-settings/smtp/test'
     }
   });
 };
@@ -192,7 +198,10 @@ app.all('/', (req, res) => {
       rotationAssign: 'POST /api/rotations/users/:userId/assign',
       rotationEvaluate: 'POST /api/rotations/assignments/:assignmentId/evaluate',
       rotationStatus: 'PATCH /api/rotations/assignments/:assignmentId/status',
-      rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide'
+      rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide',
+      reportSettings: 'GET/POST /api/report-settings',
+      reportSettingsSmtpStatus: 'GET /api/report-settings/smtp/status',
+      reportSettingsSmtpTest: 'POST /api/report-settings/smtp/test'
     }
   });
 });
@@ -230,7 +239,10 @@ app.use((req, res) => {
       'POST /api/rotations/users/:userId/assign',
       'POST /api/rotations/assignments/:assignmentId/evaluate',
       'PATCH /api/rotations/assignments/:assignmentId/status',
-      'POST /api/rotations/assignments/:assignmentId/decide'
+      'POST /api/rotations/assignments/:assignmentId/decide',
+      'GET/POST /api/report-settings',
+      'GET /api/report-settings/smtp/status',
+      'POST /api/report-settings/smtp/test'
     ]
   });
 });
@@ -248,6 +260,7 @@ async function startServer() {
   console.log('📦 Warming staff cache...');
   await staffCache.preload();
   staffCache.startBackgroundRefresh();
+  autoReports.reportScheduler.start();
 
   const PORT = process.env.PORT || 5000;
   server.listen(PORT, '0.0.0.0', () => {

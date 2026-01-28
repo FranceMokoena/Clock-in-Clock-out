@@ -17,6 +17,7 @@ import { useTheme } from '../../context/ThemeContext';
 import axios from 'axios';
 import API_BASE_URL from '../../config/api';
 import { getDeviceHeaders } from '../../utils/deviceInfo';
+import { ensureNotificationConnection } from '../../utils/notificationHandler';
 
 export default function InternLogin({ navigation }) {
   const { theme } = useTheme();
@@ -70,6 +71,7 @@ export default function InternLogin({ navigation }) {
       if (response.data && response.data.success) {
         // Store user info and navigate to dashboard
         const userInfo = response.data.user;
+        await ensureNotificationConnection(userInfo.id, userInfo.type || userInfo.role, API_BASE_URL);
         navigation.navigate('InternDashboard', { userInfo });
       } else {
         showProfessionalMessage(

@@ -7,7 +7,7 @@
 }
 
 .not-accountable-container:hover {
-  box-shadow: 0 8px 20px rgba(49, 102, 174, 0.12);
+  box-shadow: 0 8px 20px rgba(94, 105, 121, 0.12);
 }
 
 .not-accountable-header {
@@ -96,3 +96,8 @@
   font-weight: 600;
 }
 
+.modal-header {
+  background-color: #658fc9;
+  color: #fff;
+  padding: 20px 24px;
+}

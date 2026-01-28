@@ -87,7 +87,12 @@ router.get('/', async (req, res) => {
     const notifications = await Notification.find(filter)
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
-      .skip(parseInt(skip));
+      .skip(parseInt(skip))
+      .populate('subjectUserId', 'name surname role department')
+      .populate('relatedEntities.staffId', 'name surname role department')
+      .populate('relatedEntities.hostCompanyId', 'name companyName')
+      .populate('relatedEntities.departmentId', 'name')
+      .lean();
 
     const total = await Notification.countDocuments(filter);
 

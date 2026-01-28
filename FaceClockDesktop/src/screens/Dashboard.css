@@ -30,7 +30,8 @@
   margin: 0;
 }
 
-html, body {
+html,
+body {
   scroll-behavior: smooth;
 }
 
@@ -77,6 +78,7 @@ html, body {
     opacity: 0;
     transform: translateY(-8px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -293,6 +295,7 @@ html, body {
     opacity: 0;
     transform: translateX(-20px);
   }
+
   to {
     opacity: 1;
     transform: translateX(0);
@@ -344,6 +347,7 @@ html, body {
     opacity: 0;
     transform: translateY(20px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -395,6 +399,7 @@ html, body {
     opacity: 0;
     transform: translateY(15px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -419,6 +424,7 @@ html, body {
     opacity: 0;
     transform: scale(0.9);
   }
+
   to {
     opacity: 1;
     transform: scale(1);
@@ -435,6 +441,7 @@ html, body {
     opacity: 0;
     transform: scale(0.8) rotate(-180deg);
   }
+
   to {
     opacity: 1;
     transform: scale(1) rotate(0deg);
@@ -513,6 +520,7 @@ html, body {
     opacity: 0;
     transform: translateY(-10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -713,7 +721,7 @@ html, body {
 .action-label {
   font-size: 14px;
   font-weight: 600;
-  color: #254E8C;
+  color: #658fc9;
   text-align: center;
 }
 
@@ -748,4 +756,3 @@ html, body {
   background: linear-gradient(135deg, rgba(49, 102, 174, 0.04) 0%, rgba(49, 102, 174, 0.01) 100%);
   border-color: #3166AE;
 }
-

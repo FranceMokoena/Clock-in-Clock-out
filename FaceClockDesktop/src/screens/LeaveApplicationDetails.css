@@ -1,0 +1,70 @@
+.leave-details-page {
+  min-height: 100vh;
+  background: #f4f6fb;
+  padding: 32px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.leave-details-page .details-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.leave-details-page .details-header h2 {
+  margin: 0;
+  color: #658fc9;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.leave-detail-panel {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+}
+
+.leave-detail-panel .modal-header {
+  background-color: #658fc9;
+  color: #fff;
+  padding: 20px 24px;
+}
+
+.leave-detail-panel .modal-header h3 {
+  font-size: 20px;
+  margin: 0;
+}
+
+.leave-detail-panel .modal-header button {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  color: white;
+  font-size: 20px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.leave-detail-panel .modal-body {
+  background: #fff;
+  padding: 24px;
+}
+
+.leave-detail-panel .details-section {
+  max-width: 100%;
+}
+
+.leave-detail-panel .info-banner {
+  margin: 0;
+}

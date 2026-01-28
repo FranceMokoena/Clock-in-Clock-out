@@ -10,9 +10,59 @@ if ($expoProcesses) {
     Write-Host "⚠️  Found existing processes. Kill them first if needed." -ForegroundColor Yellow
 }
 
-# Set the backend IP environment variable
-$env:EXPO_PUBLIC_BACKEND_IP = "192.168.0.113"
-$env:EXPO_PUBLIC_API_URL = "http://192.168.0.113:5000/api"
+# Detect the active IPv4 address (prefer interface with default gateway)
+$localIp = $null
+try {
+    $defaultRoute = Get-NetRoute -DestinationPrefix "0.0.0.0/0" |
+        Where-Object { $_.NextHop -ne "0.0.0.0" } |
+        Sort-Object -Property RouteMetric, InterfaceMetric
+    if ($defaultRoute) {
+        $ifaceIndex = $defaultRoute[0].InterfaceIndex
+        $addr = Get-NetIPAddress -InterfaceIndex $ifaceIndex -AddressFamily IPv4 |
+            Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' } |
+            Select-Object -First 1
+        if ($addr) {
+            $localIp = $addr.IPAddress
+        }
+    }
+} catch {
+    $localIp = $null
+}
+
+if (-not $localIp) {
+    $config = Get-NetIPConfiguration |
+        Where-Object { $_.IPv4Address -and $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
+        Sort-Object -Property InterfaceMetric
+    if ($config) {
+        $wifi = $config | Where-Object { $_.InterfaceAlias -match 'Wi-Fi|Wireless' }
+        if ($wifi) {
+            $localIp = $wifi[0].IPv4Address.IPAddress
+        } else {
+            $localIp = $config[0].IPv4Address.IPAddress
+        }
+    }
+}
+
+if (-not $localIp) {
+    $addr = Get-NetIPAddress -AddressFamily IPv4 |
+        Where-Object { $_.IPAddress -notlike '169.254.*' -and $_.IPAddress -ne '127.0.0.1' } |
+        Sort-Object -Property InterfaceMetric |
+        Select-Object -First 1
+    if ($addr) {
+        $localIp = $addr.IPAddress
+    }
+}
+
+if (-not $localIp) {
+    Write-Host "Could not detect a local IPv4 address. Set EXPO_PUBLIC_BACKEND_IP manually." -ForegroundColor Red
+    exit 1
+}
+
+# Set environment variables for Expo and the backend
+$env:EXPO_PUBLIC_BACKEND_IP = $localIp
+$env:EXPO_PUBLIC_API_URL = "http://$localIp:5000/api"
+$env:EXPO_DEV_SERVER_HOST = $localIp
+$env:REACT_NATIVE_PACKAGER_HOSTNAME = $localIp
 
 Write-Host ""
 Write-Host "📌 Backend IP: $env:EXPO_PUBLIC_BACKEND_IP" -ForegroundColor Cyan
