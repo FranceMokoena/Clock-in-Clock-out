@@ -12,7 +12,7 @@ export const initializeSocket = (recipientId, recipientType) => {
     return socket;
   }
 
-  socket = io(API_BASE_URL, {
+  const activeSocket = io(API_BASE_URL, {
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
@@ -24,22 +24,24 @@ export const initializeSocket = (recipientId, recipientType) => {
     }
   });
 
-  socket.on('connect', () => {
+  socket = activeSocket;
+
+  activeSocket.on('connect', () => {
     console.log('✅ Connected to notification server');
     console.log(`📌 Registered as: ${recipientType} (${recipientId})`);
     // Register this client for notifications
-    socket.emit('register', { recipientId, recipientType });
+    activeSocket.emit('register', { recipientId, recipientType });
   });
 
-  socket.on('disconnect', () => {
+  activeSocket.on('disconnect', () => {
     console.log('❌ Disconnected from notification server');
   });
 
-  socket.on('error', (error) => {
+  activeSocket.on('error', (error) => {
     console.error('Socket error:', error);
   });
 
-  return socket;
+  return activeSocket;
 };
 
 /**
@@ -231,19 +233,19 @@ export const subscribeToRealTimeNotifications = (callback) => {
  * Disconnect from socket
  */
 export const disconnectSocket = () => {
-  if (socket && socket.connected) {
-    socket.disconnect();
-    socket = null;
-  }
+  if (!socket) return;
+  socket.off();
+  socket.disconnect();
+  socket = null;
 };
 
 /**
- * Get socket instance
+ * Get socket instance for notification emission
  */
 export const getSocket = () => socket;
 
 /**
- * Fetch notifications from the backend
+ * Fetch notifications from the backend for a recipient
  */
 export const fetchNotifications = async ({ recipientId, recipientType, limit = 50, skip = 0 }) => {
   try {
@@ -270,7 +272,7 @@ export const fetchNotifications = async ({ recipientId, recipientType, limit = 5
 };
 
 /**
- * Get unread notification count
+ * Get unread notification count for a recipient
  */
 export const getUnreadCount = async ({ recipientId, recipientType }) => {
   try {
@@ -294,7 +296,7 @@ export const getUnreadCount = async ({ recipientId, recipientType }) => {
 };
 
 /**
- * Create a new notification (admin/backend use)
+ * Create a new notification (admin/backend use) for a recipient
  */
 export const createNotification = async (notification) => {
   try {

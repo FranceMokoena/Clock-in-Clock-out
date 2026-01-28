@@ -175,7 +175,7 @@ function StaffList({ hostCompanyId, isHostCompany }) {
                 <th>Role</th>
                 <th>Department</th>
                 <th>Company</th>
-                <th>Status</th>
+                <th>Clock Status</th>
 
                 <th>Actions</th>
               </tr>
@@ -201,8 +201,8 @@ function StaffList({ hostCompanyId, isHostCompany }) {
                   <td>{member.department || 'N/A'}</td>
                   <td>{member.hostCompanyName || 'N/A'}</td>
                   <td>
-                    <span className={`status-badge ${member.isActive ? 'active' : 'inactive'}`}>
-                      {member.isActive ? 'Active' : 'Inactive'}
+                    <span className={`status-badge ${member.isClockedIn ? 'active' : 'inactive'}`}>
+                      {member.isClockedIn ? 'Active' : 'Inactive'}
                     </span>
                   </td>
 

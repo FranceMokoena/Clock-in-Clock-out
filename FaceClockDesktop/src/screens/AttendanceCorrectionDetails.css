@@ -36,6 +36,10 @@
   background-color: #658fc9;
   color: #fff;
   padding: 20px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 
 .correction-detail-panel .modal-header h3 {
@@ -54,6 +58,34 @@
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.correction-detail-panel .modal-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.correction-detail-panel .export-pdf-btn {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.correction-detail-panel .export-pdf-btn svg {
+  font-size: 18px;
+}
+
+.correction-detail-panel .export-pdf-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.correction-detail-panel .export-pdf-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .correction-detail-panel .modal-body {

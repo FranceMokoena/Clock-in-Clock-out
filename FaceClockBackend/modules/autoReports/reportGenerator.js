@@ -13,11 +13,65 @@ const resolveExpectedClockIn = (staff) => {
   return null;
 };
 
+const resolveExpectedClockOut = (staff) => {
+  if (staff.clockOutTime) return staff.clockOutTime;
+  const hostCompany = staff.hostCompanyId;
+  if (hostCompany && hostCompany.defaultClockOutTime) return hostCompany.defaultClockOutTime;
+  return null;
+};
+
+const resolveBreakStart = (staff) => {
+  if (staff.breakStartTime) return staff.breakStartTime;
+  const hostCompany = staff.hostCompanyId;
+  if (hostCompany && hostCompany.defaultBreakStartTime) return hostCompany.defaultBreakStartTime;
+  return null;
+};
+
+const resolveBreakEnd = (staff) => {
+  if (staff.breakEndTime) return staff.breakEndTime;
+  const hostCompany = staff.hostCompanyId;
+  if (hostCompany && hostCompany.defaultBreakEndTime) return hostCompany.defaultBreakEndTime;
+  return null;
+};
+
 const resolveHostCompanyName = (staff) => {
   const hostCompany = staff.hostCompanyId;
   if (!hostCompany) return 'N/A';
   return hostCompany.companyName || hostCompany.name || 'N/A';
 };
+
+const buildStaffDetails = (staff) => ({
+  staffId: staff._id.toString(),
+  name: staff.name,
+  surname: staff.surname,
+  role: staff.role,
+  idNumber: staff.idNumber,
+  email: staff.email,
+  phoneNumber: staff.phoneNumber,
+  department: staff.department,
+  hostCompanyName: resolveHostCompanyName(staff),
+  mentorName: staff.mentorName,
+  location: staff.location,
+  locationAddress: staff.locationAddress,
+  locationLatitude: staff.locationLatitude,
+  locationLongitude: staff.locationLongitude,
+  expectedClockIn: resolveExpectedClockIn(staff) || null,
+  expectedClockOut: resolveExpectedClockOut(staff) || null,
+  breakStartTime: resolveBreakStart(staff) || null,
+  breakEndTime: resolveBreakEnd(staff) || null,
+  extraHoursStartTime: staff.extraHoursStartTime || null,
+  extraHoursEndTime: staff.extraHoursEndTime || null,
+  expectedWorkingDaysPerWeek: staff.expectedWorkingDaysPerWeek,
+  expectedWorkingDaysPerMonth: staff.expectedWorkingDaysPerMonth,
+  expectedHoursPerDay: staff.expectedHoursPerDay,
+  expectedWeeklyHours: staff.expectedWeeklyHours,
+  expectedMonthlyHours: staff.expectedMonthlyHours,
+  stipendAmount: staff.stipendAmount,
+  isActive: staff.isActive,
+  createdAt: staff.createdAt,
+  rotationStatus: staff.rotationPlan?.status,
+  rotationDepartment: staff.rotationPlan?.currentDepartment?.departmentName,
+});
 
 const buildDayEntry = (dateKey) => ({
   date: dateKey,
@@ -132,7 +186,8 @@ const buildTimesheetData = async ({ ownerType, ownerId, periodStart, periodEnd, 
 
   const staffReports = staffList.map((staff) => {
     const staffId = staff._id.toString();
-    const expectedClockIn = resolveExpectedClockIn(staff);
+    const staffDetails = buildStaffDetails(staff);
+    const expectedClockIn = staffDetails.expectedClockIn;
 
     const days = Array.from(dayMap.entries())
       .filter(([key]) => key.startsWith(`${staffId}:`))
@@ -150,13 +205,7 @@ const buildTimesheetData = async ({ ownerType, ownerId, periodStart, periodEnd, 
     totalMinutes += staffTotals.totalMinutes;
 
     return {
-      staffId: staffId,
-      name: staff.name,
-      surname: staff.surname,
-      role: staff.role,
-      department: staff.department,
-      hostCompanyName: resolveHostCompanyName(staff),
-      expectedClockIn: expectedClockIn || null,
+      ...staffDetails,
       days,
       totals: staffTotals,
     };
@@ -193,6 +242,7 @@ const buildSummaryReport = async ({ ownerType, ownerId, periodStart, periodEnd, 
     periodKey,
     timezone,
     generatedAt: new Date(),
+    filters,
     summary: {
       ...data.summary,
       totalHours: Number((data.summary.totalMinutes / 60).toFixed(2)),
@@ -204,7 +254,8 @@ const buildSummaryReport = async ({ ownerType, ownerId, periodStart, periodEnd, 
 const buildLateClockInReport = async ({ staff, timestamp, timeDiffMinutes, ownerType, ownerId, timezone, graceMinutes }) => {
   const eventTime = DateTime.fromJSDate(timestamp).setZone(timezone);
   const dateKey = formatDate(eventTime);
-  const expectedClockIn = resolveExpectedClockIn(staff);
+  const staffDetails = buildStaffDetails(staff);
+  const expectedClockIn = staffDetails.expectedClockIn;
 
   return {
     reportType: 'late',
@@ -223,13 +274,7 @@ const buildLateClockInReport = async ({ staff, timestamp, timeDiffMinutes, owner
       totalHours: 0,
     },
     staff: [{
-      staffId: staff._id.toString(),
-      name: staff.name,
-      surname: staff.surname,
-      role: staff.role,
-      department: staff.department,
-      hostCompanyName: resolveHostCompanyName(staff),
-      expectedClockIn: expectedClockIn || null,
+      ...staffDetails,
       days: [{
         date: dateKey,
         clockIn: formatTime(eventTime),
@@ -249,7 +294,7 @@ const buildLateClockInReport = async ({ staff, timestamp, timeDiffMinutes, owner
 };
 
 const buildMissingClockInReport = async ({ staff, dateKey, ownerType, ownerId, timezone }) => {
-  const expectedClockIn = resolveExpectedClockIn(staff);
+  const staffDetails = buildStaffDetails(staff);
   return {
     reportType: 'missing',
     ownerType,
@@ -267,13 +312,7 @@ const buildMissingClockInReport = async ({ staff, dateKey, ownerType, ownerId, t
       totalHours: 0,
     },
     staff: [{
-      staffId: staff._id.toString(),
-      name: staff.name,
-      surname: staff.surname,
-      role: staff.role,
-      department: staff.department,
-      hostCompanyName: resolveHostCompanyName(staff),
-      expectedClockIn: expectedClockIn || null,
+      ...staffDetails,
       days: [{
         date: dateKey,
         clockIn: null,

@@ -269,29 +269,40 @@
 }
 
 /* Badge */
-.badge {
-  display: inline-block;
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   padding: 6px 12px;
-  border-radius: 20px;
+  border-radius: 999px;
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.6px;
+  border: 2px solid transparent;
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.05);
 }
 
-.badge-success {
-  background: #C8E6C9;
-  color: #1B5E20;
+.status-icon {
+  font-size: 15px;
 }
 
-.badge-warning {
-  background: #FFE0B2;
-  color: #E65100;
+.status-pill--approved {
+  background: #D1FAE5;
+  color: #065F46;
+  border-color: #10B981;
 }
 
-.badge-danger {
-  background: #FFCDD2;
-  color: #B71C1C;
+.status-pill--pending {
+  background: #FFEDD5;
+  color: #9A3412;
+  border-color: #FB923C;
+}
+
+.status-pill--rejected {
+  background: #FEE2E2;
+  color: #991B1B;
+  border-color: #EF4444;
 }
 
 /* Empty State */

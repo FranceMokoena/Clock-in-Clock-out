@@ -9,6 +9,17 @@ node_modules/
 # Production
 /build
 /dist
+# Never commit secrets
+.env
+.env.*
+**/.env
+**/.env.*
+
+
+
+
+
+
 
 # Misc
 .DS_Store

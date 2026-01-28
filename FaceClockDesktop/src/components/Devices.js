@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { MdDelete, MdCheckCircle, MdRefresh, MdChevronRight, MdClose } from 'react-icons/md';
+import { MdDelete, MdCheckCircle, MdRefresh, MdChevronRight, MdClose, MdWarning } from 'react-icons/md';
 import { devicesAPI } from '../services/api';
 import './Devices.css';
 
@@ -127,13 +127,28 @@ function Devices({ isAdmin, hostCompanyId, isHostCompany }) {
   const getStatusBadge = (status) => {
     switch (status) {
       case 'pending':
-        return <span className="badge badge-warning">Pending</span>;
+        return (
+          <span className="status-pill status-pill--pending">
+            <MdWarning className="status-icon" />
+            Pending Approval
+          </span>
+        );
       case 'trusted':
-        return <span className="badge badge-success">Approved</span>;
+        return (
+          <span className="status-pill status-pill--approved">
+            <MdCheckCircle className="status-icon" />
+            Approved
+          </span>
+        );
       case 'revoked':
-        return <span className="badge badge-danger">Rejected</span>;
+        return (
+          <span className="status-pill status-pill--rejected">
+            <MdDelete className="status-icon" />
+            Rejected
+          </span>
+        );
       default:
-        return <span className="badge">{status}</span>;
+        return <span className="status-pill">{status}</span>;
     }
   };
 
