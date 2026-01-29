@@ -1,5 +1,14 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { hostCompanyAPI, notificationAPI, notAccountableAPI } from '../../services/api';
+import {
+  dashboardAPI,
+  hostCompanyAPI,
+  notificationAPI,
+  notAccountableAPI,
+  reportRunsAPI,
+  reportSettingsAPI,
+  staffAPI,
+  systemAPI,
+} from '../../services/api';
 import './AuditCenter.css';
 
 // Endpoints consulted:
@@ -35,6 +44,28 @@ const shorten = (value, max = 12) => {
   if (!value) return '-';
   const text = String(value);
   return text.length <= max ? text : `${text.slice(0, max)}...`;
+};
+
+const formatNumber = (value) => {
+  if (value === null || value === undefined || Number.isNaN(value)) return '-';
+  return new Intl.NumberFormat('en-US').format(value);
+};
+
+const formatUptime = (seconds) => {
+  if (!Number.isFinite(seconds)) return '-';
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  if (days > 0) return `${days}d ${hours}h ${minutes}m`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+};
+
+const formatDateOnly = (value) => {
+  if (!value) return '-';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '-';
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
 };
 
 const mapSeverityToCategory = (value) => {
@@ -184,24 +215,48 @@ const resolveReasonLabel = (entry) => {
     || 'Unknown issue';
 };
 
-const getActionTypeText = (entry) => {
-  const fallback = entry?.data?.payload?.actionType
-    || entry?.data?.actionType
-    || entry?.actionData?.actionType
-    || entry?.type
-    || entry?.title
-    || '';
-  return toUpper(fallback);
+
+const ERROR_KEYWORDS = [
+  'ERROR',
+  'FAILED',
+  'FAIL',
+  'EXCEPTION',
+  'TIMEOUT',
+  'REJECTED',
+  'DENIED',
+  'MISSING',
+  'ISSUE',
+];
+
+const isErrorLikeEntry = (entry) => {
+  const severity = mapSeverityToCategory(resolveSeverity(entry));
+  if (severity === 'CRITICAL') return true;
+  const haystack = [
+    entry?.title,
+    entry?.message,
+    resolveActionType(entry),
+    resolveReasonLabel(entry),
+    entry?.type,
+  ].join(' ');
+  return ERROR_KEYWORDS.some((keyword) => toUpper(haystack).includes(keyword));
 };
 
-const getNormalizedEntryText = (entry) => (
-  `${getActionTypeText(entry)} ${toUpper(resolveReasonLabel(entry))}`
-);
+const humanizeReportType = (value) => {
+  const key = String(value || '').toLowerCase();
+  if (key === 'weekly') return 'Weekly summary';
+  if (key === 'monthly') return 'Monthly summary';
+  if (key === 'late') return 'Late clock-in';
+  if (key === 'missing') return 'Missing clock-in';
+  return key ? key.replace(/_/g, ' ') : 'Report';
+};
 
-const matchesKeywords = (entry, keywords = []) => {
-  if (!Array.isArray(keywords) || keywords.length === 0) return false;
-  const haystack = getNormalizedEntryText(entry);
-  return keywords.some((keyword) => haystack.includes(toUpper(keyword)));
+const normalizeReportStatus = (status) => {
+  const key = String(status || '').toLowerCase();
+  if (key === 'sent') return { label: 'Sent', severity: 'info' };
+  if (key === 'generated') return { label: 'Generated', severity: 'info' };
+  if (key === 'queued') return { label: 'Queued', severity: 'warning' };
+  if (key === 'failed') return { label: 'Failed', severity: 'critical' };
+  return { label: status || 'Unknown', severity: 'warning' };
 };
 
 const renderResultCell = (entry) => {
@@ -243,6 +298,7 @@ const extractHostId = (entry) => (
 );
 function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
   const defaultRange = getRangeDates('7d');
+  const canViewDeveloperReports = Boolean(isAdmin);
   const [entries, setEntries] = useState([]);
   const [eventLoading, setEventLoading] = useState(false);
   const [eventError, setEventError] = useState('');
@@ -267,6 +323,17 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
   const [hostCompaniesLoading, setHostCompaniesLoading] = useState(false);
   const [hostCompaniesError, setHostCompaniesError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
+  const [overview, setOverview] = useState(null);
+  const [overviewLoading, setOverviewLoading] = useState(false);
+  const [overviewError, setOverviewError] = useState('');
+  const [staffList, setStaffList] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(false);
+  const [staffError, setStaffError] = useState('');
+  const [userQuery, setUserQuery] = useState('');
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [reportRuns, setReportRuns] = useState([]);
+  const [reportRunsLoading, setReportRunsLoading] = useState(false);
+  const [reportRunsError, setReportRunsError] = useState('');
 
   const hostCompanyMap = useMemo(() => {
     const map = {};
@@ -285,6 +352,12 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
       setDateTo(formatDateInput(range.to));
     }
   }, [datePreset]);
+
+  useEffect(() => {
+    if (!canViewDeveloperReports && activeTab === 'developerReports') {
+      setActiveTab('eventLog');
+    }
+  }, [activeTab, canViewDeveloperReports]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -375,6 +448,86 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
       setDetectorLoading(false);
     }
   }, [dateTo, isAdmin, isHostCompany, hostCompanyId, hostCompanyFilter, scopedHostId]);
+
+  const fetchDeveloperOverview = useCallback(async () => {
+    if (!isAdmin) return;
+    setOverviewLoading(true);
+    setOverviewError('');
+    try {
+      const hostId = scopedHostId();
+      const [health, cacheStats, stats, smtpStatus] = await Promise.all([
+        systemAPI.getHealth(),
+        systemAPI.getCacheStats(),
+        dashboardAPI.getStats(hostId || null),
+        reportSettingsAPI.getSmtpStatus(),
+      ]);
+      setOverview({
+        health,
+        cache: cacheStats?.cache || null,
+        stats: stats?.stats || null,
+        smtp: smtpStatus?.status || null,
+      });
+    } catch (error) {
+      setOverview(null);
+      setOverviewError('Failed to load system overview.');
+    } finally {
+      setOverviewLoading(false);
+    }
+  }, [isAdmin, scopedHostId]);
+
+  const fetchStaffList = useCallback(async () => {
+    if (!isAdmin) return;
+    setStaffLoading(true);
+    setStaffError('');
+    try {
+      const hostId = scopedHostId();
+      const params = hostId ? { hostCompanyId: hostId } : {};
+      const response = await staffAPI.getList(params);
+      if (response?.success) {
+        setStaffList(Array.isArray(response.staff) ? response.staff : []);
+      } else {
+        setStaffList([]);
+        setStaffError(response?.error || 'Failed to load staff list.');
+      }
+    } catch (error) {
+      setStaffList([]);
+      setStaffError('Failed to load staff list.');
+    } finally {
+      setStaffLoading(false);
+    }
+  }, [isAdmin, scopedHostId]);
+
+  const fetchReportRuns = useCallback(async () => {
+    if (!isAdmin) return;
+    setReportRunsLoading(true);
+    setReportRunsError('');
+    try {
+      const hostId = scopedHostId();
+      const params = {
+        limit: 25,
+      };
+      if (hostId) params.hostCompanyId = hostId;
+      const response = await reportRunsAPI.getAll(params);
+      if (response?.success) {
+        setReportRuns(Array.isArray(response.runs) ? response.runs : []);
+      } else {
+        setReportRuns([]);
+        setReportRunsError(response?.error || 'Failed to load report runs.');
+      }
+    } catch (error) {
+      setReportRuns([]);
+      setReportRunsError('Failed to load report runs.');
+    } finally {
+      setReportRunsLoading(false);
+    }
+  }, [isAdmin, scopedHostId]);
+
+  useEffect(() => {
+    if (activeTab !== 'developerReports' || !canViewDeveloperReports) return;
+    fetchDeveloperOverview();
+    fetchStaffList();
+    fetchReportRuns();
+  }, [activeTab, canViewDeveloperReports, fetchDeveloperOverview, fetchStaffList, fetchReportRuns]);
   const startDate = dateFrom ? new Date(dateFrom) : null;
   const endDate = dateTo ? new Date(dateTo) : null;
   if (endDate) endDate.setHours(23, 59, 59, 999);
@@ -424,6 +577,20 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     scopedHostId,
   ]);
 
+  const developerEntries = useMemo(() => {
+    const scopeHost = scopedHostId();
+    return entries.filter((entry) => {
+      const createdAt = entry?.createdAt ? new Date(entry.createdAt) : null;
+      if (startDate && createdAt && createdAt < startDate) return false;
+      if (endDate && createdAt && createdAt > endDate) return false;
+      if (scopeHost) {
+        const entryHost = extractHostId(entry);
+        if (entryHost && entryHost !== scopeHost) return false;
+      }
+      return true;
+    });
+  }, [entries, startDate, endDate, scopedHostId]);
+
   const typeOptions = useMemo(() => (
     Array.from(new Set(entries.map((entry) => toUpper(resolveActionType(entry))))).sort()
   ), [entries]);
@@ -464,59 +631,145 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     return sortedEntries.slice(start, start + PAGE_SIZE);
   }, [sortedEntries, currentPage]);
 
-  const REPORT_KEYWORD_BUCKETS = {
-    failedClockIns: [
-      'FAILED CLOCK',
-      'FAILED_RECOGNITION',
-      'MISSING CLOCK IN',
-      'NO CLOCK IN',
-      'MISSED CLOCK IN',
-      'FACE NOT RECOGNIZED',
-    ],
-    missedClockOuts: [
-      'MISSING CLOCK OUT',
-      'NO CLOCK OUT',
-      'MISSED CLOCK OUT',
-      'CLOCK OUT FAILED',
-    ],
-    networkIssues: [
-      'NETWORK',
-      'OFFLINE',
-      'TIMEOUT',
-      'CONNECTIVITY',
-    ],
-    locationDenied: [
-      'LOCATION_DENIED',
-      'GEOFENCE',
-      'OUTSIDE',
-      'UNASSIGNED',
-      'LOCATION ERROR',
-      'LOCATION REJECTED',
-    ],
-    deviceMismatch: [
-      'DEVICE_MISMATCH',
-      'FINGERPRINT',
-      'DEVICE NOT ALLOWED',
-      'UNRECOGNIZED DEVICE',
-      'DEVICE REJECTED',
-    ],
-  };
-
-  const reportCounts = useMemo(() => {
-    const counts = {};
-    Object.entries(REPORT_KEYWORD_BUCKETS).forEach(([key, keywords]) => {
-      counts[key] = entries.filter((entry) => matchesKeywords(entry, keywords)).length;
+  const staffResults = useMemo(() => {
+    if (!Array.isArray(staffList)) return [];
+    const term = toUpper(userQuery);
+    const filtered = staffList.filter((member) => {
+      if (!term) return true;
+      const haystack = [
+        member?.name,
+        member?.surname,
+        member?.idNumber,
+        member?.phoneNumber,
+        member?.role,
+        member?.department,
+        member?.mentorName,
+        member?.hostCompanyId,
+        hostCompanyMap[member?.hostCompanyId]
+      ].join(' ');
+      return toUpper(haystack).includes(term);
     });
-    return counts;
-  }, [entries]);
+    return term ? filtered : filtered.slice(0, 25);
+  }, [staffList, userQuery, hostCompanyMap]);
 
-  const reportCards = [
-    { key: 'failedClockIns', label: 'Failed clock-ins', severity: 'warning', description: 'Face or device issues halted sign-ins.' },
-    { key: 'missedClockOuts', label: 'Missed clock-outs', severity: 'info', description: 'Early leave without checkout.' },
-    { key: 'networkIssues', label: 'Network issues', severity: 'warning', description: 'Connectivity warnings reported.' },
-    { key: 'locationDenied', label: 'Location denied', severity: 'critical', description: 'Geo restrictions triggered prevents.' },
-    { key: 'deviceMismatch', label: 'Device mismatch', severity: 'critical', description: 'Fingerprints were rejected.' },
-  ];
+  const recentErrors = useMemo(() => {
+    const notificationErrors = developerEntries
+      .filter(isErrorLikeEntry)
+      .map((entry) => ({
+        id: entry?._id,
+        type: 'notification',
+        title: resolveActionType(entry),
+        summary: entry?.message || resolveReasonLabel(entry),
+        severity: mapSeverityToCategory(resolveSeverity(entry)),
+        time: entry?.createdAt,
+        payload: entry,
+      }));
+
+    const reportRunErrors = reportRuns
+      .filter((run) => run?.status === 'failed')
+      .map((run) => ({
+        id: run?._id,
+        type: 'report',
+        title: `${humanizeReportType(run?.reportType)} failed`,
+        summary: run?.errorMessage || 'Report delivery failed',
+        severity: 'CRITICAL',
+        time: run?.createdAt,
+        payload: run,
+      }));
+
+    return [...reportRunErrors, ...notificationErrors]
+      .filter((item) => item.time)
+      .sort((a, b) => new Date(b.time) - new Date(a.time))
+      .slice(0, 10);
+  }, [developerEntries, reportRuns]);
+
+  const overviewCards = useMemo(() => {
+    const health = overview?.health || {};
+    const cache = overview?.cache || {};
+    const stats = overview?.stats || {};
+    const smtp = overview?.smtp || {};
+    const desktopVersion = process.env.REACT_APP_VERSION || 'unknown';
+    return [
+      { label: 'API status', value: health.status || 'Unknown', hint: health.message || '' },
+      { label: 'API version', value: health.version || 'unknown', hint: health.service || '' },
+      { label: 'Desktop build', value: desktopVersion, hint: 'React desktop' },
+      { label: 'Uptime', value: formatUptime(health.uptimeSeconds), hint: 'Server uptime' },
+      {
+        label: 'Database',
+        value: health.database?.status || 'unknown',
+        hint: health.database?.name ? `DB: ${health.database.name}` : ''
+      },
+      {
+        label: 'Websocket',
+        value: formatNumber(health.websocket?.activeConnections),
+        hint: 'Active connections'
+      },
+      {
+        label: 'Memory (RSS)',
+        value: health.memory?.rss || '-',
+        hint: `Heap ${health.memory?.heapUsed || '-'}/${health.memory?.heapTotal || '-'}`
+      },
+      {
+        label: 'Cache',
+        value: cache.lastUpdate ? formatTimestamp(cache.lastUpdate) : 'Not loaded',
+        hint: cache.isExpired ? 'Cache stale' : 'Cache fresh'
+      },
+      { label: 'Total staff', value: formatNumber(stats.totalStaff), hint: 'Active users' },
+      { label: 'Clock-ins today', value: formatNumber(stats.clockInsToday), hint: 'Today' },
+      { label: 'Currently in', value: formatNumber(stats.currentlyIn), hint: 'Active session' },
+      { label: 'Late arrivals', value: formatNumber(stats.lateArrivals), hint: 'Today' },
+      {
+        label: 'SMTP',
+        value: smtp.configured ? 'Configured' : 'Not configured',
+        hint: smtp.user || ''
+      }
+    ];
+  }, [overview]);
+
+  const monitorChecks = useMemo(() => {
+    const health = overview?.health || {};
+    const cache = overview?.cache || {};
+    const smtp = overview?.smtp || {};
+    const failedRuns = reportRuns.filter((run) => run?.status === 'failed');
+    return [
+      {
+        label: 'API health',
+        status: health.status === 'OK' ? 'OK' : 'Issue',
+        severity: health.status === 'OK' ? 'info' : 'critical',
+        detail: health.message || 'Health endpoint'
+      },
+      {
+        label: 'Database',
+        status: health.database?.status || 'unknown',
+        severity: health.database?.status === 'connected' ? 'info' : 'critical',
+        detail: health.database?.host ? `Host: ${health.database.host}` : ''
+      },
+      {
+        label: 'Cache freshness',
+        status: cache.isExpired ? 'Stale' : 'Fresh',
+        severity: cache.isExpired ? 'warning' : 'info',
+        detail: cache.lastUpdate ? `Last update ${formatTimestamp(cache.lastUpdate)}` : 'No cache activity'
+      },
+      {
+        label: 'SMTP',
+        status: smtp.configured ? 'Configured' : 'Missing',
+        severity: smtp.configured ? 'info' : 'warning',
+        detail: smtp.user ? `User: ${smtp.user}` : 'No SMTP user configured'
+      },
+      {
+        label: 'Auto reports',
+        status: failedRuns.length ? 'Issues detected' : 'Healthy',
+        severity: failedRuns.length ? 'critical' : 'info',
+        detail: failedRuns.length ? `${failedRuns.length} failed run(s)` : 'No failed runs'
+      },
+      {
+        label: 'Recent errors',
+        status: recentErrors.length ? `${recentErrors.length} flagged` : 'None',
+        severity: recentErrors.length ? 'warning' : 'info',
+        detail: recentErrors.length ? 'Review the errors feed' : 'No critical events found'
+      }
+    ];
+  }, [overview, reportRuns, recentErrors]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -539,6 +792,7 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
   const closingDrawer = () => {
     setSelectedEvent(null);
     setSelectedDetector(null);
+    setSelectedUser(null);
   };
 
   const hostCompanyTitle = hostCompaniesError
@@ -574,6 +828,11 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
             onClick={() => {
               fetchEntries();
               fetchDetectors();
+              if (activeTab === 'developerReports') {
+                fetchDeveloperOverview();
+                fetchStaffList();
+                fetchReportRuns();
+              }
             }}
           >
             Refresh data
@@ -683,13 +942,15 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
         >
           Automated Detectors
         </button>
-        <button
-          type="button"
-          className={`tab-button ${activeTab === 'developerReports' ? 'active' : ''}`}
-          onClick={() => setActiveTab('developerReports')}
-        >
-          Developer Reports
-        </button>
+        {canViewDeveloperReports && (
+          <button
+            type="button"
+            className={`tab-button ${activeTab === 'developerReports' ? 'active' : ''}`}
+            onClick={() => setActiveTab('developerReports')}
+          >
+            Developer Reports
+          </button>
+        )}
       </div>
 
       <div className="audit-center-tab-panel">
@@ -731,7 +992,14 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                       {paginatedEntries.map((entry) => {
                         const severityKey = mapSeverityToCategory(resolveSeverity(entry));
                         return (
-                          <tr key={entry._id} onClick={() => setSelectedEvent(entry)}>
+                          <tr
+                            key={entry._id}
+                            onClick={() => {
+                              setSelectedUser(null);
+                              setSelectedDetector(null);
+                              setSelectedEvent(entry);
+                            }}
+                          >
                             <td>{formatTimestamp(entry.createdAt)}</td>
                             <td>{resolveUserLabel(entry)}</td>
                             <td>{resolveActionType(entry)}</td>
@@ -794,7 +1062,14 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                   </thead>
                   <tbody>
                     {detectors.map((detector) => (
-                      <tr key={detector._id || `${detector.staffId}-${detector.reason}`} onClick={() => setSelectedDetector(detector)}>
+                      <tr
+                        key={detector._id || `${detector.staffId}-${detector.reason}`}
+                        onClick={() => {
+                          setSelectedUser(null);
+                          setSelectedEvent(null);
+                          setSelectedDetector(detector);
+                        }}
+                      >
                         <td>{formatTimestamp(detector.clockInTimestamp || detector.clockOutTimestamp)}</td>
                         <td>{detector.reason}</td>
                         <td>{detector.staffName}</td>
@@ -814,33 +1089,243 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
           </div>
         )}
 
-        {activeTab === 'developerReports' && (
+        {canViewDeveloperReports && activeTab === 'developerReports' && (
           <div className="audit-tab-content">
-            <h3 className="audit-report-title">Developer reporting</h3>
-            <div className="audit-report-grid">
-              {reportCards.map((card) => (
-                <div key={card.key} className="audit-report-card">
-                  <div className="audit-report-card-header">
-                    <span className={`audit-pill severity-${card.severity}`}>{card.label}</span>
-                  </div>
-                  <div className="audit-report-card-body">
-                    <div className="audit-report-count">{reportCounts[card.key]}</div>
-                    <p>{card.description}</p>
-                  </div>
+            <div className="audit-dev-section">
+              <div className="audit-dev-section-header">
+                <div>
+                  <h3>System overview</h3>
+                  <p>App version, health, and key operational metrics.</p>
                 </div>
-              ))}
+                {overviewLoading && <span className="audit-pill severity-info">Loading</span>}
+                {!overviewLoading && overviewError && (
+                  <span className="audit-pill severity-critical">Error</span>
+                )}
+              </div>
+              {overviewLoading && (
+                <div className="audit-center-loading">
+                  <div className="spinner" />
+                  <p>Loading system overview...</p>
+                </div>
+              )}
+              {!overviewLoading && overviewError && (
+                <div className="audit-center-error">
+                  <p>{overviewError}</p>
+                </div>
+              )}
+              {!overviewLoading && !overviewError && (
+                <div className="audit-overview-grid">
+                  {overviewCards.map((card) => (
+                    <div key={card.label} className="audit-overview-card">
+                      <span className="audit-overview-label">{card.label}</span>
+                      <div className="audit-overview-value">{card.value}</div>
+                      {card.hint && <div className="audit-overview-sub">{card.hint}</div>}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="audit-dev-section">
+              <div className="audit-dev-section-header">
+                <div>
+                  <h3>User lookup</h3>
+                  <p>Find users for support tickets without manual queries.</p>
+                </div>
+              </div>
+              <div className="audit-user-search">
+                <input
+                  type="text"
+                  value={userQuery}
+                  onChange={(event) => setUserQuery(event.target.value)}
+                  placeholder="Search name, ID number, phone, role, department..."
+                />
+                <span className="audit-user-meta">
+                  Showing {staffResults.length} of {staffList.length}
+                </span>
+              </div>
+              {staffLoading && (
+                <div className="audit-center-loading">
+                  <div className="spinner" />
+                  <p>Loading staff list...</p>
+                </div>
+              )}
+              {!staffLoading && staffError && (
+                <div className="audit-center-error">
+                  <p>{staffError}</p>
+                </div>
+              )}
+              {!staffLoading && !staffError && staffResults.length === 0 && (
+                <div className="audit-center-empty">No staff match this search.</div>
+              )}
+              {!staffLoading && !staffError && staffResults.length > 0 && (
+                <div className="audit-table-wrapper">
+                  <table className="audit-table">
+                    <thead>
+                      <tr>
+                        <th>Name</th>
+                        <th>Role</th>
+                        <th>Department</th>
+                        <th>Host Company</th>
+                        <th>ID / Phone</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {staffResults.map((member) => (
+                        <tr
+                          key={member._id}
+                          onClick={() => {
+                            setSelectedEvent(null);
+                            setSelectedDetector(null);
+                            setSelectedUser(member);
+                          }}
+                        >
+                          <td>{`${member.name || ''} ${member.surname || ''}`.trim() || 'Unknown'}</td>
+                          <td>{member.role || 'Unknown'}</td>
+                          <td>{member.department || 'Unknown'}</td>
+                          <td>{hostCompanyMap[member.hostCompanyId] || 'Unknown'}</td>
+                          <td>{member.idNumber || member.phoneNumber || '-'}</td>
+                          <td>{formatDateOnly(member.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="audit-dev-section">
+              <div className="audit-dev-section-header">
+                <div>
+                  <h3>Recent errors</h3>
+                  <p>Plain-language error feed (notifications + report failures).</p>
+                </div>
+              </div>
+              {recentErrors.length === 0 && (
+                <div className="audit-center-empty">No recent errors flagged.</div>
+              )}
+              {recentErrors.length > 0 && (
+                <div className="audit-error-list">
+                  {recentErrors.map((item) => (
+                    <div key={item.id} className="audit-error-item">
+                      <div>
+                        <div className="audit-error-title">{item.title || 'System event'}</div>
+                        <p className="audit-error-summary">{item.summary}</p>
+                        <span className="audit-error-meta">
+                          {formatTimestamp(item.time)} • {item.type === 'report' ? 'Auto report' : 'Notification'}
+                        </span>
+                      </div>
+                      <span className={`audit-pill severity-${String(item.severity || 'info').toLowerCase()}`}>
+                        {severityDisplay[item.severity] || item.severity || 'Info'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="audit-dev-section">
+              <div className="audit-dev-section-header">
+                <div>
+                  <h3>Background jobs</h3>
+                  <p>Auto-report scheduler status and recent runs.</p>
+                </div>
+              </div>
+              {reportRunsLoading && (
+                <div className="audit-center-loading">
+                  <div className="spinner" />
+                  <p>Loading report runs...</p>
+                </div>
+              )}
+              {!reportRunsLoading && reportRunsError && (
+                <div className="audit-center-error">
+                  <p>{reportRunsError}</p>
+                </div>
+              )}
+              {!reportRunsLoading && !reportRunsError && reportRuns.length === 0 && (
+                <div className="audit-center-empty">No report runs recorded yet.</div>
+              )}
+              {!reportRunsLoading && !reportRunsError && reportRuns.length > 0 && (
+                <div className="audit-table-wrapper">
+                  <table className="audit-table">
+                    <thead>
+                      <tr>
+                        <th>Report</th>
+                        <th>Status</th>
+                        <th>Period</th>
+                        <th>Created</th>
+                        <th>Notes</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {reportRuns.slice(0, 12).map((run) => {
+                        const statusMeta = normalizeReportStatus(run?.status);
+                        const periodLabel = run?.periodStart && run?.periodEnd
+                          ? `${formatDateOnly(run.periodStart)} - ${formatDateOnly(run.periodEnd)}`
+                          : (run?.periodKey || '-');
+                        return (
+                          <tr key={run._id}>
+                            <td>{humanizeReportType(run?.reportType)}</td>
+                            <td>
+                              <span className={`audit-pill severity-${statusMeta.severity}`}>
+                                {statusMeta.label}
+                              </span>
+                            </td>
+                            <td>{periodLabel}</td>
+                            <td>{formatTimestamp(run?.createdAt)}</td>
+                            <td>{run?.errorMessage || '-'}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            <div className="audit-dev-section">
+              <div className="audit-dev-section-header">
+                <div>
+                  <h3>Self-monitoring</h3>
+                  <p>Automated checks for technical and business logic signals.</p>
+                </div>
+              </div>
+              <div className="audit-check-grid">
+                {monitorChecks.map((check) => (
+                  <div key={check.label} className="audit-check-card">
+                    <div className="audit-check-header">
+                      <span className={`audit-pill severity-${check.severity}`}>{check.status}</span>
+                      <strong>{check.label}</strong>
+                    </div>
+                    <p>{check.detail}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         )}
       </div>
 
-      {(selectedEvent || selectedDetector) && (
+      {(selectedEvent || selectedDetector || selectedUser) && (
         <div className="audit-drawer-overlay" onClick={closingDrawer}>
           <div className="audit-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="audit-drawer-header">
               <div>
-                <h3>{selectedEvent ? 'Event details' : 'Detector details'}</h3>
-                <p>{selectedEvent ? formatTimestamp(selectedEvent.createdAt) : detectorsDateLabel}</p>
+                <h3>
+                  {selectedEvent
+                    ? 'Event details'
+                    : selectedDetector
+                      ? 'Detector details'
+                      : 'User details'}
+                </h3>
+                <p>
+                  {selectedEvent
+                    ? formatTimestamp(selectedEvent.createdAt)
+                    : selectedDetector
+                      ? detectorsDateLabel
+                      : formatDateOnly(selectedUser?.createdAt)}
+                </p>
               </div>
               <button type="button" onClick={closingDrawer}>Close</button>
             </div>
@@ -867,9 +1352,21 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                   <div><span>Severity</span><strong>{severityDisplay[deriveDetectorSeverity(selectedDetector)]}</strong></div>
                 </div>
               )}
+              {selectedUser && (
+                <div className="audit-drawer-grid">
+                  <div><span>Name</span><strong>{`${selectedUser.name || ''} ${selectedUser.surname || ''}`.trim() || 'Unknown'}</strong></div>
+                  <div><span>Role</span><strong>{selectedUser.role || 'Unknown'}</strong></div>
+                  <div><span>Department</span><strong>{selectedUser.department || 'Unknown'}</strong></div>
+                  <div><span>Host company</span><strong>{hostCompanyMap[selectedUser.hostCompanyId] || 'Unknown'}</strong></div>
+                  <div><span>ID Number</span><strong>{selectedUser.idNumber || 'N/A'}</strong></div>
+                  <div><span>Phone</span><strong>{selectedUser.phoneNumber || 'N/A'}</strong></div>
+                  <div><span>Mentor</span><strong>{selectedUser.mentorName || 'N/A'}</strong></div>
+                  <div><span>Created</span><strong>{formatDateOnly(selectedUser.createdAt)}</strong></div>
+                </div>
+              )}
               <div className="audit-drawer-json">
                 <span>Payload</span>
-                <pre>{JSON.stringify(selectedEvent || selectedDetector, null, 2)}</pre>
+                <pre>{JSON.stringify(selectedEvent || selectedDetector || selectedUser, null, 2)}</pre>
               </div>
             </div>
           </div>

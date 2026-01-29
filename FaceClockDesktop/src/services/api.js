@@ -234,6 +234,17 @@ export const notificationAPI = {
   }
 };
 
+export const systemAPI = {
+  getHealth: async () => {
+    const response = await api.get('/health');
+    return response.data;
+  },
+  getCacheStats: async () => {
+    const response = await api.get('/staff/cache/stats');
+    return response.data;
+  }
+};
+
 // Host Company API
 export const hostCompanyAPI = {
   getAll: async () => {
@@ -392,6 +403,13 @@ export const reportSettingsAPI = {
   },
   sendSmtpTest: async (to) => {
     const response = await api.post('/report-settings/smtp/test', { to });
+    return response.data;
+  },
+};
+
+export const reportRunsAPI = {
+  getAll: async (params = {}) => {
+    const response = await api.get('/report-runs', { params });
     return response.data;
   },
 };

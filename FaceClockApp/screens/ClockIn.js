@@ -448,6 +448,8 @@ export default function ClockIn({ navigation, route }) {
   const [showResult, setShowResult] = useState(false);
   const [locationError, setLocationError] = useState(null); // 🏦 Location validation error details
   const [showLocationError, setShowLocationError] = useState(false); // Show location error modal
+  const [policyError, setPolicyError] = useState(null); // Policy enforcement (duplicate action)
+  const [showPolicyError, setShowPolicyError] = useState(false); // Show policy modal
   const [autoScanning, setAutoScanning] = useState(true);
   const [scanStatus, setScanStatus] = useState('');
   const [faceFeedback, setFaceFeedback] = useState('Position your face in the circle');
@@ -491,6 +493,29 @@ export default function ClockIn({ navigation, route }) {
   
   // Get clock type from route params, default to 'in' if not provided
   const initialClockType = route?.params?.clockType || 'in';
+
+  const getClockTypeLabel = (value) => {
+    switch (value) {
+      case 'in':
+        return 'Clock In';
+      case 'out':
+        return 'Clock Out';
+      case 'break_start':
+        return 'Start Break';
+      case 'break_end':
+        return 'End Break';
+      case 'extra_shift_in':
+        return 'Extra Shift In';
+      case 'extra_shift_out':
+        return 'Extra Shift Out';
+      case 'lunch_start':
+        return 'Start Lunch';
+      case 'lunch_end':
+        return 'End Lunch';
+      default:
+        return 'Clock Action';
+    }
+  };
   
   // Calculate circular frame dimensions based on orientation
   const getCircleDimensions = () => {
@@ -1518,7 +1543,38 @@ export default function ClockIn({ navigation, route }) {
         status: error.response?.status,
         url: error.config?.url,
       });
-      
+
+      // 🚫 POLICY ENFORCEMENT: Duplicate clock actions are prohibited
+      if (
+        error.response?.status === 409 ||
+        error.response?.data?.code === 'DUPLICATE_CLOCK_EVENT'
+      ) {
+        const backendPayload = error.response?.data || {};
+        const rawTimestamp = backendPayload.existingTimestamp;
+        let formattedTimestamp = null;
+        if (rawTimestamp) {
+          const tsDate = new Date(rawTimestamp);
+          if (!Number.isNaN(tsDate.getTime())) {
+            formattedTimestamp = tsDate.toLocaleString('en-US', {
+              year: 'numeric',
+              month: 'short',
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit',
+            });
+          }
+        }
+
+        setPolicyError({
+          message: backendPayload.error || 'This action is prohibited by system policy.',
+          action: clockType,
+          existingTimestamp: formattedTimestamp,
+        });
+        setShowPolicyError(true);
+        setAutoScanning(false);
+        return;
+      }
+
       let errorMessage = 'Failed to process clock in/out.';
       let showRetry = false;
       
@@ -1695,6 +1751,14 @@ export default function ClockIn({ navigation, route }) {
     // Reset auto clock-in trigger
     autoClockInTriggeredRef.current = false;
     // Navigate to main menu
+    navigation.navigate('MainMenu');
+  };
+
+  // 🚫 Close policy enforcement modal and return to main menu
+  const closePolicyError = () => {
+    setShowPolicyError(false);
+    setPolicyError(null);
+    autoClockInTriggeredRef.current = false;
     navigation.navigate('MainMenu');
   };
 
@@ -2160,6 +2224,53 @@ export default function ClockIn({ navigation, route }) {
             <TouchableOpacity
               style={[styles.modalButton, dynamicStyles.modalButton, styles.acknowledgeButton]}
               onPress={closeLocationError}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.modalButtonText}>Acknowledge</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* 🚫 POLICY ENFORCEMENT MODAL */}
+      <Modal
+        visible={showPolicyError}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={closePolicyError}
+      >
+        <View style={[styles.modalOverlay, dynamicStyles.modalOverlay]}>
+          <View style={[styles.modalContent, styles.policyModalContent, dynamicStyles.modalContent]}>
+            <View style={styles.policyIconContainer}>
+              <Text style={styles.policyIcon}>⚠️</Text>
+            </View>
+            <Text style={[styles.policyTitle, dynamicStyles.resultTitle]}>
+              System Policy Enforcement
+            </Text>
+            <Text style={[styles.policyMessage, dynamicStyles.resultMessage]}>
+              {policyError?.message || 'This action is prohibited by system policy.'}
+            </Text>
+            <View style={styles.policyDetailBox}>
+              <View style={styles.policyDetailRow}>
+                <Text style={styles.policyDetailLabel}>Rule:</Text>
+                <Text style={styles.policyDetailValue}>One action per day</Text>
+              </View>
+              {policyError?.action && (
+                <View style={styles.policyDetailRow}>
+                  <Text style={styles.policyDetailLabel}>Attempted:</Text>
+                  <Text style={styles.policyDetailValue}>{getClockTypeLabel(policyError.action)}</Text>
+                </View>
+              )}
+              {policyError?.existingTimestamp && (
+                <View style={styles.policyDetailRow}>
+                  <Text style={styles.policyDetailLabel}>Recorded At:</Text>
+                  <Text style={styles.policyDetailValue}>{policyError.existingTimestamp}</Text>
+                </View>
+              )}
+            </View>
+            <TouchableOpacity
+              style={[styles.modalButton, styles.policyButton]}
+              onPress={closePolicyError}
               activeOpacity={0.8}
             >
               <Text style={styles.modalButtonText}>Acknowledge</Text>
@@ -2861,6 +2972,63 @@ const styles = StyleSheet.create({
     fontSize: 17,
     fontWeight: '700',
     letterSpacing: 0.5,
+  },
+  // 🚫 Policy enforcement modal styles
+  policyModalContent: {
+    width: '80%',
+    maxWidth: 360,
+    padding: 22,
+    borderWidth: 1,
+    borderColor: '#fecaca',
+  },
+  policyIconContainer: {
+    marginBottom: 10,
+  },
+  policyIcon: {
+    fontSize: 44,
+  },
+  policyTitle: {
+    fontSize: 19,
+    fontWeight: '700',
+    textAlign: 'center',
+    marginBottom: 8,
+  },
+  policyMessage: {
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+    marginBottom: 14,
+  },
+  policyDetailBox: {
+    width: '100%',
+    backgroundColor: '#fef2f2',
+    borderColor: '#fecaca',
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 18,
+  },
+  policyDetailRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  policyDetailLabel: {
+    fontSize: 12,
+    color: '#7f1d1d',
+    fontWeight: '600',
+    flex: 1,
+  },
+  policyDetailValue: {
+    fontSize: 12,
+    color: '#991b1b',
+    fontWeight: '700',
+    flex: 2,
+    textAlign: 'right',
+  },
+  policyButton: {
+    backgroundColor: '#b91c1c',
   },
   // 🏦 BANK-GRADE: Location error modal styles (smaller, more compact)
   locationErrorModalContent: {

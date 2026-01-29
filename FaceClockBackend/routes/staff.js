@@ -680,7 +680,7 @@ router.post('/register', upload.fields([
 
         // Index all successful registration images for this staff member
         const imageBuffers = images.map(img => img.buffer);
-
+        //THIS CREATE S S3 BUCKET IF NEEDED AND UPLOADS IMAGES THERE
         // 📦 OPTIONAL: Upload images to S3 for backup/storage (if S3_BUCKET is configured)
         const s3Uploads = [];
         if (process.env.S3_BUCKET) {
@@ -729,6 +729,9 @@ router.post('/register', upload.fields([
         label: 'Registration Device',
         status: 'trusted',
       });
+      //this one will add the device to the trusted devices array in staff model
+      //if a staff registers, their registration device is automatically trusted
+      //but if the device is new but staff is registered, it will inform admin about pending device approval
 
       if (registrationDeviceEntry) {
         await Staff.findByIdAndUpdate(staff._id, {
@@ -1103,6 +1106,56 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       }
 
       ({ staff, similarity, confidenceLevel, riskScore, signals } = match);
+    }
+
+    // ✅ BUSINESS LOGIC: Block duplicate actions per day for core clock events
+    const enforceUniquePerDay = new Set([
+      'in',
+      'out',
+      'break_start',
+      'break_end',
+      'lunch_start',
+      'lunch_end'
+    ]);
+
+    if (enforceUniquePerDay.has(type)) {
+      const todayStart = new Date();
+      todayStart.setHours(0, 0, 0, 0);
+      const todayEnd = new Date(todayStart);
+      todayEnd.setDate(todayEnd.getDate() + 1);
+
+      const existingLog = await ClockLog.findOne({
+        staffId: staff._id,
+        clockType: type,
+        timestamp: { $gte: todayStart, $lt: todayEnd }
+      }).select('timestamp').lean();
+
+      if (existingLog) {
+        const actionLabels = {
+          in: 'clocked in',
+          out: 'clocked out',
+          break_start: 'started break',
+          break_end: 'ended break',
+          lunch_start: 'started lunch',
+          lunch_end: 'ended lunch'
+        };
+        const actionNouns = {
+          in: 'clock-in',
+          out: 'clock-out',
+          break_start: 'break start',
+          break_end: 'break end',
+          lunch_start: 'lunch start',
+          lunch_end: 'lunch end'
+        };
+        const actionText = actionLabels[type] || 'completed this action';
+        const actionNoun = actionNouns[type] || 'action';
+        return res.status(409).json({
+          success: false,
+          error: `You already ${actionText} today. Only one ${actionNoun} is allowed per day.`,
+          code: 'DUPLICATE_CLOCK_EVENT',
+          existingTimestamp: existingLog.timestamp
+        });
+      }
     }
 
     const confidence = Math.round((similarity || 0) * 100);
@@ -1745,8 +1798,10 @@ router.get('/list', async (req, res) => {
       }
     }
 
-    // Include all necessary fields for mentor selection: name, surname, role, department, mentorName
-    const staff = await Staff.find(filter).select('name surname role department mentorName hostCompanyId createdAt').sort({ createdAt: -1 });
+    // Include lookup fields for support investigations and reporting
+    const staff = await Staff.find(filter)
+      .select('name surname idNumber phoneNumber role department mentorName hostCompanyId createdAt')
+      .sort({ createdAt: -1 });
     res.json({ success: true, staff });
   } catch (error) {
     console.error('Error fetching staff list:', error);
@@ -3038,6 +3093,35 @@ router.get('/admin/staff', async (req, res) => {
         .lean()
     ]);
 
+    // Live clock status: compute from today's latest clock action
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(todayStart);
+    todayEnd.setDate(todayEnd.getDate() + 1);
+
+    const staffIds = staff.map(member => member._id);
+    let latestClockByStaffId = {};
+
+    if (staffIds.length > 0) {
+      const todayLogs = await ClockLog.find({
+        staffId: { $in: staffIds },
+        timestamp: { $gte: todayStart, $lt: todayEnd }
+      })
+        .select('staffId clockType timestamp')
+        .sort({ timestamp: 1 })
+        .lean();
+
+      latestClockByStaffId = todayLogs.reduce((acc, log) => {
+        const id = log.staffId?.toString();
+        if (!id) return acc;
+        const existing = acc[id];
+        if (!existing || new Date(log.timestamp) > new Date(existing.timestamp)) {
+          acc[id] = log;
+        }
+        return acc;
+      }, {});
+    }
+
     // Group logs by staffId in memory (much faster than N+1 queries)
     const logsByStaffId = {};
     allLogs.forEach(log => {
@@ -3089,9 +3173,20 @@ router.get('/admin/staff', async (req, res) => {
     };
 
     // Build timesheets for each staff member
+    const ACTIVE_CLOCK_TYPES = new Set([
+      'in',
+      'break_start',
+      'break_end',
+      'lunch_start',
+      'lunch_end',
+      'extra_shift_in'
+    ]);
+
     const staffWithTimesheets = await Promise.all(staff.map(async (member) => {
       const staffId = member._id.toString();
       const logs = logsByStaffId[staffId] || [];
+      const latestClock = latestClockByStaffId[staffId];
+      const isClockedIn = latestClock ? ACTIVE_CLOCK_TYPES.has(latestClock.clockType) : false;
 
       // Get working hours for this staff member
       let workingHours = null;
@@ -3225,6 +3320,7 @@ router.get('/admin/staff', async (req, res) => {
         hostCompanyName: hostCompanyName, // 🔧 FIX: Extract company name from populated object
         hostCompany: hostCompany, // Populated hostCompany object (if populated)
         createdAt: member.createdAt,
+        isClockedIn,
         timesheet
       };
     }));
@@ -3433,8 +3529,16 @@ router.get('/admin/not-accountable', async (req, res) => {
 
       // Helper to add standard fields to notAccountable entries
       const createNotAccountableEntry = (baseEntry) => {
+        const defaultExpectedClockIn = workingHours.clockIn
+          ? formatExpectedTime(workingHours.clockIn.hour, workingHours.clockIn.minute)
+          : 'N/A';
+        const defaultExpectedClockOut = workingHours.clockOut
+          ? formatExpectedTime(workingHours.clockOut.hour, workingHours.clockOut.minute)
+          : 'N/A';
         return {
           ...baseEntry,
+          expectedClockIn: baseEntry.expectedClockIn || defaultExpectedClockIn,
+          expectedClockOut: baseEntry.expectedClockOut || defaultExpectedClockOut,
           staffId: staff._id,
           role: staff.role,
           department: departmentName,
@@ -3558,7 +3662,7 @@ router.get('/admin/not-accountable', async (req, res) => {
         }
       }
     }
-
+    //this is the end of the code
     const notAccountableTime = Date.now() - notAccountableStartTime;
     console.log(`⚡ Not accountable data fetched in ${notAccountableTime}ms (${notAccountable.length} issues found)`);
 
@@ -3740,7 +3844,10 @@ router.post('/validate-preview', upload.single('image'), async (req, res) => {
 
 // ========== INTERN ATTENDANCE CORRECTIONS & LEAVE APPLICATIONS ==========
 
-// Create attendance correction
+// Create attendance correction, this will be submited by intern to his host company
+//and also the super admin can see all the corrections
+//this allow them to request changes to their attendance records
+//the admin will either approve or reject the request with comments 
 router.post('/intern/attendance-corrections', async (req, res) => {
   try {
     const { internId, internName, date, correctionType, requestedChange, hostCompanyId } = req.body;

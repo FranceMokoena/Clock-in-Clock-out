@@ -11,10 +11,12 @@ const internReportsRoutes = require('./routes/internReports');
 const notificationsRoutes = require('./routes/notifications');
 const rotationsRoutes = require('./routes/rotations');
 const reportSettingsRoutes = require('./routes/reportSettings');
+const reportRunsRoutes = require('./routes/reportRuns');
 const staffCache = require('./utils/staffCache');
 const eventEmitter = require('./utils/eventEmitter');
 const autoReports = require('./modules/autoReports');
 const API_BASE_URL = process.env.API_BASE_URL;
+const packageInfo = require('./package.json');
 
 
 // ONNX Runtime face recognition
@@ -102,13 +104,29 @@ app.use('/api/intern-reports', internReportsRoutes);
 app.use('/api/notifications', notificationsRoutes);
 app.use('/api/rotations', rotationsRoutes);
 app.use('/api/report-settings', reportSettingsRoutes);
+app.use('/api/report-runs', reportRunsRoutes);
 
 // Health check - supports GET, POST, OPTIONS
 const healthHandler = (req, res) => {
   const used = process.memoryUsage();
+  const dbState = mongoose.connection.readyState;
+  const dbStateMap = {
+    0: 'disconnected',
+    1: 'connected',
+    2: 'connecting',
+    3: 'disconnecting'
+  };
   res.json({
     status: 'OK',
     message: 'Face Clock API is running',
+    version: packageInfo.version || 'unknown',
+    service: packageInfo.name || 'faceclockbackend',
+    uptimeSeconds: Math.floor(process.uptime()),
+    database: {
+      status: dbStateMap[dbState] || 'unknown',
+      name: mongoose.connection?.name || '',
+      host: mongoose.connection?.host || ''
+    },
     memory: {
       heapUsed: Math.round(used.heapUsed / 1024 / 1024) + 'MB',
       heapTotal: Math.round(used.heapTotal / 1024 / 1024) + 'MB',

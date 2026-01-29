@@ -254,6 +254,156 @@
   color: #0f172a;
 }
 
+.audit-dev-section {
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  padding: 16px;
+  background: #fff;
+  margin-top: 16px;
+}
+
+.audit-dev-section:first-child {
+  margin-top: 0;
+}
+
+.audit-dev-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.audit-dev-section-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.audit-dev-section-header p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12px;
+}
+
+.audit-overview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.audit-overview-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fdfdfd;
+}
+
+.audit-overview-label {
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: #64748b;
+  font-weight: 600;
+}
+
+.audit-overview-value {
+  margin-top: 6px;
+  font-size: 16px;
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.audit-overview-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.audit-user-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.audit-user-search input {
+  flex: 1;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.audit-user-meta {
+  font-size: 12px;
+  color: #64748b;
+}
+
+.audit-error-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.audit-error-item {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #f8fafc;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.audit-error-title {
+  font-weight: 600;
+  color: #0f172a;
+  margin-bottom: 4px;
+}
+
+.audit-error-summary {
+  margin: 0 0 6px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.audit-error-meta {
+  font-size: 11px;
+  color: #64748b;
+}
+
+.audit-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.audit-check-card {
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  padding: 12px;
+  background: #fdfdfd;
+}
+
+.audit-check-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.audit-check-card strong {
+  font-size: 14px;
+  color: #0f172a;
+}
+
+.audit-check-card p {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #64748b;
+}
+
 .audit-drawer-overlay {
   position: fixed;
   top: 0;

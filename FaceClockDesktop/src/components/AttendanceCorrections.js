@@ -55,6 +55,28 @@ function AttendanceCorrections({ isAdmin, hostCompanyId, isHostCompany, onSwitch
     }
   };
 
+  const getRequestedTime = (corr) => {
+    if (!corr) return null;
+    const requested = corr.requestedChange || {};
+    return (
+      requested.clockInTime ||
+      requested.clockOutTime ||
+      requested.breakStartTime ||
+      requested.breakEndTime ||
+      requested.lunchStartTime ||
+      requested.lunchEndTime ||
+      requested.requestedTime ||
+      corr.requestedTime ||
+      null
+    );
+  };
+
+  const getCorrectionReason = (corr) => {
+    if (!corr) return 'N/A';
+    const requested = corr.requestedChange || {};
+    return requested.description || requested.reason || corr.reason || 'N/A';
+  };
+
   const getStatusColor = (status) => {
     switch (status) {
       case 'approved': return '#16a34a';
@@ -78,6 +100,7 @@ function AttendanceCorrections({ isAdmin, hostCompanyId, isHostCompany, onSwitch
   const formatTime = (dateString) => {
     if (!dateString) return 'N/A';
     const date = new Date(dateString);
+    if (Number.isNaN(date.getTime())) return String(dateString);
     return date.toLocaleTimeString('en-US', {
       hour: '2-digit',
       minute: '2-digit',
@@ -131,9 +154,9 @@ function AttendanceCorrections({ isAdmin, hostCompanyId, isHostCompany, onSwitch
                 <tr key={corr._id}>
                   <td>{corr.internName || corr.staffName || 'N/A'}</td>
                   <td>{corr.date ? new Date(corr.date).toLocaleDateString() : 'N/A'}</td>
-                  <td>{getCorrectionTypeLabel(corr.type)}</td>
-                  <td>{corr.requestedTime || 'N/A'}</td>
-                  <td className="reason-cell">{corr.reason || 'N/A'}</td>
+                  <td>{getCorrectionTypeLabel(corr.correctionType || corr.type)}</td>
+                  <td>{formatTime(getRequestedTime(corr))}</td>
+                  <td className="reason-cell">{getCorrectionReason(corr)}</td>
                   <td>
                     <span className={`status-badge ${corr.status === 'approved' ? 'status-approved' : corr.status === 'rejected' ? 'status-rejected' : 'status-pending'}`}>
                       {corr.status || 'Pending'}
