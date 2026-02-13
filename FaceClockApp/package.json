@@ -6,8 +6,8 @@
   "scripts": {
     "start": "expo start",
     "start:local": "cross-env EXPO_PUBLIC_API_URL=http://localhost:5000/api expo start",
-    "start:tunnel": "cross-env EXPO_PUBLIC_API_URL=http://192.168.88.41:5000/api expo start --tunnel",
-    "start:lan": "cross-env EXPO_PUBLIC_API_URL=http://192.168.88.41:5000/api expo start --lan",
+    "start:tunnel": "expo start --tunnel",
+    "start:lan": "expo start --lan",
     "start:android": "cross-env EXPO_PUBLIC_API_URL=http://10.0.2.2:5000/api expo start --android",
     "start:ios": "cross-env EXPO_PUBLIC_API_URL=http://localhost:5000/api expo start --ios",
     "start:web": "cross-env EXPO_PUBLIC_API_URL=http://localhost:5000/api expo start --web",
@@ -55,7 +55,7 @@
   "private": true,
   "devDependencies": {
     "cross-env": "^10.1.0",
-    "expo": "^54.0.29",
+    "expo": "~54.0.33",
     "sharp": "^0.34.5"
   }
 }

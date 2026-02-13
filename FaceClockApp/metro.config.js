@@ -34,15 +34,17 @@ config.resolver = {
 };
 
 // Add middleware to handle platform detection for Expo Go compatibility
-config.middleware = {
-  ...config.middleware,
-  handler: (req, res, next) => {
-    // Ensure platform header is set for Expo Go
-    if (!req.headers['expo-platform'] && !req.headers['exponent-platform']) {
-      // Default to 'android' for Expo Go if not specified
-      req.headers['expo-platform'] = 'android';
-    }
-    next();
+config.server = {
+  ...config.server,
+  enhanceMiddleware: (middleware) => {
+    return (req, res, next) => {
+      // Ensure platform header is set for Expo Go
+      if (!req.headers['expo-platform'] && !req.headers['exponent-platform']) {
+        // Default to 'android' for Expo Go if not specified
+        req.headers['expo-platform'] = 'android';
+      }
+      return middleware(req, res, next);
+    };
   }
 };
 

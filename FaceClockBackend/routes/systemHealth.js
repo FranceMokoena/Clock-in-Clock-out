@@ -364,9 +364,9 @@ router.get('/', async (req, res) => {
     const staffIds = staffList.map((staff) => staff._id);
     const logs = staffIds.length
       ? await ClockLog.find({
-          staffId: { $in: staffIds },
-          timestamp: { $gte: dayStart, $lt: dayEnd },
-        }).select('staffId clockType timestamp').lean()
+        staffId: { $in: staffIds },
+        timestamp: { $gte: dayStart, $lt: dayEnd },
+      }).select('staffId clockType timestamp').lean()
       : [];
 
     const hostCompanyIds = [...new Set(staffList.map((staff) => staff.hostCompanyId).filter(Boolean))];
@@ -561,7 +561,7 @@ router.get('/', async (req, res) => {
     const rekognitionConfigured = rekognition.isConfigured();
     let rekognitionValid = null;
     if (rekognitionConfigured) {
-      await rekognition.validateCredentials().catch(() => {});
+      await rekognition.validateCredentials().catch(() => { });
       const validationStatus = rekognition.getValidationStatus ? rekognition.getValidationStatus() : null;
       rekognitionValid = validationStatus ? validationStatus.valid : null;
     }
