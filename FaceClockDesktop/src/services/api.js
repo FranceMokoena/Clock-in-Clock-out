@@ -242,6 +242,10 @@ export const systemAPI = {
   getCacheStats: async () => {
     const response = await api.get('/staff/cache/stats');
     return response.data;
+  },
+  getSystemHealth: async (params = {}) => {
+    const response = await api.get('/system-health', { params });
+    return response.data;
   }
 };
 

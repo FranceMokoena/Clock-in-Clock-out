@@ -1,6 +1,6 @@
 // Location validation utilities for clock-in/clock-out
-// Staff can ONLY clock-in/out when they are at their assigned location (within 200m radius)
-// Radius is set to 200m to account for GPS inaccuracy (typical GPS accuracy is 5-10m, but can be up to 50m in urban areas)
+// Staff can ONLY clock-in/out when they are at their assigned location (within 100m radius)
+// Radius is set to 100m for strict enforcement across ALL locations
 // During registration, users choose their location from dropdown OR enter custom address
 // Coordinates are geocoded and stored in the database
 // During clock-in, the app validates they are at that exact location using stored coordinates
@@ -14,8 +14,8 @@ const {
 } = require('./saLocations');
 
 // Default validation radius (in meters)
-const DEFAULT_RADIUS = 200; // meters - allows for GPS inaccuracy and building area
-const TOWN_LEVEL_RADIUS = 5000; // 5km - for town/city level locations (e.g., "White River")
+const DEFAULT_RADIUS = 100; // meters - strict radius for all locations
+const TOWN_LEVEL_RADIUS = 100; // kept for compatibility, but same strict radius
 
 // Legacy allowed locations (for backward compatibility)
 const ALLOWED_LOCATIONS = {
@@ -24,14 +24,14 @@ const ALLOWED_LOCATIONS = {
     address: '20 Ferreira Street, Mbombela 1240',
     latitude: -25.475297,
     longitude: 30.982345,
-    radius: DEFAULT_RADIUS // Specific address - use 200m
+    radius: DEFAULT_RADIUS // Strict radius
   },
   'WHITE_RIVER': {
     name: 'White River',
     address: 'White River, Mpumalanga',
     latitude: -25.3318,
     longitude: 31.0117,
-    radius: TOWN_LEVEL_RADIUS // Town-level location - use 5km
+    radius: TOWN_LEVEL_RADIUS // Strict radius
   }
 };
 
@@ -110,61 +110,10 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
   return R * c; // Distance in meters
 }
 
-// Determine if a location is town-level (city/town) vs specific address
-// Town-level locations don't have street addresses, just city/town names
-function isTownLevelLocation(locationName, locationAddress) {
-  if (!locationName && !locationAddress) return false;
-  
-  const name = (locationName || '').toLowerCase();
-  const address = (locationAddress || '').toLowerCase();
-  
-  // Check if it's a known town-level location key (from ALLOWED_LOCATIONS or SA locations)
-  const townLevelKeys = ['WHITE_RIVER', 'MBOMBELA', 'NELSPRUIT', 'PRETORIA', 'JOHANNESBURG', 'CAPE_TOWN', 'DURBAN'];
-  const locationKey = locationName?.toUpperCase().replace(/\s+/g, '_');
-  if (townLevelKeys.includes(locationKey)) {
-    return true;
-  }
-  
-  // Also check if location name matches known town names (case-insensitive)
-  const townNames = ['white river', 'mbombela', 'nelspruit', 'pretoria', 'johannesburg', 'cape town', 'durban'];
-  if (townNames.includes(name)) {
-    return true;
-  }
-  
-  // Check location config to see if it's a town-level location
-  try {
-    const locationData = getLocation(locationKey || locationName);
-    if (locationData) {
-      // If location has a radius of TOWN_LEVEL_RADIUS, it's town-level
-      if (locationData.radius === TOWN_LEVEL_RADIUS) {
-        return true;
-      }
-      // If location name doesn't contain street address patterns, likely town-level
-      const locationNameLower = (locationData.name || '').toLowerCase();
-      const locationAddressLower = (locationData.address || '').toLowerCase();
-      const hasStreetInName = /\d+\s+(street|road|avenue|drive|way|lane)/i.test(locationNameLower);
-      const hasStreetInAddress = /\d+\s+(street|road|avenue|drive|way|lane)/i.test(locationAddressLower);
-      if (!hasStreetInName && !hasStreetInAddress) {
-        return true;
-      }
-    }
-  } catch (e) {
-    // If location lookup fails, continue with heuristic check
-  }
-  
-  // Heuristic: If address doesn't contain street numbers or specific street names, it's likely town-level
-  // Specific addresses usually have: street numbers (1-9999), "Street", "Road", "Avenue", etc.
-  const hasStreetNumber = /\d+\s+(street|road|avenue|drive|way|lane|close|court|place|boulevard|circle)/i.test(address);
-  const hasSpecificAddress = /\d+/.test(address) && (address.includes('street') || address.includes('road') || address.includes('avenue') || address.includes('drive'));
-  
-  // If no street number/address pattern, likely town-level
-  return !hasStreetNumber && !hasSpecificAddress;
-}
-
 // Check if user's location is within allowed radius of their assigned location
 // CRITICAL: This function ensures users can ONLY clock in at their assigned location
 // UPDATED: Now uses stored coordinates from staff record (more accurate than config lookup)
-// UPDATED: Automatically detects town-level locations and uses larger radius (5km vs 200m)
+// UPDATED: Strict radius applied to all locations (100m)
 function isLocationValid(userLat, userLon, staffLocationLat, staffLocationLon, staffLocationName, radius = null, staffLocationAddress = null) {
   // Validate input coordinates
   if (typeof userLat !== 'number' || typeof userLon !== 'number' || isNaN(userLat) || isNaN(userLon)) {
@@ -187,17 +136,10 @@ function isLocationValid(userLat, userLon, staffLocationLat, staffLocationLon, s
     };
   }
 
-  // 🏦 INTELLIGENT RADIUS: Auto-detect town-level locations and use larger radius
-  // If radius not provided, determine based on location type
+  // Strict radius for all locations
   let effectiveRadius = radius;
   if (effectiveRadius === null || effectiveRadius === undefined) {
-    if (isTownLevelLocation(staffLocationName, staffLocationAddress)) {
-      effectiveRadius = TOWN_LEVEL_RADIUS; // 5km for towns/cities
-      console.log(`📍 Town-level location detected: "${staffLocationName}" - Using ${effectiveRadius}m radius`);
-    } else {
-      effectiveRadius = DEFAULT_RADIUS; // 200m for specific addresses
-      console.log(`📍 Specific address detected: "${staffLocationName}" - Using ${effectiveRadius}m radius`);
-    }
+    effectiveRadius = DEFAULT_RADIUS;
   }
 
   // Calculate distance using Haversine formula (accurate for Earth's surface)
@@ -209,18 +151,9 @@ function isLocationValid(userLat, userLon, staffLocationLat, staffLocationLon, s
   );
 
   // STRICT VALIDATION: User must be within the allowed radius
-  // Note: Radius is 200m for specific addresses, 5km for town-level locations
   if (distance > effectiveRadius) {
-    const distanceKm = (distance / 1000).toFixed(1);
-    const radiusKm = (effectiveRadius / 1000).toFixed(1);
-    const isTownLevel = effectiveRadius === TOWN_LEVEL_RADIUS;
-    
-    let errorMessage = `You are ${distanceKm}km away from your assigned location "${staffLocationName || 'unknown location'}". `;
-    if (isTownLevel) {
-      errorMessage += `You must be within ${radiusKm}km (town-level location) to clock in/out. `;
-    } else {
-      errorMessage += `You must be within ${effectiveRadius}m (specific address) to clock in/out. `;
-    }
+    let errorMessage = `You are ${Math.round(distance)}m away from your assigned location "${staffLocationName || 'unknown location'}". `;
+    errorMessage += `You must be within ${effectiveRadius}m to clock in/out. `;
     errorMessage += `Please go to your assigned location to clock in/out.`;
     
     return {
@@ -231,8 +164,6 @@ function isLocationValid(userLat, userLon, staffLocationLat, staffLocationLon, s
       assignedLocation: staffLocationName || 'Unknown location',
       userCoordinates: { lat: userLat, lon: userLon },
       locationCoordinates: { lat: staffLocationLat, lon: staffLocationLon },
-      distanceKm: parseFloat(distanceKm),
-      radiusKm: parseFloat(radiusKm)
     };
   }
 

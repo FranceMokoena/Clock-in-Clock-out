@@ -9,12 +9,33 @@ const NotificationContext = createContext({
   reload: async () => {},
   unreadCount: 0,
   markAllAsRead: async () => {},
+  removeNotification: () => {},
+  clearNotifications: () => {},
 });
 
 export function NotificationProvider({ children }) {
-  const [notifications, setNotifications] = useState([]);
+  const [notifications, setNotificationsState] = useState([]);
   const [loading, setLoading] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  const applyNotifications = (items) => {
+    const normalized = Array.isArray(items) ? items : [];
+    setNotificationsState(normalized);
+    setUnreadCount(normalized.filter((n) => !n.isRead).length);
+  };
+
+  const setNotifications = (value) => {
+    if (typeof value === 'function') {
+      setNotificationsState((prev) => {
+        const next = value(prev);
+        const normalized = Array.isArray(next) ? next : [];
+        setUnreadCount(normalized.filter((n) => !n.isRead).length);
+        return normalized;
+      });
+      return;
+    }
+    applyNotifications(value);
+  };
 
   const reload = async () => {
     setLoading(true);
@@ -26,8 +47,7 @@ export function NotificationProvider({ children }) {
       } else if (data && Array.isArray(data.notifications)) {
         items = data.notifications;
       }
-      setNotifications(items);
-      setUnreadCount(items.filter((n) => !n.isRead).length);
+      applyNotifications(items);
     } catch (err) {
       console.warn('NotificationProvider.reload error:', err);
       // don't spam users on background fetch failures
@@ -46,7 +66,7 @@ export function NotificationProvider({ children }) {
 
   useEffect(() => {
     const handleRealtimeNotification = (notification) => {
-      setNotifications((prev) => {
+      setNotificationsState((prev) => {
         const withoutDuplicate = prev.filter((item) => item._id !== notification._id);
         const updated = [notification, ...withoutDuplicate];
         return updated.slice(0, 100);
@@ -75,7 +95,7 @@ export function NotificationProvider({ children }) {
     console.log('NotificationProvider markAllAsRead called, current unreadCount:', unreadCount);
     // Immediately mark all notifications as read in local state
     const updated = notifications.map(n => ({ ...n, isRead: true }));
-    setNotifications(updated);
+    applyNotifications(updated);
     setUnreadCount(0);
     console.log('NotificationProvider marked all notifications as read locally');
 
@@ -88,8 +108,31 @@ export function NotificationProvider({ children }) {
     return success;
   };
 
+  const removeNotification = (notificationId) => {
+    if (!notificationId) return;
+    setNotificationsState((prev) => {
+      const next = prev.filter((n) => n._id !== notificationId);
+      setUnreadCount(next.filter((n) => !n.isRead).length);
+      return next;
+    });
+  };
+
+  const clearNotifications = () => {
+    setNotificationsState([]);
+    setUnreadCount(0);
+  };
+
   return (
-    <NotificationContext.Provider value={{ notifications, setNotifications, loading, reload, unreadCount, markAllAsRead: handleMarkAllAsRead }}>
+    <NotificationContext.Provider value={{
+      notifications,
+      setNotifications,
+      loading,
+      reload,
+      unreadCount,
+      markAllAsRead: handleMarkAllAsRead,
+      removeNotification,
+      clearNotifications
+    }}>
       {children}
     </NotificationContext.Provider>
   );

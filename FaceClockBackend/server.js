@@ -12,8 +12,10 @@ const notificationsRoutes = require('./routes/notifications');
 const rotationsRoutes = require('./routes/rotations');
 const reportSettingsRoutes = require('./routes/reportSettings');
 const reportRunsRoutes = require('./routes/reportRuns');
+const systemHealthRoutes = require('./routes/systemHealth');
 const staffCache = require('./utils/staffCache');
 const eventEmitter = require('./utils/eventEmitter');
+const { createRequestMetricsMiddleware, startSystemHealthSampler } = require('./utils/monitoring');
 const autoReports = require('./modules/autoReports');
 const API_BASE_URL = process.env.API_BASE_URL;
 const packageInfo = require('./package.json');
@@ -59,6 +61,9 @@ app.use(cors({
 // Body parsers
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(createRequestMetricsMiddleware({
+  includePaths: ['/api/staff/clock', '/api/notifications'],
+}));
 
 // MongoDB connection
 
@@ -105,6 +110,7 @@ app.use('/api/notifications', notificationsRoutes);
 app.use('/api/rotations', rotationsRoutes);
 app.use('/api/report-settings', reportSettingsRoutes);
 app.use('/api/report-runs', reportRunsRoutes);
+app.use('/api/system-health', systemHealthRoutes);
 
 // Health check - supports GET, POST, OPTIONS
 const healthHandler = (req, res) => {
@@ -177,7 +183,8 @@ const apiRootHandler = (req, res) => {
       rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide',
       reportSettings: 'GET/POST /api/report-settings',
       reportSettingsSmtpStatus: 'GET /api/report-settings/smtp/status',
-      reportSettingsSmtpTest: 'POST /api/report-settings/smtp/test'
+      reportSettingsSmtpTest: 'POST /api/report-settings/smtp/test',
+      systemHealth: 'GET /api/system-health'
     }
   });
 };
@@ -219,7 +226,8 @@ app.all('/', (req, res) => {
       rotationDecide: 'POST /api/rotations/assignments/:assignmentId/decide',
       reportSettings: 'GET/POST /api/report-settings',
       reportSettingsSmtpStatus: 'GET /api/report-settings/smtp/status',
-      reportSettingsSmtpTest: 'POST /api/report-settings/smtp/test'
+      reportSettingsSmtpTest: 'POST /api/report-settings/smtp/test',
+      systemHealth: 'GET /api/system-health'
     }
   });
 });
@@ -260,7 +268,8 @@ app.use((req, res) => {
       'POST /api/rotations/assignments/:assignmentId/decide',
       'GET/POST /api/report-settings',
       'GET /api/report-settings/smtp/status',
-      'POST /api/report-settings/smtp/test'
+      'POST /api/report-settings/smtp/test',
+      'GET /api/system-health'
     ]
   });
 });
@@ -279,6 +288,7 @@ async function startServer() {
   await staffCache.preload();
   staffCache.startBackgroundRefresh();
   autoReports.reportScheduler.start();
+  startSystemHealthSampler();
 
   const PORT = process.env.PORT || 5000;
   server.listen(PORT, '0.0.0.0', () => {

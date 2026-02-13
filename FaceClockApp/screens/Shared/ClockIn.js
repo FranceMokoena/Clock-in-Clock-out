@@ -14,6 +14,7 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
+import { Audio } from 'expo-av';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Location from 'expo-location';
@@ -477,6 +478,10 @@ export default function ClockIn({ navigation, route }) {
   const autoClockInTriggeredRef = useRef(false); // Prevent multiple auto clock-in triggers
   const locationReadyRef = useRef(false); // Track if location is ready
   const locationDataRef = useRef(null); // Store location data
+  const successSoundRef = useRef(null);
+  const successSoundPlayingRef = useRef(false);
+  const latestBackendResultRef = useRef(null);
+  const latestBackendResultTimestampRef = useRef(0);
   
   // Scanning animation values
   const scanRotation = useRef(new Animated.Value(0)).current;
@@ -514,6 +519,62 @@ export default function ClockIn({ navigation, route }) {
         return 'End Lunch';
       default:
         return 'Clock Action';
+    }
+  };
+
+  const updateLatestBackendResult = (data) => {
+    latestBackendResultRef.current = data;
+    latestBackendResultTimestampRef.current = Date.now();
+    setLatestBackendResult(data);
+  };
+
+  const getCaptureGate = () => {
+    const data = latestBackendResultRef.current;
+    if (!data) {
+      return { ok: false, reason: 'no_data' };
+    }
+    if (Date.now() - latestBackendResultTimestampRef.current > 2000) {
+      return { ok: false, reason: 'stale' };
+    }
+    const faceCount = data.metadata?.faceCount || 0;
+    if (faceCount !== 1) {
+      return { ok: false, reason: 'no_face' };
+    }
+    if (!data.isReady) {
+      return { ok: false, reason: 'not_ready' };
+    }
+    return { ok: true };
+  };
+
+  const playSuccessSound = async () => {
+    if (successSoundPlayingRef.current) return;
+    successSoundPlayingRef.current = true;
+
+    try {
+      if (successSoundRef.current) {
+        await successSoundRef.current.unloadAsync();
+        successSoundRef.current = null;
+      }
+
+      const { sound } = await Audio.Sound.createAsync(
+        require('../../assets/mixkit-happy-bell-alert-601.wav'),
+        { shouldPlay: false }
+      );
+      successSoundRef.current = sound;
+
+      sound.setOnPlaybackStatusUpdate((status) => {
+        if (!status.isLoaded) return;
+        if (status.didJustFinish) {
+          sound.unloadAsync();
+          successSoundRef.current = null;
+          successSoundPlayingRef.current = false;
+        }
+      });
+
+      await sound.playAsync();
+    } catch (error) {
+      successSoundPlayingRef.current = false;
+      console.warn('⚠️ Failed to play success sound:', error?.message || error);
     }
   };
   
@@ -681,6 +742,7 @@ export default function ClockIn({ navigation, route }) {
             quality: 0.2, // Very low quality for fast upload (preview only)
             base64: false,
             skipProcessing: true, // Skip processing for speed
+            shutterSound: false,
           });
           frameUri = frame?.uri || null;
 
@@ -931,7 +993,7 @@ export default function ClockIn({ navigation, route }) {
           // Update UI (throttled to prevent flooding)
           if (shouldUpdate || displayMessage !== lastMessage) {
             setFaceFeedback(displayMessage);
-            setLatestBackendResult(backendResult); // 🏦 Store for professional feedback component
+            updateLatestBackendResult(backendResult); // 🏦 Store for professional feedback component
             setLastMessage(displayMessage);
             messageUpdateRef.current = now;
           }
@@ -956,7 +1018,7 @@ export default function ClockIn({ navigation, route }) {
             issues: detectionResult.issues || [],
           };
           
-          setLatestBackendResult(finalBackendResult);
+          updateLatestBackendResult(finalBackendResult);
           
           // 🏦 REAL-TIME TOAST: Show live feedback based on backend validation
           let toastMessage = '';
@@ -1185,13 +1247,28 @@ export default function ClockIn({ navigation, route }) {
   }, [autoScanning]);
 
   useEffect(() => {
+    if (showResult) {
+      playSuccessSound();
+    }
+  }, [showResult]);
+
+  useEffect(() => {
     return () => {
       stopProcessingTimer();
+      if (successSoundRef.current) {
+        successSoundRef.current.unloadAsync();
+        successSoundRef.current = null;
+      }
     };
   }, []);
 
   const handleAutoCapture = async () => {
     if (capturing || loading || !cameraRef.current || showResult) return;
+
+    const gate = getCaptureGate();
+    if (!gate.ok) {
+      return;
+    }
     
     // Stop auto-scanning immediately when capturing
     setAutoScanning(false);
@@ -1208,6 +1285,16 @@ export default function ClockIn({ navigation, route }) {
   // 🎬 AUTOMATIC CLOCK-IN: Handle automatic clock-in without button click
   const handleAutomaticClockIn = async (clockType, locationData) => {
     if (capturing || loading || !cameraRef.current || showResult) return;
+
+    const gate = getCaptureGate();
+    if (!gate.ok) {
+      // If not ready, keep auto-scanning without capturing
+      setLoading(false);
+      setCapturing(false);
+      stopProcessingTimer();
+      setAutoScanning(true);
+      return;
+    }
     
     setCapturing(true);
     setLoading(true);
@@ -1223,6 +1310,7 @@ export default function ClockIn({ navigation, route }) {
       const photo = await cameraRef.current.takePictureAsync({
         quality: 0.8,
         base64: false,
+        shutterSound: false,
       });
       
       // Resize image to a backend‑optimized size for secure processing
@@ -1277,6 +1365,16 @@ export default function ClockIn({ navigation, route }) {
   const captureAndClock = async (clockType) => {
     if (capturing || loading) return;
 
+    const gate = getCaptureGate();
+    if (!gate.ok) {
+      if (Platform.OS === 'android') {
+        ToastAndroid.show('👤 Position your face in the circle before clocking in', ToastAndroid.SHORT);
+      } else {
+        Alert.alert('Face Required', 'Position your face in the circle before clocking in.');
+      }
+      return;
+    }
+
     setCapturing(true);
     startProcessingTimer();
     
@@ -1300,6 +1398,7 @@ export default function ClockIn({ navigation, route }) {
         const photo = await cameraRef.current.takePictureAsync({
           quality: 0.8,
           base64: false,
+          shutterSound: false,
         });
 
         // Resize image to a backend‑optimized size for secure processing
@@ -1740,8 +1839,13 @@ export default function ClockIn({ navigation, route }) {
     setResult(null);
     // Reset auto clock-in trigger for next session
     autoClockInTriggeredRef.current = false;
-    // Resume auto-scanning for next person after OK
-    setAutoScanning(true);
+    // Stop auto-scanning and return to main menu
+    setAutoScanning(false);
+    if (scanIntervalRef.current) {
+      clearInterval(scanIntervalRef.current);
+      scanIntervalRef.current = null;
+    }
+    navigation.navigate('MainMenu');
   };
 
   // 🏦 BANK-GRADE: Close location error modal and navigate to main menu
@@ -1772,6 +1876,7 @@ export default function ClockIn({ navigation, route }) {
 
   const dynamicStyles = getDynamicStyles(theme);
   const liveBoundingStyle = getFaceBoxStyle(liveFaceBox, cameraLayout, true);
+  const captureGate = getCaptureGate();
 
   return (
     <SafeAreaView style={[styles.container, dynamicStyles.container]}>
@@ -1808,6 +1913,8 @@ export default function ClockIn({ navigation, route }) {
             ref={cameraRef}
             style={styles.camera}
             facing="front"
+            flash="off"
+            animateShutter={false}
           />
           {/* 🏦 BANK-GRADE: Overlay positioned absolutely (CameraView doesn't support children) */}
           <View style={styles.overlay}>
@@ -2046,7 +2153,7 @@ export default function ClockIn({ navigation, route }) {
               }
               captureAndClock(initialClockType);
             }}
-            disabled={!!(loading || capturing)}
+            disabled={!!(loading || capturing || !captureGate.ok)}
             activeOpacity={0.8}
           >
             {loading || capturing ? (
@@ -2436,65 +2543,65 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
     borderRadius: 999,
-    borderWidth: 5,
-    borderTopColor: '#00d4ff',
-    borderRightColor: '#0099cc',
+    borderWidth: 4,
+    borderTopColor: '#1f3a5f',
+    borderRightColor: '#2b4c7e',
     borderBottomColor: 'transparent',
     borderLeftColor: 'transparent',
-    shadowColor: '#00d4ff',
+    shadowColor: '#1f3a5f',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
   },
   scanArc2: {
     position: 'absolute',
     width: '100%',
     height: '100%',
     borderRadius: 999,
-    borderWidth: 5,
+    borderWidth: 4,
     borderTopColor: 'transparent',
-    borderRightColor: '#00d4ff',
-    borderBottomColor: '#0099cc',
+    borderRightColor: '#1f3a5f',
+    borderBottomColor: '#2b4c7e',
     borderLeftColor: 'transparent',
-    shadowColor: '#00d4ff',
+    shadowColor: '#1f3a5f',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
   },
   scanArc3: {
     position: 'absolute',
     width: '100%',
     height: '100%',
     borderRadius: 999,
-    borderWidth: 5,
+    borderWidth: 4,
     borderTopColor: 'transparent',
     borderRightColor: 'transparent',
-    borderBottomColor: '#00d4ff',
-    borderLeftColor: '#0099cc',
-    shadowColor: '#00d4ff',
+    borderBottomColor: '#1f3a5f',
+    borderLeftColor: '#2b4c7e',
+    shadowColor: '#1f3a5f',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.8,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+    elevation: 2,
   },
   circleFrame: {
     borderWidth: 4,
-    borderColor: '#3166AE',
+    borderColor: '#1f3a5f',
     backgroundColor: 'transparent',
     position: 'relative',
     zIndex: 1,
-    shadowColor: '#3166AE',
+    shadowColor: '#1f3a5f',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    elevation: 3,
+    shadowOpacity: 0.2,
+    shadowRadius: 5,
+    elevation: 2,
   },
   innerGuide: {
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)',
-    backgroundColor: 'transparent',
+    borderColor: 'rgba(31, 58, 95, 0.35)',
+    backgroundColor: 'rgba(15, 23, 42, 0.08)',
     position: 'absolute',
     zIndex: 0,
   },
@@ -2728,13 +2835,13 @@ const styles = StyleSheet.create({
   },
   scanLine: {
     position: 'absolute',
-    backgroundColor: '#00d4ff',
-    opacity: 0.8,
-    shadowColor: '#00d4ff',
+    backgroundColor: 'rgba(31, 58, 95, 0.45)',
+    opacity: 0.7,
+    shadowColor: 'rgba(31, 58, 95, 0.4)',
     shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 1,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   buttonContainer: {
     padding: 16,

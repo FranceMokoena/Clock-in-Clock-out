@@ -2,6 +2,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const ReportSettings = require('../models/ReportSettings');
 const { sendTestEmail, getSmtpStatus } = require('../modules/autoReports/reportDelivery');
+const { recordSystemEvent } = require('../utils/monitoring');
 
 const router = express.Router();
 
@@ -113,8 +114,26 @@ router.post('/smtp/test', async (req, res) => {
     const to = req.body?.to;
     const result = await sendTestEmail({ to });
     if (!result.sent) {
+      recordSystemEvent({
+        type: 'SMTP_TEST_FAILED',
+        severity: 'critical',
+        message: result.reason || 'SMTP test failed',
+        metadata: {
+          to,
+          reason: result.reason,
+        },
+      });
       return res.status(400).json({ success: false, result });
     }
+    recordSystemEvent({
+      type: 'SMTP_TEST_SUCCESS',
+      severity: 'info',
+      message: 'SMTP test succeeded',
+      metadata: {
+        to,
+        messageId: result.messageId,
+      },
+    });
     return res.json({ success: true, result });
   } catch (error) {
     console.error('Error sending SMTP test email:', error);

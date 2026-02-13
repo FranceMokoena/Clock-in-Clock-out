@@ -8,6 +8,7 @@ const Staff = require('../models/Staff');
 const ClockLog = require('../models/ClockLog');
 const Department = require('../models/Department');
 const HostCompany = require('../models/HostCompany');
+const AdminProfile = require('../models/AdminProfile');
 const staffCache = require('../utils/staffCache');
 const rekognition = require('../utils/rekognitionClient');
 const AttendanceCorrection = require('../models/AttendanceCorrection');
@@ -17,6 +18,7 @@ const { logAction } = require('../utils/actionLogger');
 const autoReports = require('../modules/autoReports');
 const { renderTemplate } = require('../modules/autoReports/reportTemplates');
 const { sendPlainEmail } = require('../modules/autoReports/reportDelivery');
+const { recordSystemEvent } = require('../utils/monitoring');
 
 // ONNX Runtime is MANDATORY - face-api.js has been removed
 // Using SCRFD (face detection) + ArcFace (face recognition) for maximum accuracy
@@ -74,6 +76,21 @@ async function resizeImage(buffer, maxSize = 1024) {
     return buffer; // Fallback to original if resize fails
   }
 }
+
+const formatDeviceLabel = (deviceEntry, rawDeviceInfo) => {
+  if (deviceEntry?.label) return deviceEntry.label;
+  const info = deviceEntry?.deviceInfo || rawDeviceInfo || {};
+  const brand = info.brand || info.manufacturer || '';
+  const model = info.modelName || info.model || info.deviceName || '';
+  const platform = info.platform || '';
+  const osVersion = info.osVersion || '';
+
+  const primary = [brand, model].filter(Boolean).join(' ').trim();
+  if (primary) return primary;
+  const secondary = [platform, osVersion].filter(Boolean).join(' ').trim();
+  if (secondary) return secondary;
+  return 'Registered Device';
+};
 
 // Add error handling for multer
 const handleMulterError = (err, req, res, next) => {
@@ -141,7 +158,7 @@ router.post('/register', upload.fields([
   }
 
   try {
-    const { name, surname, idNumber, phoneNumber, emailAddress, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime, password } = req.body;
+    const { name, surname, idNumber, phoneNumber, emailAddress, role, department, hostCompanyId, location, customAddress, clockInTime, clockOutTime, breakStartTime, breakEndTime, extraHoursStartTime, extraHoursEndTime, password, allowedLocations, currentLatitude, currentLongitude, currentAddress, allowAnyLocation } = req.body;
     const registrationFingerprintResult = generateDeviceFingerprint(req.headers, { includeMeta: true });
     const registrationDeviceFingerprint = typeof registrationFingerprintResult === 'string'
       ? registrationFingerprintResult
@@ -200,10 +217,9 @@ router.post('/register', upload.fields([
       }
     }
 
-    // Validate location or custom address
-    if (!location && !customAddress) {
-      return res.status(400).json({ error: 'Either location or custom address is required' });
-    }
+    // Validate location input (single or multiple)
+    const hasAllowedLocationsInput = Boolean(allowedLocations && String(allowedLocations).trim().length > 0);
+    const hasCurrentCoords = Number.isFinite(parseFloat(currentLatitude)) && Number.isFinite(parseFloat(currentLongitude));
 
     // Validate ID number format (13 digits)
     if (!/^\d{13}$/.test(idNumber.trim())) {
@@ -242,8 +258,107 @@ router.post('/register', upload.fields([
 
     let locationLatitude, locationLongitude, locationName, locationAddress;
     let isCustomAddress = false;
+    let resolvedAllowedLocations = [];
 
-    if (customAddress && customAddress.trim().length > 0) {
+    const normalizeAllowedLocationEntry = async (entry) => {
+      if (!entry || typeof entry !== 'object') return null;
+      const rawLat = entry.latitude ?? entry.lat ?? entry.locationLatitude;
+      const rawLon = entry.longitude ?? entry.lon ?? entry.locationLongitude;
+      const parsedLat = Number(rawLat);
+      const parsedLon = Number(rawLon);
+      if (Number.isFinite(parsedLat) && Number.isFinite(parsedLon)) {
+        return {
+          key: entry.key || entry.location || entry.locationKey || null,
+          name: entry.name || entry.locationName || entry.address || 'Assigned location',
+          address: entry.address || entry.locationAddress || entry.name || null,
+          latitude: parsedLat,
+          longitude: parsedLon,
+          source: entry.source || (entry.key ? 'predefined' : 'custom')
+        };
+      }
+
+      const key = entry.key || entry.location || entry.locationKey;
+      if (key) {
+        const locationData = getLocation(String(key).trim());
+        if (locationData) {
+          return {
+            key: locationData.key || String(key).trim(),
+            name: locationData.name,
+            address: locationData.address || locationData.name,
+            latitude: locationData.latitude,
+            longitude: locationData.longitude,
+            source: 'predefined'
+          };
+        }
+      }
+
+      const address = entry.address || entry.locationAddress || entry.name;
+      if (address && String(address).trim().length > 0) {
+        const geo = await geocodeLocationWithRetry(String(address).trim(), 'South Africa', 2);
+        return {
+          key: null,
+          name: String(address).trim(),
+          address: geo.address || String(address).trim(),
+          latitude: geo.latitude,
+          longitude: geo.longitude,
+          source: 'custom'
+        };
+      }
+
+      return null;
+    };
+
+    // Handle multiple allowed locations (optional)
+    if (hasAllowedLocationsInput) {
+      try {
+        const parsed = typeof allowedLocations === 'string' ? JSON.parse(allowedLocations) : allowedLocations;
+        if (Array.isArray(parsed)) {
+          const resolved = [];
+          for (const entry of parsed) {
+            try {
+              const normalized = await normalizeAllowedLocationEntry(entry);
+              if (normalized && Number.isFinite(normalized.latitude) && Number.isFinite(normalized.longitude)) {
+                resolved.push(normalized);
+              }
+            } catch (entryError) {
+              console.warn('⚠️ Failed to normalize allowed location entry:', entryError?.message || entryError);
+            }
+          }
+          resolvedAllowedLocations = resolved;
+        }
+      } catch (parseError) {
+        console.warn('⚠️ Failed to parse allowedLocations JSON:', parseError?.message || parseError);
+      }
+    }
+
+    if (!resolvedAllowedLocations.length && !location && !customAddress && !hasCurrentCoords) {
+      return res.status(400).json({ error: 'Either location, custom address, current location, or allowed locations is required' });
+    }
+
+    if (resolvedAllowedLocations.length > 0) {
+      const primary = resolvedAllowedLocations[0];
+      locationLatitude = primary.latitude;
+      locationLongitude = primary.longitude;
+      locationName = primary.name || primary.address || 'Assigned location';
+      locationAddress = primary.address || primary.name || null;
+      isCustomAddress = Boolean(primary.source && primary.source !== 'predefined');
+    } else if (hasCurrentCoords) {
+      // Use provided current coordinates directly
+      const parsedLat = parseFloat(currentLatitude);
+      const parsedLon = parseFloat(currentLongitude);
+      if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLon) || parsedLat < -90 || parsedLat > 90 || parsedLon < -180 || parsedLon > 180) {
+        return res.status(400).json({ error: 'Invalid current location coordinates. Please enable GPS and try again.' });
+      }
+      locationLatitude = parsedLat;
+      locationLongitude = parsedLon;
+      locationName = (currentAddress && String(currentAddress).trim().length > 0)
+        ? String(currentAddress).trim()
+        : (customAddress && String(customAddress).trim().length > 0 ? String(customAddress).trim() : 'Current Location');
+      locationAddress = (currentAddress && String(currentAddress).trim().length > 0)
+        ? String(currentAddress).trim()
+        : (customAddress && String(customAddress).trim().length > 0 ? String(customAddress).trim() : null);
+      isCustomAddress = true;
+    } else if (customAddress && customAddress.trim().length > 0) {
       // Custom address provided - geocode it using API
       isCustomAddress = true;
       try {
@@ -283,8 +398,6 @@ router.post('/register', upload.fields([
       locationLongitude = locationData.longitude;
       locationName = locationData.name;
       locationAddress = locationData.address || locationData.name;
-    } else {
-      return res.status(400).json({ error: 'Location or custom address is required' });
     }
 
     // Validate coordinates are valid
@@ -574,6 +687,8 @@ router.post('/register', upload.fields([
       locationLatitude: locationLatitude, // Store geocoded coordinates
       locationLongitude: locationLongitude,
       locationAddress: isCustomAddress ? locationAddress : undefined, // Store full address if custom
+      ...(resolvedAllowedLocations.length > 0 ? { allowedLocations: resolvedAllowedLocations } : {}),
+      allowAnyLocation: String(allowAnyLocation).toLowerCase() === 'true',
       // ⏰ WORKING HOURS: Store assigned working hours (optional - will fall back to host company default if not provided)
       clockInTime: clockInTime && clockInTime.trim() ? clockInTime.trim() : undefined,
       clockOutTime: clockOutTime && clockOutTime.trim() ? clockOutTime.trim() : undefined,
@@ -893,16 +1008,18 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         );
 
         if (rekognitionMatch && rekognitionMatch.externalImageId) {
-          rekognitionMatchFound = true;
           const matchedStaffId = rekognitionMatch.externalImageId;
           const matchedStaff = await Staff.findById(matchedStaffId).lean().catch(() => null);
 
           if (matchedStaff) {
+            rekognitionMatchFound = true;
             primaryStaff = matchedStaff;
             primaryFaceSimilarity = rekognitionMatch.similarity;
             console.log(
               `✅ [Rekognition] Match found: ${matchedStaff.name} (${rekognitionMatch.similarity.toFixed(1)}%) - Skipping ONNX (memory saved!)`
             );
+          } else {
+            console.warn(`⚠️ [Rekognition] ExternalImageId did not match a staff record: ${matchedStaffId}. Falling back to ONNX.`);
           }
         }
       } catch (awsErr) {
@@ -1019,6 +1136,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     let match = null;
     if (!rekognitionMatchFound) {
       console.log(`🔍 Starting ONNX face matching process (Rekognition fallback)...`);
+      if (!embeddingResult) {
+        console.error('❌ Embedding result missing before ONNX matching. This should not happen.');
+        // Free buffers before returning
+        processedImageBuffer = null;
+        req.file.buffer = null;
+        return res.status(500).json({
+          success: false,
+          error: 'Face recognition is temporarily unavailable. Please try again.',
+        });
+      }
       // Extract quality score (can be object or number)
       const qualityScore = typeof embeddingResult.quality === 'object'
         ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
@@ -1077,6 +1204,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         console.error('❌ Face not recognized - no matching staff found (ONNX fallback)');
         console.error(`📊 Final debug info:`);
         console.error(`   - Staff members in database: ${staffWithEmbeddings.length}`);
+        if (!embeddingResult) {
+          console.error('   - Embedding: MISSING (unexpected)');
+          // Free buffers before returning
+          processedImageBuffer = null;
+          req.file.buffer = null;
+          return res.status(500).json({
+            success: false,
+            error: 'Face recognition is temporarily unavailable. Please try again.',
+          });
+        }
         const qualityScoreForError = typeof embeddingResult.quality === 'object'
           ? (embeddingResult.quality?.score || embeddingResult.quality?.detectionScore || 0.75)
           : (embeddingResult.quality || 0.75);
@@ -1149,6 +1286,18 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         };
         const actionText = actionLabels[type] || 'completed this action';
         const actionNoun = actionNouns[type] || 'action';
+        recordSystemEvent({
+          type: 'DUPLICATE_CLOCK_ATTEMPT',
+          severity: 'warning',
+          message: `Duplicate ${actionNoun} attempt`,
+          staffId: staff._id,
+          hostCompanyId: staff.hostCompanyId,
+          deviceFingerprint,
+          metadata: {
+            clockType: type,
+            existingTimestamp: existingLog.timestamp,
+          },
+        });
         return res.status(409).json({
           success: false,
           error: `You already ${actionText} today. Only one ${actionNoun} is allowed per day.`,
@@ -1161,6 +1310,7 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     const confidence = Math.round((similarity || 0) * 100);
     let deviceTrustStatus = deviceFingerprint ? 'unknown' : 'not_provided';
     const trustedDevices = Array.isArray(staff.trustedDevices) ? staff.trustedDevices : [];
+    let existingDevice = null;
 
     if (deviceFingerprint) {
       if (trustedDevices.length === 0) {
@@ -1176,9 +1326,10 @@ router.post('/clock', upload.single('image'), async (req, res) => {
           staffCache.invalidate();
           trustedDevices.push(autoTrustedDevice);
           deviceTrustStatus = 'trusted';
+          existingDevice = autoTrustedDevice;
         }
       } else {
-        let existingDevice = trustedDevices.find(device => device.fingerprint === deviceFingerprint);
+        existingDevice = trustedDevices.find(device => device.fingerprint === deviceFingerprint);
 
         if (!existingDevice) {
           // Check whether this fingerprint already belongs to another staff member
@@ -1256,6 +1407,18 @@ router.post('/clock', upload.single('image'), async (req, res) => {
               staffCache.invalidate();
             }
 
+            recordSystemEvent({
+              type: 'DEVICE_TRUST_FAILED',
+              severity: 'warning',
+              message: 'Unrecognized device pending approval',
+              staffId: staff._id,
+              hostCompanyId: staff.hostCompanyId,
+              deviceFingerprint,
+              metadata: {
+                reason: 'pending_approval',
+                deviceStatus: 'pending',
+              },
+            });
             return res.status(403).json({
               success: false,
               error: 'Unrecognized device. This device is pending approval by your administrator.',
@@ -1266,14 +1429,46 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         }
 
         if (existingDevice.status === 'revoked') {
-          return res.status(403).json({
-            success: false,
-            error: 'This device has been revoked. Please contact your administrator.',
-            deviceStatus: 'revoked',
+          // Shared-device policy: if a device was ever approved, do not block clock-in.
+          console.warn(
+            `⚠️ Revoked device detected for ${staff.name}. Allowing clock-in due to shared-device policy override.`
+          );
+          recordSystemEvent({
+            type: 'DEVICE_TRUST_OVERRIDE',
+            severity: 'warning',
+            message: 'Revoked device allowed due to shared-device policy',
+            staffId: staff._id,
+            hostCompanyId: staff.hostCompanyId,
+            deviceFingerprint,
+            metadata: {
+              reason: 'revoked_override',
+              deviceStatus: 'trusted',
+            },
+          });
+
+          deviceTrustStatus = 'trusted';
+          existingDevice.status = 'trusted';
+          await Staff.updateOne(
+            { _id: staff._id, 'trustedDevices.fingerprint': deviceFingerprint },
+            { $set: { 'trustedDevices.$.status': 'trusted', 'trustedDevices.$.lastSeenAt': new Date() } }
+          ).catch(err => {
+            console.warn('⚠️ Failed to lift revoked device status:', err.message);
           });
         }
 
         if (existingDevice.status === 'pending') {
+          recordSystemEvent({
+            type: 'DEVICE_TRUST_FAILED',
+            severity: 'warning',
+            message: 'Pending device attempted a clock action',
+            staffId: staff._id,
+            hostCompanyId: staff.hostCompanyId,
+            deviceFingerprint,
+            metadata: {
+              reason: 'pending',
+              deviceStatus: 'pending',
+            },
+          });
           return res.status(403).json({
             success: false,
             error: 'This device is pending approval. Please contact your administrator to approve it.',
@@ -1310,6 +1505,18 @@ router.post('/clock', upload.single('image'), async (req, res) => {
     if (deviceTrustStatus !== 'trusted') {
       const deviceApprovalMessage =
         'This device is pending approval. Please contact your administrator to approve it.';
+      recordSystemEvent({
+        type: 'DEVICE_TRUST_FAILED',
+        severity: 'warning',
+        message: 'Device trust check failed',
+        staffId: staff._id,
+        hostCompanyId: staff.hostCompanyId,
+        deviceFingerprint,
+        metadata: {
+          reason: deviceTrustStatus,
+          deviceStatus: deviceTrustStatus,
+        },
+      });
       return res.status(403).json({
         success: false,
         error: deviceApprovalMessage,
@@ -1335,66 +1542,135 @@ router.post('/clock', upload.single('image'), async (req, res) => {
       // Don't block, just warn - allow flexibility for different work schedules
     }
 
-    // 🏦 BANK-GRADE Phase 3: Validate location - user MUST be at their assigned location
+    // 🏦 BANK-GRADE Phase 3: Validate location - user MUST be at their assigned location(s)
     // This validation happens AFTER face recognition to ensure only authenticated users can clock in
-    // UPDATED: Uses stored coordinates from staff record (100% accurate)
-    if (!staff.locationLatitude || !staff.locationLongitude) {
-      console.error(`❌ Location validation failed for ${staff.name}: No coordinates stored`);
-      console.error(`   Location field: ${staff.location || 'none'}`);
-      console.error(`   Coordinates: ${staff.locationLatitude || 'missing'}, ${staff.locationLongitude || 'missing'}`);
-      return res.status(403).json({
-        success: false,
-        error: 'No location coordinates stored for this staff member. Please contact administrator to update your location.'
-      });
-    }
-
+    // UPDATED: Uses stored coordinates from staff record or allowedLocations (strict 100m)
     const { isLocationValid } = require('../config/locations');
-    const staffLocationName = staff.location || 'Assigned location';
-    const staffLocationAddress = staff.locationAddress || null;
-    // 🏦 INTELLIGENT RADIUS: Pass null for radius to auto-detect town-level vs specific address
-    // isLocationValid will automatically use 5km for towns/cities, 200m for specific addresses
-    const locationValidation = isLocationValid(
-      userLat,
-      userLon,
-      staff.locationLatitude,
-      staff.locationLongitude,
-      staffLocationName,
-      null, // Auto-detect radius based on location type
-      staffLocationAddress // Pass address to help determine if it's town-level
-    );
+    let locationValid = true;
+    let matchedLocationName = staff.location || 'Assigned location';
+    let matchedLocationAddress = staff.locationAddress || null;
 
-    if (!locationValidation.valid) {
-      console.error(`❌ Location validation FAILED for ${staff.name}`);
-      console.error(`   Assigned location: ${staffLocationName}`);
-      console.error(`   Location coordinates: ${staff.locationLatitude.toFixed(6)}, ${staff.locationLongitude.toFixed(6)}`);
-      console.error(`   User's current coordinates: ${userLat.toFixed(6)}, ${userLon.toFixed(6)}`);
-      console.error(`   Distance from assigned location: ${locationValidation.distance}m`);
-      console.error(`   Required: Within ${locationValidation.requiredRadius}m`);
-      console.error(`   Error: ${locationValidation.error}`);
+    if (staff.allowAnyLocation) {
+      matchedLocationName = staff.location || 'Any approved location';
+      console.log(`✅ Location validation skipped for ${staff.name} (allowAnyLocation=true)`);
+    } else {
+      const allowedLocations = Array.isArray(staff.allowedLocations)
+        ? staff.allowedLocations.filter(loc => Number.isFinite(loc?.latitude) && Number.isFinite(loc?.longitude))
+        : [];
+      const hasAllowedLocations = allowedLocations.length > 0;
 
-      // Provide detailed error message with coordinates for debugging
-      const errorMessage = locationValidation.error ||
-        `You are ${locationValidation.distance}m away from your assigned location. You must be within ${locationValidation.requiredRadius}m to clock in/out.`;
+      if (!hasAllowedLocations && (!staff.locationLatitude || !staff.locationLongitude)) {
+        console.error(`❌ Location validation failed for ${staff.name}: No coordinates stored`);
+        console.error(`   Location field: ${staff.location || 'none'}`);
+        console.error(`   Coordinates: ${staff.locationLatitude || 'missing'}, ${staff.locationLongitude || 'missing'}`);
+        recordSystemEvent({
+          type: 'LOCATION_CONFIG_MISSING',
+          severity: 'critical',
+          message: 'Missing location coordinates for staff',
+          staffId: staff._id,
+          hostCompanyId: staff.hostCompanyId,
+          metadata: {
+            location: staff.location || null,
+          },
+        });
+        return res.status(403).json({
+          success: false,
+          error: 'No location coordinates stored for this staff member. Please contact administrator to update your location.'
+        });
+      }
 
-      return res.status(403).json({
-        success: false,
-        error: errorMessage,
-        staffName: staff.name, // Include staff name for personalized frontend message
-        assignedLocation: staffLocationName, // Include assigned location name
-        details: {
-          distance: locationValidation.distance,
-          requiredRadius: locationValidation.requiredRadius,
-          userCoordinates: { lat: userLat, lon: userLon },
-          locationCoordinates: locationValidation.locationCoordinates
+      let locationValidation = null;
+
+      if (hasAllowedLocations) {
+        let closest = null;
+        for (const loc of allowedLocations) {
+          const candidateName = loc.name || loc.address || 'Assigned location';
+          const candidateAddress = loc.address || null;
+          const validation = isLocationValid(
+            userLat,
+            userLon,
+            loc.latitude,
+            loc.longitude,
+            candidateName,
+            null,
+            candidateAddress
+          );
+          if (validation.valid) {
+            locationValidation = validation;
+            matchedLocationName = validation.locationName || candidateName;
+            matchedLocationAddress = candidateAddress;
+            break;
+          }
+          if (!closest || (Number.isFinite(validation.distance) && validation.distance < closest.distance)) {
+            closest = { ...validation, locationName: candidateName };
+          }
         }
-      });
+        if (!locationValidation && closest) {
+          locationValidation = closest;
+          matchedLocationName = closest.locationName || matchedLocationName;
+        }
+      } else {
+        const staffLocationName = staff.location || 'Assigned location';
+        const staffLocationAddress = staff.locationAddress || null;
+        locationValidation = isLocationValid(
+          userLat,
+          userLon,
+          staff.locationLatitude,
+          staff.locationLongitude,
+          staffLocationName,
+          null,
+          staffLocationAddress
+        );
+        matchedLocationName = staffLocationName;
+        matchedLocationAddress = staffLocationAddress;
+      }
+
+      if (!locationValidation || !locationValidation.valid) {
+        console.error(`❌ Location validation FAILED for ${staff.name}`);
+        console.error(`   Assigned location: ${matchedLocationName}`);
+        if (!hasAllowedLocations) {
+          console.error(`   Location coordinates: ${staff.locationLatitude.toFixed(6)}, ${staff.locationLongitude.toFixed(6)}`);
+        }
+        console.error(`   User's current coordinates: ${userLat.toFixed(6)}, ${userLon.toFixed(6)}`);
+        if (locationValidation) {
+          console.error(`   Distance from assigned location: ${locationValidation.distance}m`);
+          console.error(`   Required: Within ${locationValidation.requiredRadius}m`);
+          console.error(`   Error: ${locationValidation.error}`);
+        }
+
+        // Provide detailed error message with coordinates for debugging
+        const errorMessage = locationValidation?.error ||
+          `You are ${locationValidation?.distance ?? 'unknown'}m away from your assigned location. You must be within ${locationValidation?.requiredRadius ?? '100'}m to clock in/out.`;
+
+        recordSystemEvent({
+          type: 'LOCATION_VALIDATION_FAILED',
+          severity: 'warning',
+          message: errorMessage,
+          staffId: staff._id,
+          hostCompanyId: staff.hostCompanyId,
+          metadata: {
+            distance: locationValidation?.distance,
+            requiredRadius: locationValidation?.requiredRadius,
+            staffLocation: matchedLocationName,
+          },
+        });
+        return res.status(403).json({
+          success: false,
+          error: errorMessage,
+          staffName: staff.name, // Include staff name for personalized frontend message
+          assignedLocation: matchedLocationName, // Include assigned location name
+          details: {
+            distance: locationValidation?.distance,
+            requiredRadius: locationValidation?.requiredRadius,
+            userCoordinates: { lat: userLat, lon: userLon },
+            locationCoordinates: locationValidation?.locationCoordinates
+          }
+        });
+      }
+
+      console.log(`✅ Location validated: ${staff.name} is at ${locationValidation.locationName || matchedLocationName} (${locationValidation.distance}m away)`);
+      locationValid = locationValidation.valid;
     }
-
-    console.log(`✅ Location validated: ${staff.name} is at ${locationValidation.locationName} (${locationValidation.distance}m away)`);
-
-    // 🏦 BANK-GRADE Phase 3: Update location signal if location validation passed
-    // Location validation passed, so location signal is valid
-    const locationValid = locationValidation.valid;
 
     // ⚡ OPTIMIZED: Calculate timing before DB save
     const preSaveTime = Date.now() - requestStartTime;
@@ -1552,6 +1828,29 @@ router.post('/clock', upload.single('image'), async (req, res) => {
         'This device is pending approval. Please contact your administrator to approve it.';
     }
 
+    const departmentNameForAudit = typeof staff.department === 'string'
+      ? staff.department
+      : (staff.department?.name || staff.department?.departmentName || null);
+    const deviceLabelForAudit = formatDeviceLabel(existingDevice, requestDeviceInfo);
+    const locationNameForAudit = matchedLocationName || staff.location || 'Assigned location';
+    const locationAddressForAudit = matchedLocationAddress || staff.locationAddress || null;
+
+    if (timeWarning) {
+      recordSystemEvent({
+        type: 'TIME_POLICY_WARNING',
+        severity: 'warning',
+        message: timeWarning,
+        staffId: staff._id,
+        hostCompanyId: staff.hostCompanyId,
+        deviceFingerprint,
+        metadata: {
+          clockType: type,
+          expectedTime,
+          timeDiffMinutes,
+        },
+      });
+    }
+
     const responseData = {
       success: true,
       message: `${staff.name} — ${clockTypeText}`,
@@ -1628,10 +1927,16 @@ router.post('/clock', upload.single('image'), async (req, res) => {
           timestamp: timestamp,
           hostCompanyId: staff.hostCompanyId?.toString(),
           departmentId: staff.department?.toString(),
+          departmentName: departmentNameForAudit || undefined,
           clockLogId: clockLog._id?.toString(),
-          location: req.body.location || 'Unknown',
+          location: req.body.location || locationNameForAudit || 'Unknown',
+          locationName: locationNameForAudit || undefined,
+          locationAddress: locationAddressForAudit || undefined,
           type: type,
-          confidence: confidence
+          confidence: confidence,
+          deviceFingerprint: deviceFingerprint || undefined,
+          deviceLabel: deviceLabelForAudit || undefined,
+          deviceInfo: requestDeviceInfo || undefined
         }, req.user?._id);
 
         if (type === 'in' && typeof timeDiffMinutes === 'number') {
@@ -1908,13 +2213,21 @@ router.post('/login', async (req, res) => {
       console.log('🔐 ✅ Admin login successful');
       // Use a fixed MongoDB ObjectId for admin (24 hex chars)
       const ADMIN_OBJECT_ID = '000000000000000000000001';
+      let adminProfilePicture = null;
+      try {
+        const adminProfile = await AdminProfile.findOne({ adminId: ADMIN_OBJECT_ID }).lean();
+        adminProfilePicture = adminProfile?.profilePicture || null;
+      } catch (profileError) {
+        console.warn('⚠️ Admin profile load failed:', profileError.message);
+      }
       return res.json({
         success: true,
         user: {
           id: ADMIN_OBJECT_ID, // ✅ Valid MongoDB ObjectId format
           type: 'admin',
           username: ADMIN_USERNAME,
-          name: 'System Administrator'
+          name: 'System Administrator',
+          profilePicture: adminProfilePicture
         }
       });
     }
@@ -1950,7 +2263,8 @@ router.post('/login', async (req, res) => {
         id: hostCompany._id,
         username: hostCompany.username,
         name: hostCompany.name,
-        companyName: hostCompany.companyName
+        companyName: hostCompany.companyName,
+        profilePicture: hostCompany.profilePicture || null
       }
     });
   } catch (error) {
@@ -2269,22 +2583,25 @@ router.get('/intern/dashboard', async (req, res) => {
       }
     });
 
-    // Calculate hours for each day
-    const attendanceData = Object.values(attendanceByDate).map(day => {
-      let hoursWorked = 0;
+    // Calculate hours for each day (track minutes to avoid rounding drift)
+    const attendanceData = [];
+    let totalMinutes = 0;
+
+    Object.values(attendanceByDate).forEach(day => {
+      let dayMinutes = 0;
 
       // Calculate regular hours (clock in to clock out, excluding breaks and lunch)
       if (day.clockIn && day.clockOut) {
         const clockInTime = new Date(day.clockIn).getTime();
         const clockOutTime = new Date(day.clockOut).getTime();
-        let totalMinutes = (clockOutTime - clockInTime) / (1000 * 60);
+        dayMinutes = (clockOutTime - clockInTime) / (1000 * 60);
 
         // Subtract break duration
         if (day.breakStart && day.breakEnd) {
           const breakStart = new Date(day.breakStart).getTime();
           const breakEnd = new Date(day.breakEnd).getTime();
           const breakMinutes = (breakEnd - breakStart) / (1000 * 60);
-          totalMinutes -= breakMinutes;
+          dayMinutes -= breakMinutes;
         }
 
         // Subtract lunch duration
@@ -2292,10 +2609,8 @@ router.get('/intern/dashboard', async (req, res) => {
           const lunchStart = new Date(day.lunchStart).getTime();
           const lunchEnd = new Date(day.lunchEnd).getTime();
           const lunchMinutes = (lunchEnd - lunchStart) / (1000 * 60);
-          totalMinutes -= lunchMinutes;
+          dayMinutes -= lunchMinutes;
         }
-
-        hoursWorked = Math.max(0, totalMinutes / 60);
       }
 
       // Add extra shift hours
@@ -2303,19 +2618,22 @@ router.get('/intern/dashboard', async (req, res) => {
         const extraStart = new Date(day.extraShiftIn).getTime();
         const extraEnd = new Date(day.extraShiftOut).getTime();
         const extraMinutes = (extraEnd - extraStart) / (1000 * 60);
-        hoursWorked += extraMinutes / 60;
+        dayMinutes += extraMinutes;
       }
 
-      return {
+      dayMinutes = Math.max(0, dayMinutes);
+      totalMinutes += dayMinutes;
+
+      attendanceData.push({
         date: day.date,
         clockIn: day.clockIn,
         clockOut: day.clockOut,
-        hoursWorked: hoursWorked.toFixed(1)
-      };
+        hoursWorked: (dayMinutes / 60).toFixed(1)
+      });
     });
 
     // Calculate stats
-    const totalHours = attendanceData.reduce((sum, day) => sum + parseFloat(day.hoursWorked || 0), 0);
+    const totalHours = totalMinutes / 60;
     const daysPresent = attendanceData.filter(day => day.clockIn).length;
 
     // Calculate expected days based on period
@@ -2340,8 +2658,10 @@ router.get('/intern/dashboard', async (req, res) => {
 
     const stats = {
       totalHours: totalHours.toFixed(1),
+      totalMinutes: Math.round(totalMinutes),
       daysPresent: daysPresent.toString(),
-      attendanceRate: attendanceRate.toString()
+      attendanceRate: attendanceRate.toString(),
+      expectedDays
     };
 
     res.json({
@@ -2767,7 +3087,7 @@ router.get('/intern/attendance/detailed', async (req, res) => {
 
           // Calculate hours for the day
           let dayMinutes = 0;
-          if (dayData.clockIn && dayData.clockOut) {
+          if (dayData.clockOut) {
             const clockInTime = new Date(dayData.clockIn).getTime();
             const clockOutTime = new Date(dayData.clockOut).getTime();
             dayMinutes = (clockOutTime - clockInTime) / (1000 * 60);
@@ -2793,9 +3113,7 @@ router.get('/intern/attendance/detailed', async (req, res) => {
             }
           } else {
             // Has clock in but no clock out
-            if (dayData.clockIn && !dayData.clockOut) {
-              missingClockOuts++;
-            }
+            missingClockOuts++;
           }
           totalMinutes += Math.max(0, dayMinutes);
         } else {
@@ -2803,11 +3121,6 @@ router.get('/intern/attendance/detailed', async (req, res) => {
           if (!dayData.clockIn && !dayData.clockOut) {
             missingClockIns++;
           }
-        }
-
-        // Check for missing clock out on present days
-        if (dayData.clockIn && !dayData.clockOut) {
-          missingClockOuts++;
         }
       }
       currentDate.setDate(currentDate.getDate() + 1);
@@ -2927,10 +3240,12 @@ router.get('/admin/stats', async (req, res) => {
       clockLogFilter.staffId = { $in: staffIds };
     } else if (hostCompanyId && staffIds.length === 0) {
       // No staff for this company - return empty stats
+      const totalCompanies = await HostCompany.countDocuments({ _id: hostCompanyId });
       return res.json({
         success: true,
         stats: {
           totalStaff: 0,
+          totalCompanies,
           clockInsToday: 0,
           currentlyIn: 0,
           lateArrivals: 0,
@@ -2946,7 +3261,8 @@ router.get('/admin/stats', async (req, res) => {
       clockOutsToday,
       clockedInToday,
       clockedOutToday,
-      lateArrivals
+      lateArrivals,
+      totalCompanies
     ] = await Promise.all([
       // Total staff count
       Staff.countDocuments(staffFilter),
@@ -2983,7 +3299,12 @@ router.get('/admin/stats', async (req, res) => {
           $lt: tomorrow
         },
         ...(hostCompanyId && staffIds.length > 0 && { staffId: { $in: staffIds } })
-      }).select('staffId staffName timestamp').lean()
+      }).select('staffId staffName timestamp').lean(),
+
+      // Total host companies (admin only)
+      hostCompanyId
+        ? HostCompany.countDocuments({ _id: hostCompanyId })
+        : HostCompany.countDocuments({})
     ]);
 
     // Calculate currently in (using staffName from logs to avoid populate)
@@ -3012,6 +3333,7 @@ router.get('/admin/stats', async (req, res) => {
       success: true,
       stats: {
         totalStaff,
+        totalCompanies,
         clockInsToday,
         clockOutsToday,
         currentlyIn: Math.max(0, currentlyIn),
@@ -3044,6 +3366,9 @@ router.get('/admin/staff', async (req, res) => {
 
     // Check if full data is requested
     const { fullData, department } = req.query;
+    const fullDataEnabled = typeof fullData === 'string'
+      ? ['true', '1', 'yes'].includes(fullData.toLowerCase())
+      : fullData === true || fullData === 1;
 
     // Add department filter if provided - handle both name and ObjectId matching
     if (department) {
@@ -3068,7 +3393,7 @@ router.get('/admin/staff', async (req, res) => {
     // OPTIMIZATION: Fetch staff and logs in parallel, then group in memory
     let staffQuery;
 
-    if (fullData === 'true') {
+    if (fullDataEnabled) {
       // For full data, we need to populate hostCompany, so don't use lean()
       staffQuery = Staff.find(staffFilter)
         .select('-faceEmbedding -faceEmbeddings -embeddingQualities -centroidEmbedding -idEmbedding -idEmbeddingQuality -facialFeatures -encryptedEmbedding') // Exclude sensitive embedding data
@@ -3316,6 +3641,7 @@ router.get('/admin/staff', async (req, res) => {
         role: member.role,
         department: departmentName, // 🔧 FIX: Use resolved department name instead of ID
         location: member.location,
+        profilePicture: member.profilePicture || null,
         hostCompanyId: hostCompanyIdValue, // Include hostCompanyId (as ID)
         hostCompanyName: hostCompanyName, // 🔧 FIX: Extract company name from populated object
         hostCompany: hostCompany, // Populated hostCompany object (if populated)
@@ -4081,7 +4407,7 @@ router.put('/admin/attendance-corrections/:id', async (req, res) => {
       });
     }
 
-    // Update correction status
+    // Update correction status and details
     correction.status = action === 'approve' ? 'approved' : 'rejected';
     correction.reviewedAt = new Date();
 
@@ -4420,6 +4746,111 @@ router.post('/intern/upload-profile-picture', upload.single('profilePicture'), a
     });
   } catch (error) {
     console.error('❌ Profile picture upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload profile picture',
+    });
+  }
+});
+
+// Upload host company profile picture
+router.post('/host-company/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
+  try {
+    const { hostCompanyId } = req.query;
+
+    if (!hostCompanyId) {
+      return res.status(400).json({
+        success: false,
+        error: 'hostCompanyId is required',
+      });
+    }
+
+    if (!mongoose.Types.ObjectId.isValid(hostCompanyId)) {
+      return res.status(400).json({
+        success: false,
+        error: 'Invalid host company ID format',
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image provided',
+      });
+    }
+
+    const hostCompany = await HostCompany.findById(hostCompanyId);
+    if (!hostCompany) {
+      return res.status(404).json({
+        success: false,
+        error: 'Host company not found',
+      });
+    }
+
+    const processedImage = await sharp(req.file.buffer)
+      .resize(256, 256, {
+        fit: 'cover',
+        position: 'center',
+      })
+      .jpeg({ quality: 90, progressive: true })
+      .toBuffer();
+
+    const base64Image = processedImage.toString('base64');
+    const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+
+    hostCompany.profilePicture = dataUrl;
+    await hostCompany.save();
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      profilePicture: dataUrl,
+    });
+  } catch (error) {
+    console.error('❌ Host company profile upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to upload profile picture',
+    });
+  }
+});
+
+// Upload admin profile picture
+router.post('/admin/upload-profile-picture', upload.single('profilePicture'), async (req, res) => {
+  try {
+    const adminId = req.query.adminId || '000000000000000000000001';
+
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        error: 'No image provided',
+      });
+    }
+
+    const processedImage = await sharp(req.file.buffer)
+      .resize(256, 256, {
+        fit: 'cover',
+        position: 'center',
+      })
+      .jpeg({ quality: 90, progressive: true })
+      .toBuffer();
+
+    const base64Image = processedImage.toString('base64');
+    const dataUrl = `data:image/jpeg;base64,${base64Image}`;
+
+    await AdminProfile.findOneAndUpdate(
+      { adminId },
+      { profilePicture: dataUrl, updatedAt: new Date() },
+      { upsert: true, new: true }
+    );
+
+    res.json({
+      success: true,
+      message: 'Profile picture updated successfully',
+      profilePicture: dataUrl,
+    });
+  } catch (error) {
+    console.error('❌ Admin profile upload error:', error);
     res.status(500).json({
       success: false,
       error: 'Failed to upload profile picture',

@@ -435,6 +435,8 @@ export default function AutoReportsSettingsPanel({ user, isHostCompany }) {
             <label style={styles.label}>WhatsApp message template</label>
             <textarea style={{ ...styles.input, minHeight: 70 }} value={whatsappMessage} onChange={(e) => setWhatsappMessage(e.target.value)} />
 
+
+
             <div style={styles.tokensRow}>
               <div style={styles.label}>Template tokens</div>
               <div style={styles.infoBadge} onClick={() => setShowPreview(true)}>i</div>
@@ -455,8 +457,8 @@ export default function AutoReportsSettingsPanel({ user, isHostCompany }) {
             <div style={styles.divider} />
 
             <label style={styles.label}>Send test email</label>
-            <div style={styles.muted}>Sends a quick test via backend SMTP to confirm delivery.</div>
-            <input style={styles.input} value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="name@example.com" />
+            <div style={styles.muted}>This will send a test email for confirmation( testing purposes only!).</div>
+            <input style={styles.input} value={testEmail} onChange={(e) => setTestEmail(e.target.value)} placeholder="your email address" />
             <button
               type="button"
               style={{ ...styles.button, ...(sendingTest ? styles.buttonDisabled : {}) }}

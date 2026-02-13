@@ -1,26 +1,48 @@
 import io from 'socket.io-client';
+import API_BASE_URL from '../../config/api';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+const API_HTTP_BASE = API_BASE_URL.replace(/\/$/, '');
+const API_ROOT_URL = API_HTTP_BASE.replace(/\/api$/i, '');
 let socket = null;
+let currentRecipientId = null;
+let currentRecipientType = null;
 
 /**
  * Initialize Socket.IO connection for real-time notifications
  */
 export const initializeSocket = (recipientId, recipientType) => {
-  if (socket && socket.connected) {
-    console.log('Socket already connected');
+  if (!recipientId || !recipientType) {
+    console.warn('Socket not initialized: missing recipient details');
     return socket;
   }
 
-  const activeSocket = io(API_BASE_URL, {
+  const isSameRecipient = socket && socket.connected &&
+    recipientId === currentRecipientId &&
+    recipientType === currentRecipientType;
+
+  if (isSameRecipient) {
+    console.log('Socket already connected for current recipient');
+    return socket;
+  }
+
+  if (socket) {
+    socket.off();
+    socket.disconnect();
+    socket = null;
+  }
+
+  currentRecipientId = recipientId;
+  currentRecipientType = recipientType;
+
+  const activeSocket = io(API_ROOT_URL, {
     transports: ['websocket', 'polling'],
     reconnection: true,
     reconnectionDelay: 1000,
     reconnectionDelayMax: 5000,
     reconnectionAttempts: 5,
     auth: {
-      userId: recipientId || 'unknown',
-      userType: recipientType || 'Admin'
+      userId: recipientId,
+      userType: recipientType
     }
   });
 
@@ -53,10 +75,21 @@ export const subscribeToRealTimeNotifications = (callback) => {
     return;
   }
 
-  // Listen for all notification events
-  socket.on('new_notification', (notification) => {
+  const handleNotification = (notification) => {
     console.log('📢 New notification:', notification.type, '-', notification.message);
     callback(notification);
+  };
+
+  socket.off('notification');
+  socket.off('new_notification');
+  socket.on('notification', handleNotification);
+  socket.on('new_notification', handleNotification);
+
+  socket.off('notification_count');
+  socket.on('notification_count', (payload) => {
+    if (typeof callback === 'function') {
+      callback({ __notificationCount: true, ...payload });
+    }
   });
 
   // Listen for specific event types from mobile app and desktop
@@ -257,7 +290,7 @@ export const fetchNotifications = async ({ recipientId, recipientType, limit = 5
     if (recipientId) params.append('recipientId', recipientId);
     if (recipientType) params.append('recipientType', recipientType);
 
-    const response = await fetch(`${API_BASE_URL}/api/notifications?${params.toString()}`);
+    const response = await fetch(`${API_HTTP_BASE}/notifications?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch notifications: ${response.status}`);
@@ -281,7 +314,7 @@ export const getUnreadCount = async ({ recipientId, recipientType }) => {
     if (recipientId) params.append('recipientId', recipientId);
     if (recipientType) params.append('recipientType', recipientType);
 
-    const response = await fetch(`${API_BASE_URL}/api/notifications/unread-count?${params.toString()}`);
+    const response = await fetch(`${API_HTTP_BASE}/notifications/unread-count?${params.toString()}`);
 
     if (!response.ok) {
       throw new Error(`Failed to get unread count: ${response.status}`);
@@ -300,7 +333,7 @@ export const getUnreadCount = async ({ recipientId, recipientType }) => {
  */
 export const createNotification = async (notification) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/notifications`, {
+    const response = await fetch(`${API_HTTP_BASE}/notifications`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -324,7 +357,7 @@ export const createNotification = async (notification) => {
  */
 export const markNotificationAsRead = async (notificationId) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}/read`, {
+    const response = await fetch(`${API_HTTP_BASE}/notifications/${notificationId}/read`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -347,7 +380,7 @@ export const markNotificationAsRead = async (notificationId) => {
  */
 export const markAllNotificationsAsRead = async (recipientId, recipientType) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/notifications/read-all`, {
+    const response = await fetch(`${API_HTTP_BASE}/notifications/read-all`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -371,7 +404,7 @@ export const markAllNotificationsAsRead = async (recipientId, recipientType) => 
  */
 export const deleteNotification = async (notificationId) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/notifications/${notificationId}`, {
+    const response = await fetch(`${API_HTTP_BASE}/notifications/${notificationId}`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json'
@@ -394,7 +427,7 @@ export const deleteNotification = async (notificationId) => {
  */
 export const deleteAllNotifications = async (recipientId, recipientType) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/notifications/delete-all`, {
+    const response = await fetch(`${API_HTTP_BASE}/notifications/delete-all`, {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json'

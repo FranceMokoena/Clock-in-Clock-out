@@ -97,6 +97,40 @@ const staffSchema = new mongoose.Schema({
     required: false,
     trim: true
   },
+  // Optional: Multiple allowed locations for clock-in/out
+  allowedLocations: [
+    {
+      key: { type: String, trim: true },
+      name: { type: String, trim: true },
+      address: { type: String, trim: true },
+      latitude: {
+        type: Number,
+        validate: {
+          validator: function(v) {
+            if (v === null || v === undefined) return true;
+            return typeof v === 'number' && !isNaN(v) && v >= -90 && v <= 90;
+          },
+          message: 'Latitude must be a number between -90 and 90'
+        }
+      },
+      longitude: {
+        type: Number,
+        validate: {
+          validator: function(v) {
+            if (v === null || v === undefined) return true;
+            return typeof v === 'number' && !isNaN(v) && v >= -180 && v <= 180;
+          },
+          message: 'Longitude must be a number between -180 and 180'
+        }
+      },
+      source: { type: String, trim: true }
+    }
+  ],
+  // If true, staff can clock in from any location (no GPS restriction)
+  allowAnyLocation: {
+    type: Boolean,
+    default: false
+  },
   // ⏰ WORKING HOURS: Assigned during registration (weekdays only)
   // If not assigned, will fall back to host company default hours
   clockInTime: {

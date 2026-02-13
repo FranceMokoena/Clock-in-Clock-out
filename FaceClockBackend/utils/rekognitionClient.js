@@ -28,6 +28,14 @@ let credentialsValidated = false;
 let credentialsValid = false;
 let lastValidationError = null;
 
+function getValidationStatus() {
+  return {
+    validated: credentialsValidated,
+    valid: credentialsValid,
+    error: lastValidationError ? lastValidationError.message : null,
+  };
+}
+
 /**
  * Enhanced credential detection - supports multiple sources:
  * 1. Environment variables (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)
@@ -698,6 +706,7 @@ async function uploadToS3(key, buffer, contentType = 'image/jpeg') {
 module.exports = {
   isConfigured,
   validateCredentials,
+  getValidationStatus,
   ensureCollection,
   indexFacesForStaff,
   searchFaceByImage,

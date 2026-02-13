@@ -4,6 +4,7 @@
 // Falls back gracefully if geocoding fails
 
 const axios = require('axios');
+const { recordSystemEvent } = require('./monitoring');
 
 // Cache for geocoding results to avoid repeated API calls
 const geocodeCache = new Map();
@@ -95,10 +96,33 @@ async function geocodeLocation(location, country = 'South Africa') {
 
     console.log(`✅ Geocoded "${locationQuery}" to: ${latitude.toFixed(6)}, ${longitude.toFixed(6)} (confidence: ${(confidence * 100).toFixed(1)}%)`);
 
+    recordSystemEvent({
+      type: 'GEOCODE_SUCCESS',
+      severity: 'info',
+      message: `Geocoded location "${locationQuery}"`,
+      metadata: {
+        location: locationQuery,
+        country,
+        confidence,
+        source: 'nominatim',
+      },
+    });
+
     return geocodeResult;
 
   } catch (error) {
     console.error(`❌ Geocoding error for "${locationQuery}":`, error.message);
+
+    recordSystemEvent({
+      type: 'GEOCODE_FAILURE',
+      severity: 'warning',
+      message: `Geocoding failed for "${locationQuery}"`,
+      metadata: {
+        location: locationQuery,
+        country,
+        error: error?.message || String(error),
+      },
+    });
     
     // If it's a network error or timeout, provide helpful error message
     if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {

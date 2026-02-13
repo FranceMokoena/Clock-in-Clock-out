@@ -18,6 +18,16 @@ const formatCurrency = (value) => {
   return `R ${numeric.toFixed(2)}`;
 };
 
+const resolveProfilePicture = (value) => {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^(data:|https?:|file:|blob:)/i.test(trimmed)) return trimmed;
+  const looksBase64 = /^[A-Za-z0-9+/=]+$/.test(trimmed) && trimmed.length > 100;
+  if (looksBase64) return `data:image/jpeg;base64,${trimmed}`;
+  return trimmed;
+};
+
 function StaffList({ hostCompanyId, isHostCompany }) {
   const [staff, setStaff] = useState([]);
   const [filteredStaff, setFilteredStaff] = useState([]);
@@ -181,12 +191,14 @@ function StaffList({ hostCompanyId, isHostCompany }) {
               </tr>
             </thead>
             <tbody>
-              {filteredStaff.map((member) => (
+              {filteredStaff.map((member) => {
+                const profileSrc = resolveProfilePicture(member.profilePicture);
+                return (
                 <tr key={member._id}>
                   <td>
                     <div className="profile-avatar-cell">
-                      {member.profilePicture ? (
-                        <img src={member.profilePicture} alt={`${member.name || 'User'} avatar`} />
+                      {profileSrc ? (
+                        <img src={profileSrc} alt={`${member.name || 'User'} avatar`} />
                       ) : (
                         <span>{getInitials(member)}</span>
                       )}
@@ -213,7 +225,8 @@ function StaffList({ hostCompanyId, isHostCompany }) {
                     </button>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

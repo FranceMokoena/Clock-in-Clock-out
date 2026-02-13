@@ -1,19 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   dashboardAPI,
+  devicesAPI,
+  departmentAPI,
   hostCompanyAPI,
+  locationsAPI,
   notificationAPI,
-  notAccountableAPI,
   reportRunsAPI,
   reportSettingsAPI,
-  staffAPI,
   systemAPI,
 } from '../../services/api';
 import './AuditCenter.css';
 
 // Endpoints consulted:
 // - notificationAPI.getAll -> event log + developer reporting
-// - notAccountableAPI.getAll -> automated detectors
 // - hostCompanyAPI.getAll -> host company filter values
 const DATE_PRESETS = [
   { key: 'today', label: 'Today', offset: 0 },
@@ -44,6 +44,19 @@ const shorten = (value, max = 12) => {
   if (!value) return '-';
   const text = String(value);
   return text.length <= max ? text : `${text.slice(0, max)}...`;
+};
+const looksLikeObjectId = (value) => /^[a-f0-9]{24}$/i.test(String(value || '').trim());
+
+const formatDeviceInfoLabel = (info) => {
+  if (!info || typeof info !== 'object') return '';
+  const brand = info.brand || info.manufacturer || '';
+  const model = info.modelName || info.model || info.deviceName || '';
+  const primary = [brand, model].filter(Boolean).join(' ').trim();
+  if (primary) return primary;
+  const platform = info.platform || '';
+  const osVersion = info.osVersion || '';
+  const secondary = [platform, osVersion].filter(Boolean).join(' ').trim();
+  return secondary;
 };
 
 const formatNumber = (value) => {
@@ -80,6 +93,62 @@ const severityDisplay = {
   INFO: 'Info',
   WARNING: 'Warning',
   CRITICAL: 'Critical',
+};
+
+const DEFAULT_SYSTEM_HEALTH_SECTIONS = [
+  { key: 'infrastructure', label: 'Health & Dependencies' },
+  { key: 'dataIntegrity', label: 'Data Integrity' },
+  { key: 'businessLogic', label: 'Business Logic' },
+  { key: 'operationalReliability', label: 'Operational Reliability' },
+  { key: 'backgroundJobs', label: 'Background Jobs & Reports' },
+  { key: 'mobileAppHealth', label: 'Mobile App Health' },
+  { key: 'deviceTrust', label: 'Devices' },
+  { key: 'reports', label: 'Reports & jobs' },
+  { key: 'smtp', label: 'Email (SMTP)' },
+  { key: 'faceRecognition', label: 'Face recognition' },
+];
+
+const resolveHealthStatusSeverity = (status) => {
+  const normalized = String(status || '').toUpperCase();
+  if (normalized === 'RED' || normalized === 'CRITICAL') return 'critical';
+  if (normalized === 'AMBER' || normalized === 'WARNING') return 'warning';
+  if (normalized === 'OK' || normalized === 'INFO') return 'info';
+  return 'info';
+};
+
+const SYSTEM_HEALTH_LANGUAGE = {
+  statuses: [
+    {
+      label: 'OK',
+      severity: 'info',
+      description: 'Normal operation. No action required.',
+    },
+    {
+      label: 'AMBER',
+      severity: 'warning',
+      description: 'Warning threshold reached. Investigate soon.',
+    },
+    {
+      label: 'RED',
+      severity: 'critical',
+      description: 'Critical condition. Immediate attention required.',
+    },
+    {
+      label: 'UNKNOWN',
+      severity: 'info',
+      description: 'Not enough data in the window to evaluate.',
+    },
+  ],
+  timing: [
+    'Peak usage windows: 07:30-08:30 and 16:00-17:30 (local time).',
+    'Allowed clock tolerance: 15 minutes around expected time.',
+  ],
+  windows: [
+    'Request latency/error checks look back 5 minutes.',
+    'Geocoding and location checks look back 30 minutes.',
+    'Report runs checks look back 24 hours.',
+    'Memory trend looks back 10 minutes.',
+  ],
 };
 
 const resolveActionType = (entry) => {
@@ -122,30 +191,113 @@ const resolveHostCompanyLabel = (entry, map) => {
   return 'Unknown';
 };
 
-const resolveDepartmentLabel = (entry) => (
-  entry?.subjectUserId?.department
-  || entry?.relatedEntities?.departmentId?.name
-  || entry?.data?.payload?.departmentName
-  || 'Unknown'
-);
-
-const resolveDeviceLabel = (entry) => {
+const resolveDepartmentLabel = (entry, map = {}) => {
   const payload = entry?.data?.payload || {};
-  const fingerprint = payload.deviceFingerprint || payload.deviceId || entry?.deviceInfo?.deviceId || '';
-  const ownerLabel = entry?.data?.payload?.sharedDeviceOwner?.staffName;
-  if (fingerprint && ownerLabel) {
-    return `${fingerprint} (via ${ownerLabel})`;
+  const candidate =
+    payload.departmentName
+    || payload.department
+    || entry?.relatedEntities?.departmentId?.name
+    || entry?.subjectUserId?.department
+    || entry?.relatedEntities?.departmentId;
+
+  if (candidate && typeof candidate === 'object') {
+    if (candidate.name) return candidate.name;
+    if (candidate._id && map[candidate._id]) return map[candidate._id];
   }
-  if (fingerprint) return fingerprint;
-  if (ownerLabel) return `${ownerLabel}'s device`;
-  return '-';
+
+  if (typeof candidate === 'string') {
+    const trimmed = candidate.trim();
+    if (map[trimmed]) return map[trimmed];
+    if (looksLikeObjectId(trimmed)) return map[trimmed] || 'Unknown';
+    return trimmed || 'Unknown';
+  }
+
+  return 'Unknown';
 };
 
-const resolveLocationLabel = (entry) => (
-  entry?.data?.payload?.locationName
-  || entry?.data?.payload?.location
-  || '-'
-);
+const isLikelyOpaqueId = (value) => {
+  if (!value) return false;
+  const text = String(value).trim();
+  if (text.length < 10) return false;
+  if (looksLikeObjectId(text)) return true;
+  if (/^[A-Fa-f0-9]{16,64}$/.test(text)) return true;
+  if (/^[A-Za-z0-9_-]{12,}$/.test(text)) return true;
+  return false;
+};
+
+const resolveDeviceLabel = (entry, map = {}) => {
+  const payload = entry?.data?.payload || {};
+  const explicit =
+    payload.deviceLabel
+    || payload.deviceName
+    || formatDeviceInfoLabel(payload.deviceInfo)
+    || formatDeviceInfoLabel(entry?.deviceInfo);
+
+  if (explicit) return explicit;
+
+  const rawDevice = payload.device;
+  if (rawDevice && !isLikelyOpaqueId(rawDevice)) {
+    return rawDevice;
+  }
+
+  const fingerprint =
+    payload.deviceFingerprint
+    || payload.deviceId
+    || (rawDevice && isLikelyOpaqueId(rawDevice) ? rawDevice : '')
+    || entry?.deviceInfo?.deviceId
+    || '';
+
+  if (fingerprint && map[fingerprint]) return map[fingerprint];
+
+  const trustedDevices =
+    entry?.relatedEntities?.staffId?.trustedDevices
+    || entry?.subjectUserId?.trustedDevices
+    || [];
+
+  if (fingerprint && Array.isArray(trustedDevices)) {
+    const match = trustedDevices.find((device) => device?.fingerprint === fingerprint);
+    if (match?.label) return match.label;
+    const infoLabel = formatDeviceInfoLabel(match?.deviceInfo);
+    if (infoLabel) return infoLabel;
+  }
+
+  const ownerLabel = payload.sharedDeviceOwner?.staffName;
+  if (ownerLabel) return `${ownerLabel}'s device`;
+
+  if (fingerprint && isLikelyOpaqueId(fingerprint)) return 'Registered Device';
+  return fingerprint ? 'Registered Device' : '-';
+};
+
+const resolveLocationLabel = (entry, map = {}) => {
+  const payload = entry?.data?.payload || {};
+  const preferred =
+    payload.locationName
+    || payload.assignedLocation
+    || payload.locationAddress;
+  if (preferred) {
+    const key = String(preferred).trim();
+    if (map[key]?.name) return map[key].name;
+    return preferred;
+  }
+
+  const raw = payload.location;
+  if (!raw) return '-';
+  const text = String(raw).trim();
+  if (!text) return '-';
+  if (map[text]?.name) return map[text].name;
+  if (looksLikeObjectId(text)) return 'Assigned location';
+  if (/^-?\d+(\.\d+)?[, ]\s*-?\d+(\.\d+)?$/.test(text)) {
+    const staffLocation =
+      entry?.subjectUserId?.location
+      || entry?.relatedEntities?.staffId?.location
+      || '';
+    const staffKey = String(staffLocation || '').trim();
+    if (staffKey && map[staffKey]?.name) return map[staffKey].name;
+    if (staffKey) return staffKey;
+    return 'GPS location';
+  }
+  return text;
+};
 
 const makePossessive = (name) => {
   if (!name) return '';
@@ -273,13 +425,6 @@ const renderResultCell = (entry) => {
   return resolveReasonLabel(entry);
 };
 
-const deriveDetectorSeverity = (entry) => {
-  const reason = (entry?.reason || entry?.details || '').toLowerCase();
-  if (reason.includes('wrong time') || reason.includes('late')) return 'WARNING';
-  if (reason.includes('no clock-in') || reason.includes('not recorded')) return 'CRITICAL';
-  return 'INFO';
-};
-
 const getRangeDates = (key) => {
   const now = new Date();
   const to = new Date(now);
@@ -299,15 +444,12 @@ const extractHostId = (entry) => (
 function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
   const defaultRange = getRangeDates('7d');
   const canViewDeveloperReports = Boolean(isAdmin);
+  const canViewSystemHealth = Boolean(isAdmin);
   const [entries, setEntries] = useState([]);
   const [eventLoading, setEventLoading] = useState(false);
   const [eventError, setEventError] = useState('');
-  const [detectors, setDetectors] = useState([]);
-  const [detectorLoading, setDetectorLoading] = useState(false);
-  const [detectorError, setDetectorError] = useState('');
   const [activeTab, setActiveTab] = useState('eventLog');
   const [selectedEvent, setSelectedEvent] = useState(null);
-  const [selectedDetector, setSelectedDetector] = useState(null);
   const [datePreset, setDatePreset] = useState('7d');
   const [dateFrom, setDateFrom] = useState(formatDateInput(defaultRange.from));
   const [dateTo, setDateTo] = useState(formatDateInput(defaultRange.to));
@@ -322,18 +464,26 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
   const [hostCompanies, setHostCompanies] = useState([]);
   const [hostCompaniesLoading, setHostCompaniesLoading] = useState(false);
   const [hostCompaniesError, setHostCompaniesError] = useState('');
+  const [departments, setDepartments] = useState([]);
+  const [departmentsLoading, setDepartmentsLoading] = useState(false);
+  const [departmentsError, setDepartmentsError] = useState('');
+  const [devices, setDevices] = useState([]);
+  const [devicesLoading, setDevicesLoading] = useState(false);
+  const [devicesError, setDevicesError] = useState('');
+  const [locations, setLocations] = useState([]);
+  const [locationsLoading, setLocationsLoading] = useState(false);
+  const [locationsError, setLocationsError] = useState('');
   const [lastRefresh, setLastRefresh] = useState(null);
   const [overview, setOverview] = useState(null);
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewError, setOverviewError] = useState('');
-  const [staffList, setStaffList] = useState([]);
-  const [staffLoading, setStaffLoading] = useState(false);
-  const [staffError, setStaffError] = useState('');
-  const [userQuery, setUserQuery] = useState('');
-  const [selectedUser, setSelectedUser] = useState(null);
   const [reportRuns, setReportRuns] = useState([]);
   const [reportRunsLoading, setReportRunsLoading] = useState(false);
   const [reportRunsError, setReportRunsError] = useState('');
+  const [systemHealth, setSystemHealth] = useState(null);
+  const [systemHealthLoading, setSystemHealthLoading] = useState(false);
+  const [systemHealthError, setSystemHealthError] = useState('');
+  const [isHealthInfoOpen, setIsHealthInfoOpen] = useState(false);
 
   const hostCompanyMap = useMemo(() => {
     const map = {};
@@ -344,6 +494,40 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     });
     return map;
   }, [hostCompanies]);
+
+  const departmentMap = useMemo(() => {
+    const map = {};
+    departments.forEach((dept) => {
+      if (dept?._id) {
+        map[dept._id] = dept.name || dept.departmentName || 'Unknown';
+      }
+    });
+    return map;
+  }, [departments]);
+
+  const deviceMap = useMemo(() => {
+    const map = {};
+    devices.forEach((device) => {
+      if (device?.fingerprint) {
+        const label = device.label || formatDeviceInfoLabel(device.deviceInfo) || 'Registered Device';
+        map[device.fingerprint] = label;
+      }
+    });
+    return map;
+  }, [devices]);
+
+  const locationMap = useMemo(() => {
+    const map = {};
+    locations.forEach((loc) => {
+      if (loc?.key) {
+        map[loc.key] = {
+          name: loc.name || loc.key,
+          address: loc.address || loc.name || loc.key,
+        };
+      }
+    });
+    return map;
+  }, [locations]);
 
   useEffect(() => {
     if (datePreset !== 'custom') {
@@ -357,7 +541,13 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     if (!canViewDeveloperReports && activeTab === 'developerReports') {
       setActiveTab('eventLog');
     }
-  }, [activeTab, canViewDeveloperReports]);
+    if (!canViewSystemHealth && activeTab === 'systemHealth') {
+      setActiveTab('eventLog');
+    }
+    if (activeTab === 'detectors') {
+      setActiveTab('eventLog');
+    }
+  }, [activeTab, canViewDeveloperReports, canViewSystemHealth]);
 
   useEffect(() => {
     if (isAdmin) {
@@ -368,10 +558,6 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
   useEffect(() => {
     fetchEntries();
   }, [hostCompanyFilter, isAdmin, isHostCompany, hostCompanyId]);
-
-  useEffect(() => {
-    fetchDetectors();
-  }, [dateTo, hostCompanyFilter, isAdmin, isHostCompany, hostCompanyId]);
 
   const fetchHostCompanies = useCallback(async () => {
     setHostCompaniesLoading(true);
@@ -398,6 +584,85 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     if (isHostCompany && hostCompanyId) return hostCompanyId;
     return '';
   }, [hostCompanyFilter, hostCompanyId, isHostCompany]);
+
+  const fetchDepartments = useCallback(async () => {
+    if (!isAdmin && !isHostCompany) return;
+    setDepartmentsLoading(true);
+    setDepartmentsError('');
+    try {
+      const hostId = scopedHostId();
+      const params = hostId ? { hostCompanyId: hostId } : {};
+      const response = await departmentAPI.getAll(params);
+      if (response?.success) {
+        const list = response.departments || [];
+        setDepartments(Array.isArray(list) ? list : []);
+      } else {
+        setDepartments([]);
+        setDepartmentsError(response?.error || 'Endpoint not connected');
+      }
+    } catch (error) {
+      setDepartments([]);
+      setDepartmentsError('Endpoint not connected');
+    } finally {
+      setDepartmentsLoading(false);
+    }
+  }, [isAdmin, isHostCompany, scopedHostId]);
+
+  const fetchDevices = useCallback(async () => {
+    if (!isAdmin && !isHostCompany) return;
+    setDevicesLoading(true);
+    setDevicesError('');
+    try {
+      const hostId = scopedHostId();
+      const params = hostId ? { hostCompanyId: hostId } : {};
+      const response = await devicesAPI.getAll(params);
+      if (response?.success) {
+        const list = response.devices || [];
+        setDevices(Array.isArray(list) ? list : []);
+      } else {
+        setDevices([]);
+        setDevicesError(response?.error || 'Endpoint not connected');
+      }
+    } catch (error) {
+      setDevices([]);
+      setDevicesError('Endpoint not connected');
+    } finally {
+      setDevicesLoading(false);
+    }
+  }, [isAdmin, isHostCompany, scopedHostId]);
+
+  const fetchLocations = useCallback(async () => {
+    if (!isAdmin && !isHostCompany) return;
+    setLocationsLoading(true);
+    setLocationsError('');
+    try {
+      const response = await locationsAPI.getAll();
+      if (response?.success) {
+        const list = response.locations || [];
+        setLocations(Array.isArray(list) ? list : []);
+      } else {
+        setLocations([]);
+        setLocationsError(response?.error || 'Endpoint not connected');
+      }
+    } catch (error) {
+      setLocations([]);
+      setLocationsError('Endpoint not connected');
+    } finally {
+      setLocationsLoading(false);
+    }
+  }, [isAdmin, isHostCompany]);
+
+  useEffect(() => {
+    fetchDepartments();
+  }, [fetchDepartments]);
+
+  useEffect(() => {
+    fetchDevices();
+  }, [fetchDevices]);
+
+  useEffect(() => {
+    fetchLocations();
+  }, [fetchLocations]);
 
   const fetchEntries = useCallback(async () => {
     if (!isAdmin && !isHostCompany) return;
@@ -426,29 +691,6 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     }
   }, [isAdmin, isHostCompany, hostCompanyId, hostCompanyFilter, scopedHostId]);
 
-  const fetchDetectors = useCallback(async () => {
-    if (!isAdmin && !isHostCompany) return;
-    setDetectorLoading(true);
-    setDetectorError('');
-    try {
-      const params = { date: dateTo || formatDateInput(new Date()) };
-      const hostId = scopedHostId();
-      if (hostId) params.hostCompanyId = hostId;
-      const response = await notAccountableAPI.getAll(params);
-      if (response?.success) {
-        setDetectors(Array.isArray(response.notAccountable) ? response.notAccountable : []);
-      } else {
-        setDetectors([]);
-        setDetectorError('No data available (endpoint not connected)');
-      }
-    } catch (error) {
-      setDetectors([]);
-      setDetectorError('No data available (endpoint not connected)');
-    } finally {
-      setDetectorLoading(false);
-    }
-  }, [dateTo, isAdmin, isHostCompany, hostCompanyId, hostCompanyFilter, scopedHostId]);
-
   const fetchDeveloperOverview = useCallback(async () => {
     if (!isAdmin) return;
     setOverviewLoading(true);
@@ -472,28 +714,6 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
       setOverviewError('Failed to load system overview.');
     } finally {
       setOverviewLoading(false);
-    }
-  }, [isAdmin, scopedHostId]);
-
-  const fetchStaffList = useCallback(async () => {
-    if (!isAdmin) return;
-    setStaffLoading(true);
-    setStaffError('');
-    try {
-      const hostId = scopedHostId();
-      const params = hostId ? { hostCompanyId: hostId } : {};
-      const response = await staffAPI.getList(params);
-      if (response?.success) {
-        setStaffList(Array.isArray(response.staff) ? response.staff : []);
-      } else {
-        setStaffList([]);
-        setStaffError(response?.error || 'Failed to load staff list.');
-      }
-    } catch (error) {
-      setStaffList([]);
-      setStaffError('Failed to load staff list.');
-    } finally {
-      setStaffLoading(false);
     }
   }, [isAdmin, scopedHostId]);
 
@@ -522,12 +742,40 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     }
   }, [isAdmin, scopedHostId]);
 
+  const fetchSystemHealth = useCallback(async () => {
+    if (!canViewSystemHealth) return;
+    setSystemHealthLoading(true);
+    setSystemHealthError('');
+    try {
+      const hostId = scopedHostId();
+      const params = {};
+      if (hostId) params.hostCompanyId = hostId;
+      const response = await systemAPI.getSystemHealth(params);
+      if (response?.success) {
+        setSystemHealth(response);
+      } else {
+        setSystemHealth(null);
+        setSystemHealthError(response?.error || 'Failed to load system health.');
+      }
+    } catch (error) {
+      setSystemHealth(null);
+      setSystemHealthError('Failed to load system health.');
+    } finally {
+      setSystemHealthLoading(false);
+    }
+  }, [canViewSystemHealth, scopedHostId]);
+
   useEffect(() => {
-    if (activeTab !== 'developerReports' || !canViewDeveloperReports) return;
-    fetchDeveloperOverview();
-    fetchStaffList();
-    fetchReportRuns();
-  }, [activeTab, canViewDeveloperReports, fetchDeveloperOverview, fetchStaffList, fetchReportRuns]);
+    if (activeTab === 'developerReports') {
+      if (!canViewDeveloperReports) return;
+      fetchDeveloperOverview();
+      fetchReportRuns();
+    }
+    if (activeTab === 'systemHealth') {
+      if (!canViewSystemHealth) return;
+      fetchSystemHealth();
+    }
+  }, [activeTab, canViewDeveloperReports, canViewSystemHealth, fetchDeveloperOverview, fetchReportRuns, fetchSystemHealth]);
   const startDate = dateFrom ? new Date(dateFrom) : null;
   const endDate = dateTo ? new Date(dateTo) : null;
   if (endDate) endDate.setHours(23, 59, 59, 999);
@@ -555,8 +803,8 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
           resolveReasonLabel(entry),
           resolveUserLabel(entry),
           resolveHostCompanyLabel(entry, hostCompanyMap),
-          resolveDepartmentLabel(entry),
-          resolveLocationLabel(entry)
+          resolveDepartmentLabel(entry, departmentMap),
+          resolveLocationLabel(entry, locationMap)
         ].join(' ');
         if (!toUpper(haystack).includes(upperSearch)) return false;
       }
@@ -574,22 +822,10 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     isHostCompany,
     hostCompanyId,
     hostCompanyMap,
+    departmentMap,
+    locationMap,
     scopedHostId,
   ]);
-
-  const developerEntries = useMemo(() => {
-    const scopeHost = scopedHostId();
-    return entries.filter((entry) => {
-      const createdAt = entry?.createdAt ? new Date(entry.createdAt) : null;
-      if (startDate && createdAt && createdAt < startDate) return false;
-      if (endDate && createdAt && createdAt > endDate) return false;
-      if (scopeHost) {
-        const entryHost = extractHostId(entry);
-        if (entryHost && entryHost !== scopeHost) return false;
-      }
-      return true;
-    });
-  }, [entries, startDate, endDate, scopedHostId]);
 
   const typeOptions = useMemo(() => (
     Array.from(new Set(entries.map((entry) => toUpper(resolveActionType(entry))))).sort()
@@ -630,58 +866,6 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     const start = (currentPage - 1) * PAGE_SIZE;
     return sortedEntries.slice(start, start + PAGE_SIZE);
   }, [sortedEntries, currentPage]);
-
-  const staffResults = useMemo(() => {
-    if (!Array.isArray(staffList)) return [];
-    const term = toUpper(userQuery);
-    const filtered = staffList.filter((member) => {
-      if (!term) return true;
-      const haystack = [
-        member?.name,
-        member?.surname,
-        member?.idNumber,
-        member?.phoneNumber,
-        member?.role,
-        member?.department,
-        member?.mentorName,
-        member?.hostCompanyId,
-        hostCompanyMap[member?.hostCompanyId]
-      ].join(' ');
-      return toUpper(haystack).includes(term);
-    });
-    return term ? filtered : filtered.slice(0, 25);
-  }, [staffList, userQuery, hostCompanyMap]);
-
-  const recentErrors = useMemo(() => {
-    const notificationErrors = developerEntries
-      .filter(isErrorLikeEntry)
-      .map((entry) => ({
-        id: entry?._id,
-        type: 'notification',
-        title: resolveActionType(entry),
-        summary: entry?.message || resolveReasonLabel(entry),
-        severity: mapSeverityToCategory(resolveSeverity(entry)),
-        time: entry?.createdAt,
-        payload: entry,
-      }));
-
-    const reportRunErrors = reportRuns
-      .filter((run) => run?.status === 'failed')
-      .map((run) => ({
-        id: run?._id,
-        type: 'report',
-        title: `${humanizeReportType(run?.reportType)} failed`,
-        summary: run?.errorMessage || 'Report delivery failed',
-        severity: 'CRITICAL',
-        time: run?.createdAt,
-        payload: run,
-      }));
-
-    return [...reportRunErrors, ...notificationErrors]
-      .filter((item) => item.time)
-      .sort((a, b) => new Date(b.time) - new Date(a.time))
-      .slice(0, 10);
-  }, [developerEntries, reportRuns]);
 
   const overviewCards = useMemo(() => {
     const health = overview?.health || {};
@@ -761,15 +945,41 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
         status: failedRuns.length ? 'Issues detected' : 'Healthy',
         severity: failedRuns.length ? 'critical' : 'info',
         detail: failedRuns.length ? `${failedRuns.length} failed run(s)` : 'No failed runs'
-      },
-      {
-        label: 'Recent errors',
-        status: recentErrors.length ? `${recentErrors.length} flagged` : 'None',
-        severity: recentErrors.length ? 'warning' : 'info',
-        detail: recentErrors.length ? 'Review the errors feed' : 'No critical events found'
       }
     ];
-  }, [overview, reportRuns, recentErrors]);
+  }, [overview, reportRuns]);
+
+  const systemHealthSections = useMemo(() => {
+    if (systemHealth?.sections?.length) {
+      return systemHealth.sections;
+    }
+    const summaryKeys = systemHealth?.summary ? Object.keys(systemHealth.summary) : [];
+    if (summaryKeys.length) {
+      return summaryKeys.map((key) => {
+        const fallback = DEFAULT_SYSTEM_HEALTH_SECTIONS.find((section) => section.key === key);
+        return {
+          key,
+          label: fallback?.label || key,
+          description: fallback?.description,
+        };
+      });
+    }
+    return DEFAULT_SYSTEM_HEALTH_SECTIONS;
+  }, [systemHealth]);
+
+  const systemHealthChecks = useMemo(() => (
+    Array.isArray(systemHealth?.checks) ? systemHealth.checks : []
+  ), [systemHealth]);
+
+  const systemHealthChecksBySection = useMemo(() => {
+    const map = {};
+    systemHealthChecks.forEach((check) => {
+      if (!check?.section) return;
+      if (!map[check.section]) map[check.section] = [];
+      map[check.section].push(check);
+    });
+    return map;
+  }, [systemHealthChecks]);
 
   const handleSort = (key) => {
     if (sortKey === key) {
@@ -785,14 +995,8 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
     return sortOrder === 'asc' ? '?' : '?';
   };
 
-  const detectorsDateLabel = dateTo
-    ? new Date(dateTo).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
-    : 'latest';
-
   const closingDrawer = () => {
     setSelectedEvent(null);
-    setSelectedDetector(null);
-    setSelectedUser(null);
   };
 
   const hostCompanyTitle = hostCompaniesError
@@ -827,11 +1031,12 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
             className="audit-center-refresh"
             onClick={() => {
               fetchEntries();
-              fetchDetectors();
               if (activeTab === 'developerReports') {
                 fetchDeveloperOverview();
-                fetchStaffList();
                 fetchReportRuns();
+              }
+              if (activeTab === 'systemHealth' && canViewSystemHealth) {
+                fetchSystemHealth();
               }
             }}
           >
@@ -935,13 +1140,15 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
         >
           Event Log
         </button>
-        <button
-          type="button"
-          className={`tab-button ${activeTab === 'detectors' ? 'active' : ''}`}
-          onClick={() => setActiveTab('detectors')}
-        >
-          Automated Detectors
-        </button>
+        {canViewSystemHealth && (
+          <button
+            type="button"
+            className={`tab-button ${activeTab === 'systemHealth' ? 'active' : ''}`}
+            onClick={() => setActiveTab('systemHealth')}
+          >
+            System Health
+          </button>
+        )}
         {canViewDeveloperReports && (
           <button
             type="button"
@@ -995,8 +1202,6 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                           <tr
                             key={entry._id}
                             onClick={() => {
-                              setSelectedUser(null);
-                              setSelectedDetector(null);
                               setSelectedEvent(entry);
                             }}
                           >
@@ -1005,9 +1210,9 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                             <td>{resolveActionType(entry)}</td>
                             <td>{renderResultCell(entry)}</td>
                             <td>{resolveHostCompanyLabel(entry, hostCompanyMap)}</td>
-                            <td>{resolveDepartmentLabel(entry)}</td>
-                            <td>{shorten(resolveDeviceLabel(entry), 14)}</td>
-                            <td>{resolveLocationLabel(entry)}</td>
+                            <td>{resolveDepartmentLabel(entry, departmentMap)}</td>
+                            <td>{shorten(resolveDeviceLabel(entry, deviceMap), 14)}</td>
+                            <td>{resolveLocationLabel(entry, locationMap)}</td>
                             <td>
                               <span className={`audit-pill severity-${severityKey.toLowerCase()}`}>
                                 {severityDisplay[severityKey]}
@@ -1029,63 +1234,153 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
           </div>
         )}
 
-        {activeTab === 'detectors' && (
+        {activeTab === 'systemHealth' && (
           <div className="audit-tab-content">
-            <div className="audit-detector-header">
-              <h3>Not-accountable detectors</h3>
-              <p>Showing results for {detectorsDateLabel}</p>
+            <div className="audit-dev-section">
+              <div className="audit-dev-section-header">
+                <div>
+                  <div className="audit-dev-section-title">
+                    <h3>System Health</h3>
+                    <button
+                      type="button"
+                      className="audit-info-button"
+                      title="How to read System Health"
+                      onClick={() => setIsHealthInfoOpen(true)}
+                    >
+                      i
+                    </button>
+                  </div>
+                  <p>Technical and business-critical signals for this scope.</p>
+                </div>
+                {systemHealthLoading && <span className="audit-pill severity-info">Loading</span>}
+                {!systemHealthLoading && systemHealthError && (
+                  <span className="audit-pill severity-critical">Error</span>
+                )}
+              </div>
+              {systemHealthLoading && (
+                <div className="audit-center-loading">
+                  <div className="spinner" />
+                  <p>Loading system health...</p>
+                </div>
+              )}
+              {!systemHealthLoading && systemHealthError && (
+                <div className="audit-center-error">
+                  <p>{systemHealthError}</p>
+                </div>
+              )}
+              {!systemHealthLoading && !systemHealthError && systemHealth && (
+                <>
+                  <div className="audit-overview-grid">
+                    {systemHealthSections.map((section) => {
+                      const item = systemHealth.summary?.[section.key];
+                      if (!item) return null;
+                      const status = String(item.status || 'UNKNOWN').toUpperCase();
+                      const severity = resolveHealthStatusSeverity(status);
+                      return (
+                        <div key={section.key} className="audit-overview-card">
+                          <div className="audit-overview-card-header">
+                            <span className="audit-overview-label">{section.label || section.key}</span>
+                            <span className={`audit-pill severity-${severity}`}>{status}</span>
+                          </div>
+                          <div className="audit-overview-value">
+                            {item.reason || 'No details'}
+                          </div>
+                          {section.description && (
+                            <div className="audit-overview-sub">{section.description}</div>
+                          )}
+                          {item.metrics && (
+                            <div className="audit-overview-sub">
+                              {Object.entries(item.metrics)
+                                .filter(([metricKey, metricValue]) => metricValue !== null && metricValue !== undefined)
+                                .map(([metricKey, metricValue]) => (
+                                  <div key={metricKey}>
+                                    <strong>{metricKey}:</strong> {typeof metricValue === 'number'
+                                      ? metricValue.toFixed
+                                        ? metricValue.toFixed(1)
+                                        : metricValue
+                                      : String(metricValue)}
+                                  </div>
+                                ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {systemHealthChecks.length > 0 && (
+                    <div className="audit-system-checks">
+                      {systemHealthSections.map((section) => {
+                        const checks = systemHealthChecksBySection[section.key] || [];
+                        if (!checks.length) return null;
+                        return (
+                          <div key={section.key} className="audit-system-section">
+                            <div className="audit-dev-section-header">
+                              <div>
+                                <h4>{section.label || section.key}</h4>
+                                {section.description && <p>{section.description}</p>}
+                              </div>
+                            </div>
+                            <div className="audit-table-wrapper">
+                              <table className="audit-table">
+                                <thead>
+                                  <tr>
+                                    <th>Check</th>
+                                    <th>Status</th>
+                                    <th>Detail</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {checks.map((check) => {
+                                    const status = String(check.status || 'UNKNOWN').toUpperCase();
+                                    const severity = resolveHealthStatusSeverity(status);
+                                    return (
+                                      <tr key={`${section.key}-${check.label}`}>
+                                        <td>{check.label}</td>
+                                        <td>
+                                          <span className={`audit-pill severity-${severity}`}>{status}</span>
+                                        </td>
+                                        <td>
+                                          <div>{check.detail || '-'}</div>
+                                          {check.metrics && (
+                                            <div className="audit-overview-sub">
+                                              {Object.entries(check.metrics)
+                                                .filter(([metricKey, metricValue]) => metricValue !== null && metricValue !== undefined)
+                                                .map(([metricKey, metricValue]) => (
+                                                  <div key={metricKey}>
+                                                    <strong>{metricKey}:</strong> {typeof metricValue === 'number'
+                                                      ? metricValue.toFixed
+                                                        ? metricValue.toFixed(1)
+                                                        : metricValue
+                                                      : String(metricValue)}
+                                                  </div>
+                                                ))}
+                                            </div>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {systemHealthChecks.length === 0 && (
+                    <div className="audit-center-empty">No diagnostic checks available.</div>
+                  )}
+                  <div className="audit-dev-section-footer">
+                    <span className="audit-overview-sub">
+                      Evaluated at {formatTimestamp(systemHealth.evaluatedAt)}
+                      {' • '}
+                      Window {systemHealth.windowMinutes || 60} minutes
+                    </span>
+                  </div>
+                </>
+              )}
             </div>
-            {detectorLoading && (
-              <div className="audit-center-loading">
-                <div className="spinner" />
-                <p>Loading detectors...</p>
-              </div>
-            )}
-            {!detectorLoading && detectorError && (
-              <div className="audit-center-error"><p>{detectorError}</p></div>
-            )}
-            {!detectorLoading && !detectorError && detectors.length === 0 && (
-              <div className="audit-center-empty">No detector issues for this day.</div>
-            )}
-            {!detectorLoading && !detectorError && detectors.length > 0 && (
-              <div className="audit-table-wrapper">
-                <table className="audit-table">
-                  <thead>
-                    <tr>
-                      <th>Time</th>
-                      <th>Detector</th>
-                      <th>User</th>
-                      <th>Trigger</th>
-                      <th>Severity</th>
-                      <th>Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {detectors.map((detector) => (
-                      <tr
-                        key={detector._id || `${detector.staffId}-${detector.reason}`}
-                        onClick={() => {
-                          setSelectedUser(null);
-                          setSelectedEvent(null);
-                          setSelectedDetector(detector);
-                        }}
-                      >
-                        <td>{formatTimestamp(detector.clockInTimestamp || detector.clockOutTimestamp)}</td>
-                        <td>{detector.reason}</td>
-                        <td>{detector.staffName}</td>
-                        <td>{detector.details || 'Review required'}</td>
-                        <td>
-                          <span className={`audit-pill severity-${deriveDetectorSeverity(detector).toLowerCase()}`}>
-                            {severityDisplay[deriveDetectorSeverity(detector)]}
-                          </span>
-                        </td>
-                        <td><span className="audit-pill status-pill">Open</span></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
           </div>
         )}
 
@@ -1120,105 +1415,6 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                       <span className="audit-overview-label">{card.label}</span>
                       <div className="audit-overview-value">{card.value}</div>
                       {card.hint && <div className="audit-overview-sub">{card.hint}</div>}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div className="audit-dev-section">
-              <div className="audit-dev-section-header">
-                <div>
-                  <h3>User lookup</h3>
-                  <p>Find users for support tickets without manual queries.</p>
-                </div>
-              </div>
-              <div className="audit-user-search">
-                <input
-                  type="text"
-                  value={userQuery}
-                  onChange={(event) => setUserQuery(event.target.value)}
-                  placeholder="Search name, ID number, phone, role, department..."
-                />
-                <span className="audit-user-meta">
-                  Showing {staffResults.length} of {staffList.length}
-                </span>
-              </div>
-              {staffLoading && (
-                <div className="audit-center-loading">
-                  <div className="spinner" />
-                  <p>Loading staff list...</p>
-                </div>
-              )}
-              {!staffLoading && staffError && (
-                <div className="audit-center-error">
-                  <p>{staffError}</p>
-                </div>
-              )}
-              {!staffLoading && !staffError && staffResults.length === 0 && (
-                <div className="audit-center-empty">No staff match this search.</div>
-              )}
-              {!staffLoading && !staffError && staffResults.length > 0 && (
-                <div className="audit-table-wrapper">
-                  <table className="audit-table">
-                    <thead>
-                      <tr>
-                        <th>Name</th>
-                        <th>Role</th>
-                        <th>Department</th>
-                        <th>Host Company</th>
-                        <th>ID / Phone</th>
-                        <th>Created</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {staffResults.map((member) => (
-                        <tr
-                          key={member._id}
-                          onClick={() => {
-                            setSelectedEvent(null);
-                            setSelectedDetector(null);
-                            setSelectedUser(member);
-                          }}
-                        >
-                          <td>{`${member.name || ''} ${member.surname || ''}`.trim() || 'Unknown'}</td>
-                          <td>{member.role || 'Unknown'}</td>
-                          <td>{member.department || 'Unknown'}</td>
-                          <td>{hostCompanyMap[member.hostCompanyId] || 'Unknown'}</td>
-                          <td>{member.idNumber || member.phoneNumber || '-'}</td>
-                          <td>{formatDateOnly(member.createdAt)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </div>
-
-            <div className="audit-dev-section">
-              <div className="audit-dev-section-header">
-                <div>
-                  <h3>Recent errors</h3>
-                  <p>Plain-language error feed (notifications + report failures).</p>
-                </div>
-              </div>
-              {recentErrors.length === 0 && (
-                <div className="audit-center-empty">No recent errors flagged.</div>
-              )}
-              {recentErrors.length > 0 && (
-                <div className="audit-error-list">
-                  {recentErrors.map((item) => (
-                    <div key={item.id} className="audit-error-item">
-                      <div>
-                        <div className="audit-error-title">{item.title || 'System event'}</div>
-                        <p className="audit-error-summary">{item.summary}</p>
-                        <span className="audit-error-meta">
-                          {formatTimestamp(item.time)} • {item.type === 'report' ? 'Auto report' : 'Notification'}
-                        </span>
-                      </div>
-                      <span className={`audit-pill severity-${String(item.severity || 'info').toLowerCase()}`}>
-                        {severityDisplay[item.severity] || item.severity || 'Info'}
-                      </span>
                     </div>
                   ))}
                 </div>
@@ -1307,24 +1503,14 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
         )}
       </div>
 
-      {(selectedEvent || selectedDetector || selectedUser) && (
+      {selectedEvent && (
         <div className="audit-drawer-overlay" onClick={closingDrawer}>
           <div className="audit-drawer" onClick={(e) => e.stopPropagation()}>
             <div className="audit-drawer-header">
               <div>
-                <h3>
-                  {selectedEvent
-                    ? 'Event details'
-                    : selectedDetector
-                      ? 'Detector details'
-                      : 'User details'}
-                </h3>
+                <h3>Event details</h3>
                 <p>
-                  {selectedEvent
-                    ? formatTimestamp(selectedEvent.createdAt)
-                    : selectedDetector
-                      ? detectorsDateLabel
-                      : formatDateOnly(selectedUser?.createdAt)}
+                  {formatTimestamp(selectedEvent.createdAt)}
                 </p>
               </div>
               <button type="button" onClick={closingDrawer}>Close</button>
@@ -1336,37 +1522,63 @@ function AuditCenter({ isAdmin, hostCompanyId, isHostCompany }) {
                   <div><span>Severity</span><strong>{mapSeverityToCategory(resolveSeverity(selectedEvent))}</strong></div>
                   <div><span>User</span><strong>{resolveUserLabel(selectedEvent)}</strong></div>
                   <div><span>Host company</span><strong>{resolveHostCompanyLabel(selectedEvent, hostCompanyMap)}</strong></div>
-                  <div><span>Department</span><strong>{resolveDepartmentLabel(selectedEvent)}</strong></div>
-                  <div><span>Device</span><strong>{resolveDeviceLabel(selectedEvent)}</strong></div>
-                  <div><span>Location</span><strong>{resolveLocationLabel(selectedEvent)}</strong></div>
+                  <div><span>Department</span><strong>{resolveDepartmentLabel(selectedEvent, departmentMap)}</strong></div>
+                  <div><span>Device</span><strong>{resolveDeviceLabel(selectedEvent, deviceMap)}</strong></div>
+                  <div><span>Location</span><strong>{resolveLocationLabel(selectedEvent, locationMap)}</strong></div>
                   <div><span>Reason</span><strong>{resolveReasonLabel(selectedEvent)}</strong></div>
-                </div>
-              )}
-              {selectedDetector && (
-                <div className="audit-drawer-grid">
-                  <div><span>User</span><strong>{selectedDetector.staffName}</strong></div>
-                  <div><span>Detector</span><strong>{selectedDetector.reason}</strong></div>
-                  <div><span>Details</span><strong>{selectedDetector.details || 'N/A'}</strong></div>
-                  <div><span>Host company</span><strong>{selectedDetector.hostCompanyName || 'Unknown'}</strong></div>
-                  <div><span>Department</span><strong>{selectedDetector.department || 'Not set'}</strong></div>
-                  <div><span>Severity</span><strong>{severityDisplay[deriveDetectorSeverity(selectedDetector)]}</strong></div>
-                </div>
-              )}
-              {selectedUser && (
-                <div className="audit-drawer-grid">
-                  <div><span>Name</span><strong>{`${selectedUser.name || ''} ${selectedUser.surname || ''}`.trim() || 'Unknown'}</strong></div>
-                  <div><span>Role</span><strong>{selectedUser.role || 'Unknown'}</strong></div>
-                  <div><span>Department</span><strong>{selectedUser.department || 'Unknown'}</strong></div>
-                  <div><span>Host company</span><strong>{hostCompanyMap[selectedUser.hostCompanyId] || 'Unknown'}</strong></div>
-                  <div><span>ID Number</span><strong>{selectedUser.idNumber || 'N/A'}</strong></div>
-                  <div><span>Phone</span><strong>{selectedUser.phoneNumber || 'N/A'}</strong></div>
-                  <div><span>Mentor</span><strong>{selectedUser.mentorName || 'N/A'}</strong></div>
-                  <div><span>Created</span><strong>{formatDateOnly(selectedUser.createdAt)}</strong></div>
                 </div>
               )}
               <div className="audit-drawer-json">
                 <span>Payload</span>
-                <pre>{JSON.stringify(selectedEvent || selectedDetector || selectedUser, null, 2)}</pre>
+                <pre>{JSON.stringify(selectedEvent, null, 2)}</pre>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isHealthInfoOpen && (
+        <div className="audit-modal-overlay" onClick={() => setIsHealthInfoOpen(false)}>
+          <div className="audit-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="audit-modal-header">
+              <div>
+                <h3>System Health language</h3>
+                <p>What the colors and checks mean in this screen.</p>
+              </div>
+              <button type="button" onClick={() => setIsHealthInfoOpen(false)}>Close</button>
+            </div>
+            <div className="audit-modal-content">
+              <div className="audit-modal-section">
+                <h4>Status legend</h4>
+                <div className="audit-legend-grid">
+                  {SYSTEM_HEALTH_LANGUAGE.statuses.map((item) => (
+                    <div key={item.label} className="audit-legend-card">
+                      <div className="audit-legend-title">
+                        <span className={`audit-pill severity-${item.severity}`}>{item.label}</span>
+                        <strong>{item.label}</strong>
+                      </div>
+                      <p>{item.description}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="audit-modal-section">
+                <h4>Timing rules</h4>
+                <div className="audit-modal-list">
+                  {SYSTEM_HEALTH_LANGUAGE.timing.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="audit-modal-section">
+                <h4>Lookback windows</h4>
+                <div className="audit-modal-list">
+                  {SYSTEM_HEALTH_LANGUAGE.windows.map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
+                </div>
               </div>
             </div>
           </div>

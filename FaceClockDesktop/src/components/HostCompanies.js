@@ -2,6 +2,24 @@ import React, { useState, useEffect, useRef } from 'react';
 import { hostCompanyAPI } from '../services/api';
 import './HostCompanies.css';
 
+const resolveProfilePicture = (value) => {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^(data:|https?:|file:|blob:)/i.test(trimmed)) return trimmed;
+  const looksBase64 = /^[A-Za-z0-9+/=]+$/.test(trimmed) && trimmed.length > 100;
+  if (looksBase64) return `data:image/jpeg;base64,${trimmed}`;
+  return trimmed;
+};
+
+const getCompanyInitials = (company) => {
+  const name = (company?.companyName || company?.name || '').trim();
+  if (!name) return 'HC';
+  const parts = name.split(' ');
+  if (parts.length === 1) return parts[0][0]?.toUpperCase() || 'H';
+  return `${parts[0][0] || ''}${parts[parts.length - 1][0] || ''}`.toUpperCase();
+};
+
 function HostCompanies({ isAdmin }) {
   const [hostCompanies, setHostCompanies] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9,6 +27,8 @@ function HostCompanies({ isAdmin }) {
   const [selectedHostCompany, setSelectedHostCompany] = useState(null);
   const [editingHostCompany, setEditingHostCompany] = useState(null);
   const [showHostCompanyModal, setShowHostCompanyModal] = useState(false);
+  const [showProfilePreview, setShowProfilePreview] = useState(false);
+  const [profilePreview, setProfilePreview] = useState({ src: '', name: '' });
   
   // Form fields for host company
   const [hostCompanyName, setHostCompanyName] = useState('');
@@ -261,6 +281,21 @@ function HostCompanies({ isAdmin }) {
     setSelectedHostCompany(company);
   };
 
+  const openProfilePreview = (company) => {
+    const src = resolveProfilePicture(company?.profilePicture);
+    if (!src) return;
+    setProfilePreview({
+      src,
+      name: company?.companyName || company?.name || 'Host Company'
+    });
+    setShowProfilePreview(true);
+  };
+
+  const closeProfilePreview = () => {
+    setShowProfilePreview(false);
+    setProfilePreview({ src: '', name: '' });
+  };
+
   if (!isAdmin) {
     return (
       <div className="access-denied">
@@ -280,6 +315,7 @@ function HostCompanies({ isAdmin }) {
 
   // If a company is selected, show details view
   if (selectedHostCompany) {
+    const selectedProfileSrc = resolveProfilePicture(selectedHostCompany.profilePicture);
     return (
       <div className="hc-container">
         {/* PAGE HEADER */}
@@ -297,9 +333,26 @@ function HostCompanies({ isAdmin }) {
         <div className="hc-details-view">
           {/* Company Header */}
           <div className="hc-company-header">
-            <div>
-              <h2 className="hc-company-name">{selectedHostCompany.companyName}</h2>
-              <p className="hc-company-mentor">Mentor: {selectedHostCompany.name}</p>
+            <div className="hc-company-header-left">
+              <button
+                className="hc-avatar-button hc-avatar-large"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  openProfilePreview(selectedHostCompany);
+                }}
+                disabled={!selectedProfileSrc}
+                type="button"
+              >
+                {selectedProfileSrc ? (
+                  <img src={selectedProfileSrc} alt="Host company profile" />
+                ) : (
+                  <span>{getCompanyInitials(selectedHostCompany)}</span>
+                )}
+              </button>
+              <div>
+                <h2 className="hc-company-name">{selectedHostCompany.companyName}</h2>
+                <p className="hc-company-mentor">Mentor: {selectedHostCompany.name}</p>
+              </div>
             </div>
             <div className="hc-company-actions">
               <span className={`hc-status-badge ${selectedHostCompany.isActive ? 'active' : 'inactive'}`}>
@@ -650,6 +703,16 @@ function HostCompanies({ isAdmin }) {
             </div>
           </div>
         )}
+
+        {showProfilePreview && (
+          <div className="hc-profile-modal" onClick={closeProfilePreview}>
+            <div className="hc-profile-modal-content" onClick={(e) => e.stopPropagation()}>
+              <img src={profilePreview.src} alt={profilePreview.name} />
+              <div className="hc-profile-modal-name">{profilePreview.name}</div>
+              <button className="hc-profile-modal-close" onClick={closeProfilePreview}>Close</button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -726,21 +789,42 @@ function HostCompanies({ isAdmin }) {
           </div>
         ) : (
           <div className="hc-table-body">
-            {hostCompanies.map((company, index) => (
-              <div 
-                key={company._id}
-                className={`hc-table-row ${index % 2 === 0 ? 'even' : 'odd'}`}
-                onClick={() => handleViewHostCompanyDetails(company)}
-              >
+            {hostCompanies.map((company, index) => {
+              const profileSrc = resolveProfilePicture(company.profilePicture);
+              return (
+                <div 
+                  key={company._id}
+                  className={`hc-table-row ${index % 2 === 0 ? 'even' : 'odd'}`}
+                  onClick={() => handleViewHostCompanyDetails(company)}
+                >
                 {/* Company Name Column */}
                 <div className="hc-col-company">
-                  <div className="hc-company-title">{company.companyName || company.name}</div>
-                  {company.companyName && company.name !== company.companyName && (
-                    <div className="hc-company-subtitle">{company.name}</div>
-                  )}
-                  {company.emailAddress && (
-                    <div className="hc-company-email">✉️ {company.emailAddress}</div>
-                  )}
+                  <div className="hc-company-title-row">
+                    <button
+                      className="hc-avatar-button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        openProfilePreview(company);
+                      }}
+                      disabled={!profileSrc}
+                      type="button"
+                    >
+                      {profileSrc ? (
+                        <img src={profileSrc} alt="Host company profile" />
+                      ) : (
+                        <span>{getCompanyInitials(company)}</span>
+                      )}
+                    </button>
+                    <div className="hc-company-text">
+                      <div className="hc-company-title">{company.companyName || company.name}</div>
+                      {company.companyName && company.name !== company.companyName && (
+                        <div className="hc-company-subtitle">{company.name}</div>
+                      )}
+                      {company.emailAddress && (
+                        <div className="hc-company-email">✉️ {company.emailAddress}</div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 {/* Registration Number Column */}
@@ -774,7 +858,8 @@ function HostCompanies({ isAdmin }) {
                   </span>
                 </div>
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -1029,6 +1114,16 @@ function HostCompanies({ isAdmin }) {
                 {savingHostCompany ? 'Saving...' : 'Save'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showProfilePreview && (
+        <div className="hc-profile-modal" onClick={closeProfilePreview}>
+          <div className="hc-profile-modal-content" onClick={(e) => e.stopPropagation()}>
+            <img src={profilePreview.src} alt={profilePreview.name} />
+            <div className="hc-profile-modal-name">{profilePreview.name}</div>
+            <button className="hc-profile-modal-close" onClick={closeProfilePreview}>Close</button>
           </div>
         </div>
       )}

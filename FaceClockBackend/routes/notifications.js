@@ -3,6 +3,35 @@ const router = express.Router();
 const Notification = require('../models/Notification');
 const mongoose = require('mongoose');
 
+const normalizeRecipientType = (value) => {
+  if (!value) return null;
+  const raw = String(value).trim();
+  const lower = raw.toLowerCase();
+  if (lower === 'admin' || lower === 'administrator') return 'Admin';
+  if (lower === 'hr') return 'HR';
+  if (lower === 'hostcompany' || lower === 'host company' || lower === 'host_company' || lower === 'host') {
+    return 'HostCompany';
+  }
+  if (lower === 'departmentmanager' || lower === 'department manager') return 'DepartmentManager';
+  if (lower === 'intern') return 'Intern';
+  if (lower === 'staff') return 'Staff';
+  if (lower === 'all') return 'All';
+  return raw;
+};
+
+const resolveRecipientTypeSet = (value) => {
+  const normalized = normalizeRecipientType(value);
+  if (!normalized) return null;
+  if (normalized === 'Admin') return ['Admin', 'HR'];
+  if (normalized === 'HR') return ['HR', 'Admin'];
+  if (normalized === 'HostCompany') return ['HostCompany'];
+  if (normalized === 'DepartmentManager') return ['DepartmentManager'];
+  if (normalized === 'Intern') return ['Intern'];
+  if (normalized === 'Staff') return ['Staff'];
+  if (normalized === 'All') return ['All'];
+  return [normalized];
+};
+
 /**
  * GET /api/notifications
  * Fetch notifications for a user
@@ -88,8 +117,8 @@ router.get('/', async (req, res) => {
       .sort({ createdAt: -1 })
       .limit(parseInt(limit))
       .skip(parseInt(skip))
-      .populate('subjectUserId', 'name surname role department')
-      .populate('relatedEntities.staffId', 'name surname role department')
+      .populate('subjectUserId', 'name surname role department location locationAddress trustedDevices')
+      .populate('relatedEntities.staffId', 'name surname role department location locationAddress trustedDevices')
       .populate('relatedEntities.hostCompanyId', 'name companyName')
       .populate('relatedEntities.departmentId', 'name')
       .lean();
@@ -314,13 +343,42 @@ router.delete('/delete-all', async (req, res) => {
     const { recipientId, recipientType } = req.body;
 
     const filter = {};
+    const normalizedType = normalizeRecipientType(recipientType);
+    const recipientTypes = resolveRecipientTypeSet(recipientType);
+    const isInternOrStaff = normalizedType === 'Intern' || normalizedType === 'Staff';
+    const includeAll = normalizedType && !isInternOrStaff;
 
     if (recipientId) {
-      filter.recipientId = new mongoose.Types.ObjectId(recipientId);
+      if (!mongoose.Types.ObjectId.isValid(recipientId)) {
+        return res.status(400).json({
+          success: false,
+          error: 'Invalid recipientId format'
+        });
+      }
+      const recipientObjectId = new mongoose.Types.ObjectId(recipientId);
+      if (isInternOrStaff) {
+        filter.$or = [
+          { recipientId: recipientObjectId },
+          { subjectUserId: recipientObjectId }
+        ];
+      } else {
+        filter.recipientId = recipientObjectId;
+      }
     }
 
-    if (recipientType) {
-      filter.recipientType = { $in: [recipientType, 'All'] };
+    if (recipientTypes) {
+      const typeSet = includeAll && !recipientTypes.includes('All')
+        ? [...recipientTypes, 'All']
+        : recipientTypes;
+      if (filter.$or) {
+        filter.$and = [
+          { $or: filter.$or },
+          { recipientType: { $in: typeSet } }
+        ];
+        delete filter.$or;
+      } else {
+        filter.recipientType = { $in: typeSet };
+      }
     }
 
     const result = await Notification.deleteMany(filter);

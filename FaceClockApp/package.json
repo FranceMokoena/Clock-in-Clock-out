@@ -6,8 +6,8 @@
   "scripts": {
     "start": "expo start",
     "start:local": "cross-env EXPO_PUBLIC_API_URL=http://localhost:5000/api expo start",
-    "start:tunnel": "cross-env EXPO_PUBLIC_API_URL=http://192.168.88.29:5000/api expo start --tunnel",
-    "start:lan": "cross-env EXPO_PUBLIC_API_URL=http://192.168.88.29:5000/api expo start --lan",
+    "start:tunnel": "cross-env EXPO_PUBLIC_API_URL=http://192.168.88.41:5000/api expo start --tunnel",
+    "start:lan": "cross-env EXPO_PUBLIC_API_URL=http://192.168.88.41:5000/api expo start --lan",
     "start:android": "cross-env EXPO_PUBLIC_API_URL=http://10.0.2.2:5000/api expo start --android",
     "start:ios": "cross-env EXPO_PUBLIC_API_URL=http://localhost:5000/api expo start --ios",
     "start:web": "cross-env EXPO_PUBLIC_API_URL=http://localhost:5000/api expo start --web",
@@ -27,6 +27,7 @@
     "axios": "^1.13.2",
     "expo-application": "~7.0.8",
     "expo-asset": "~12.0.11",
+    "expo-av": "~16.0.8",
     "expo-build-properties": "~1.0.10",
     "expo-camera": "~17.0.10",
     "expo-crypto": "~15.0.8",

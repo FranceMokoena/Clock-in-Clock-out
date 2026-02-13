@@ -91,6 +91,12 @@ const hostCompanySchema = new mongoose.Schema({
       message: 'Please enter a valid email address'
     }
   },
+  // Profile picture (base64 encoded or URL)
+  profilePicture: {
+    type: String,
+    required: false,
+    trim: true
+  },
   businessType: {
     type: String,
     required: false,

@@ -331,3 +331,24 @@ Mobile core: index.js (line 1), App.js (line 3), AdminLogin.js (line 49), Login.
 Desktop core: main.js (line 24), preload.js (line 1), index.js (line 14), App.js (line 94), AuthContext.js (line 12), api.js (line 67), api.js (line 3), notificationHandler.js (line 12)
 Backend core: server.js (line 32), staff.js (line 130), notifications.js (line 18), rotations.js (line 647), locations.js (line 9), internReports.js (line 10), reportSettings.js (line 77), reportRuns.js (line 18), faceRecognitionONNX.js (line 1), rekognitionClient.js (line 14), actionLogger.js (line 66), eventEmitter.js (line 33), rotationEvidence.js (line 104), reportScheduler.js (line 1), reportDelivery.js (line 1), timeUtils.js (line 3)
 Backend models: Staff.js (line 5), HostCompany.js (line 4), Department.js (line 3), ClockLog.js (line 3), AttendanceCorrection.js (line 3), LeaveApplication.js (line 3), InternReport.js (line 3), Notification.js (line 3), PayrollRecord.js (line 3), DeviceInfo.js (line 3), DeviceQuality.js (line 8), FailedMatch.js (line 7), RotationPlan.js (line 3), RotationAssignment.js (line 3), RotationApproval.js (line 3), RotationDecision.js (line 3), RotationHistory.js (line 3), ReportSettings.js (line 10), ReportRun.js (line 3), Staff (1).js (line 5)
+
+
+
+# NEW IMPLEMENTATIONS FOR SELF AWARENESS AND MONITORING SYSTEM
+# THIS WILL INVOLVE PHASES AND STAGES
+# Phase 1 (backend truth + data collection)
+# WE ARE CURRENTLY HERE
+Add lightweight metrics middleware to track:
+request latency, status codes, timeouts (per route)
+Add a health sampler (every 1–5 min) to store:
+memory usage, DB state, socket count, ONNX state
+Add event logging for:
+duplicate clock attempts
+face match failures
+geocoding failures
+Add system-checks endpoint that aggregates current + last 24h windows.
+Phase 2 (Audit Center UI)
+
+New “System Health” section in Audit Center:
+status cards + drilldown tables
+host-company doesn't see anything about this; admin sees everything

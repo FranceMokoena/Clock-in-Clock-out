@@ -10,7 +10,7 @@ if (!rootElement) {
 }
 
 const root = ReactDOM.createRoot(rootElement);
-
+//for reports purposes
 // Add error boundary
 try {
   root.render(

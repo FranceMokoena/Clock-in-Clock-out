@@ -23,6 +23,7 @@ import { useNotifications } from '../context/NotificationContext';
 import { getDeviceHeaders } from '../utils/deviceInfo';
 import axios from 'axios';
 import API_BASE_URL from '../config/api';
+import * as ImagePicker from 'expo-image-picker';
 import * as Print from 'expo-print';
 import * as FileSystem from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -58,6 +59,12 @@ export default function AdminDashboard({ navigation, route }) {
   const isAdmin = userInfo.type === 'admin';
   const isHostCompany = userInfo.type === 'hostCompany';
   const hostCompanyId = isHostCompany ? userInfo.id : null;
+
+  const [profilePicture, setProfilePicture] = useState(userInfo?.profilePicture || null);
+  const [uploadingProfile, setUploadingProfile] = useState(false);
+  const profilePictureKey = userInfo?.id
+    ? `${userInfo.type}ProfilePicture:${userInfo.id}`
+    : `${userInfo.type}ProfilePicture`;
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [activeView, setActiveView] = useState('dashboard'); // 'dashboard', 'staff', 'notAccountable'
@@ -97,6 +104,9 @@ export default function AdminDashboard({ navigation, route }) {
   const [staffProfileModalVisible, setStaffProfileModalVisible] = useState(false);
   const [staffProfileModalImage, setStaffProfileModalImage] = useState(null);
   const [staffProfileModalName, setStaffProfileModalName] = useState('');
+  const [hostCompanyProfileModalVisible, setHostCompanyProfileModalVisible] = useState(false);
+  const [hostCompanyProfileModalImage, setHostCompanyProfileModalImage] = useState(null);
+  const [hostCompanyProfileModalName, setHostCompanyProfileModalName] = useState('');
   const [staffProfileCache, setStaffProfileCache] = useState({});
   const [stipendAmountInput, setStipendAmountInput] = useState('');
   const [savingStipend, setSavingStipend] = useState(false);
@@ -158,6 +168,38 @@ export default function AdminDashboard({ navigation, route }) {
       }
     };
   }, [isHostCompany, unreadCount, activeView, bellShake]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadStoredProfilePicture = async () => {
+      if (!profilePictureKey) return;
+      try {
+        const storedPicture = await AsyncStorage.getItem(profilePictureKey);
+        if (!isMounted) return;
+
+        if (userInfo?.profilePicture) {
+          if (storedPicture !== userInfo.profilePicture) {
+            await AsyncStorage.setItem(profilePictureKey, userInfo.profilePicture);
+          }
+          setProfilePicture(userInfo.profilePicture);
+          return;
+        }
+
+        if (storedPicture) {
+          setProfilePicture(storedPicture);
+        }
+      } catch (error) {
+        console.error('Error loading profile picture:', error);
+      }
+    };
+
+    loadStoredProfilePicture();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [profilePictureKey, userInfo?.profilePicture]);
   const [reportsGeneratedCount, setReportsGeneratedCount] = useState(0);
 
   // Attendance Corrections state
@@ -488,6 +530,69 @@ export default function AdminDashboard({ navigation, route }) {
     setRefreshing(true);
     await loadData();
     setRefreshing(false);
+  };
+
+  const pickAndUploadProfilePicture = async () => {
+    if (uploadingProfile) return;
+    try {
+      const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (permissionResult.status !== 'granted') {
+        Alert.alert('Permission Required', 'Please grant permission to access your photo library');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 0.8,
+      });
+
+      if (result.cancelled || !result.assets || !result.assets[0]) {
+        return;
+      }
+
+      const selectedImage = result.assets[0];
+      setUploadingProfile(true);
+
+      const formData = new FormData();
+      const idPart = userInfo?.id || 'admin';
+      formData.append('profilePicture', {
+        uri: selectedImage.uri,
+        type: 'image/jpeg',
+        name: `profile_${idPart}_${Date.now()}.jpg`,
+      });
+
+      const uploadUrl = isHostCompany
+        ? `${API_BASE_URL}/staff/host-company/upload-profile-picture`
+        : `${API_BASE_URL}/staff/admin/upload-profile-picture`;
+
+      const adminId = userInfo?.id || '000000000000000000000001';
+      const params = isHostCompany
+        ? { hostCompanyId: userInfo.id }
+        : { adminId };
+
+      const uploadResponse = await axios.post(
+        uploadUrl,
+        formData,
+        {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          params,
+        }
+      );
+
+      if (uploadResponse.data?.profilePicture) {
+        const newProfilePicture = uploadResponse.data.profilePicture;
+        setProfilePicture(newProfilePicture);
+        await AsyncStorage.setItem(profilePictureKey, newProfilePicture);
+        Alert.alert('Success', 'Profile picture updated successfully!');
+      }
+    } catch (error) {
+      console.error('Profile upload error:', error);
+      Alert.alert('Upload Failed', error.response?.data?.error || 'Failed to upload profile picture');
+    } finally {
+      setUploadingProfile(false);
+    }
   };
 
   const loadStats = async () => {
@@ -2476,6 +2581,16 @@ export default function AdminDashboard({ navigation, route }) {
     'July', 'August', 'September', 'October', 'November', 'December'
   ];
 
+  const normalizeProfilePictureUri = (value) => {
+    if (!value || typeof value !== 'string') return null;
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    if (/^(data:|https?:|file:|content:)/i.test(trimmed)) return trimmed;
+    const looksBase64 = /^[A-Za-z0-9+/=]+$/.test(trimmed) && trimmed.length > 100;
+    if (looksBase64) return `data:image/jpeg;base64,${trimmed}`;
+    return trimmed;
+  };
+
   const getInitials = (first = '', last = '') => {
     const initials = `${first?.[0] || ''}${last?.[0] || ''}`.trim().toUpperCase();
     return initials || '•';
@@ -3714,65 +3829,69 @@ export default function AdminDashboard({ navigation, route }) {
               </View>
 
               {/* Staff List Items */}
-              {staff.map((member, index) => (
-                <TouchableOpacity
-                  key={member._id}
-                  style={{
-                    flexDirection: 'row',
-                    paddingVertical: 16,
-                    paddingHorizontal: 16,
-                    backgroundColor: index % 2 === 0
-                      ? (isDarkMode ? '#1e293b' : '#fff')
-                      : (isDarkMode ? '#243447' : '#f8fafc'),
-                    borderBottomWidth: index < staff.length - 1 ? 1 : 0,
-                    borderBottomColor: theme.border,
-                    alignItems: 'center',
-                  }}
-                  onPress={() => handleStaffClick(member)}
-                  activeOpacity={0.6}
-                >
-                  {/* Name Column with Avatar */}
-                  <View style={{ flex: 2.5, flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity
-                      onPress={() => openStaffProfileModal(member)}
-                      disabled={!member.profilePicture && !staffProfileCache[member._id]}
-                      style={{
-                        width: 40,
-                        height: 40,
-                        borderRadius: 20,
-                        backgroundColor: theme.primary,
-                        justifyContent: 'center',
-                        alignItems: 'center',
-                        marginRight: 12,
-                        overflow: 'hidden',
-                      }}
-                    >
-                      {(member.profilePicture || staffProfileCache[member._id]) ? (
-                        <Image
-                          source={{ uri: member.profilePicture || staffProfileCache[member._id] }}
-                          style={styles.staffListAvatarImage}
-                        />
-                      ) : (
+              {staff.map((member, index) => {
+                const memberPicture = normalizeProfilePictureUri(
+                  member.profilePicture || staffProfileCache[member._id]
+                );
+                return (
+                  <TouchableOpacity
+                    key={member._id}
+                    style={{
+                      flexDirection: 'row',
+                      paddingVertical: 16,
+                      paddingHorizontal: 16,
+                      backgroundColor: index % 2 === 0
+                        ? (isDarkMode ? '#1e293b' : '#fff')
+                        : (isDarkMode ? '#243447' : '#f8fafc'),
+                      borderBottomWidth: index < staff.length - 1 ? 1 : 0,
+                      borderBottomColor: theme.border,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => handleStaffClick(member)}
+                    activeOpacity={0.6}
+                  >
+                    {/* Name Column with Avatar */}
+                    <View style={{ flex: 2.5, flexDirection: 'row', alignItems: 'center' }}>
+                      <TouchableOpacity
+                        onPress={() => openStaffProfileModal(member)}
+                        disabled={!memberPicture}
+                        style={{
+                          width: 40,
+                          height: 40,
+                          borderRadius: 20,
+                          backgroundColor: theme.primary,
+                          justifyContent: 'center',
+                          alignItems: 'center',
+                          marginRight: 12,
+                          overflow: 'hidden',
+                        }}
+                      >
+                        {memberPicture ? (
+                          <Image
+                            source={{ uri: memberPicture }}
+                            style={styles.staffListAvatarImage}
+                          />
+                        ) : (
+                          <Text style={{
+                            color: '#fff',
+                            fontSize: 14,
+                            fontWeight: '700',
+                          }}>
+                            {getInitials(member.name, member.surname)}
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                      <View style={{ flex: 1 }}>
                         <Text style={{
-                          color: '#fff',
                           fontSize: 14,
                           fontWeight: '700',
+                          color: theme.text,
+                          marginBottom: 3,
                         }}>
-                          {getInitials(member.name, member.surname)}
+                          {member.name} {member.surname || ''}
                         </Text>
-                      )}
-                    </TouchableOpacity>
-                    <View style={{ flex: 1 }}>
-                      <Text style={{
-                        fontSize: 14,
-                        fontWeight: '700',
-                        color: theme.text,
-                        marginBottom: 3,
-                      }}>
-                        {member.name} {member.surname || ''}
-                      </Text>
+                      </View>
                     </View>
-                  </View>
 
                   {/* Role Column */}
                   <View style={{ flex: 1.5 }}>
@@ -3820,10 +3939,11 @@ export default function AdminDashboard({ navigation, route }) {
                     fontSize: 12,
                     color: theme.textSecondary,
                   }}>
-                    {member.location || '—'}
-                  </Text>
-                </TouchableOpacity>
-              ))}
+                  {member.location || '—'}
+                </Text>
+              </TouchableOpacity>
+            );
+          })}
             </View>
           )}
         </ScrollView>
@@ -3882,6 +4002,9 @@ export default function AdminDashboard({ navigation, route }) {
       if (Number.isInteger(numeric)) return String(numeric);
       return numeric.toFixed(2);
     };
+    const staffPicture = normalizeProfilePictureUri(
+      staffDetails?.profilePicture || staffProfileCache[staffDetails?._id]
+    );
 
     return (
       <View style={styles.content}>
@@ -3905,15 +4028,12 @@ export default function AdminDashboard({ navigation, route }) {
             <View style={styles.staffDetailsHeader}>
               <TouchableOpacity
                 onPress={() => openStaffProfileModal(staffDetails)}
-                disabled={
-                  !staffDetails?.profilePicture &&
-                  !staffProfileCache[staffDetails?._id]
-                }
+                disabled={!staffPicture}
                 style={{ marginRight: 12 }}
               >
-                {(staffDetails?.profilePicture || staffProfileCache[staffDetails?._id]) ? (
+                {staffPicture ? (
                   <Image
-                    source={{ uri: staffDetails.profilePicture || staffProfileCache[staffDetails._id] }}
+                    source={{ uri: staffPicture }}
                     style={styles.staffDetailsAvatarImage}
                   />
                 ) : (
@@ -9211,20 +9331,39 @@ export default function AdminDashboard({ navigation, route }) {
                 activeOpacity={0.6}
               >
                 {/* Company Name Column */}
-                <View style={{ flex: 2.5 }}>
-                  <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text, marginBottom: 3 }}>
-                    {company.companyName || company.name}
-                  </Text>
-                  {company.companyName && company.name !== company.companyName && (
-                    <Text style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 2 }}>
-                      {company.name}
+                <View style={{ flex: 2.5, flexDirection: 'row', alignItems: 'center' }}>
+                  <TouchableOpacity
+                    style={styles.companyAvatarButton}
+                    onPress={() => openHostCompanyProfileModal(company)}
+                    disabled={!company.profilePicture}
+                    activeOpacity={0.7}
+                  >
+                    {company.profilePicture ? (
+                      <Image
+                        source={{ uri: normalizeProfilePictureUri(company.profilePicture) }}
+                        style={styles.companyAvatarImage}
+                      />
+                    ) : (
+                      <Text style={styles.companyAvatarText}>
+                        {getInitials(company.companyName || company.name || 'C', '')}
+                      </Text>
+                    )}
+                  </TouchableOpacity>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontSize: 14, fontWeight: '700', color: theme.text, marginBottom: 3 }}>
+                      {company.companyName || company.name}
                     </Text>
-                  )}
-                  {company.emailAddress && (
-                    <Text style={{ fontSize: 10, color: theme.primary }} numberOfLines={1}>
-                      ✉️ {company.emailAddress}
-                    </Text>
-                  )}
+                    {company.companyName && company.name !== company.companyName && (
+                      <Text style={{ fontSize: 11, color: theme.textSecondary, marginBottom: 2 }}>
+                        {company.name}
+                      </Text>
+                    )}
+                    {company.emailAddress && (
+                      <Text style={{ fontSize: 10, color: theme.primary }} numberOfLines={1}>
+                        ✉️ {company.emailAddress}
+                      </Text>
+                    )}
+                  </View>
                 </View>
 
                 {/* Registration Number Column */}
@@ -9484,11 +9623,21 @@ export default function AdminDashboard({ navigation, route }) {
       staffMember?.profilePicture ||
       staffProfileCache[staffMember?._id] ||
       (staffMember?._id ? await loadStaffProfile(staffMember._id) : null);
-    if (!picture) return;
+    const normalized = normalizeProfilePictureUri(picture);
+    if (!normalized) return;
     const name = `${staffMember?.name || ''} ${staffMember?.surname || ''}`.trim() || 'Staff Member';
-    setStaffProfileModalImage(picture);
+    setStaffProfileModalImage(normalized);
     setStaffProfileModalName(name);
     setStaffProfileModalVisible(true);
+  };
+
+  const openHostCompanyProfileModal = (company) => {
+    const normalized = normalizeProfilePictureUri(company?.profilePicture);
+    if (!normalized) return;
+    const name = company?.companyName || company?.name || 'Host Company';
+    setHostCompanyProfileModalImage(normalized);
+    setHostCompanyProfileModalName(name);
+    setHostCompanyProfileModalVisible(true);
   };
 
   const loadDepartmentInterns = async (departmentName) => {
@@ -10645,10 +10794,30 @@ export default function AdminDashboard({ navigation, route }) {
               style={styles.avatarButton}
             >
               <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>
-                  {(userInfo.name || userInfo.fullName || 'A').charAt(0).toUpperCase()}
-                </Text>
+                {profilePicture ? (
+                  <Image source={{ uri: profilePicture }} style={styles.avatarImage} />
+                ) : (
+                  <Text style={styles.avatarText}>
+                    {(userInfo.name || userInfo.fullName || 'A').charAt(0).toUpperCase()}
+                  </Text>
+                )}
+                {uploadingProfile && (
+                  <View style={styles.avatarUploadingOverlay}>
+                    <ActivityIndicator size="small" color="#fff" />
+                  </View>
+                )}
               </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              style={styles.avatarPlusButton}
+              onPress={() => {
+                setShowAvatarDropdown(false);
+                pickAndUploadProfilePicture();
+              }}
+              hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+            >
+              <Text style={styles.avatarPlusText}>+</Text>
             </TouchableOpacity>
 
             {/* Dropdown Menu */}
@@ -11372,6 +11541,31 @@ export default function AdminDashboard({ navigation, route }) {
             <TouchableOpacity
               style={styles.profileModalCloseButton}
               onPress={() => setStaffProfileModalVisible(false)}
+            >
+              <Text style={styles.profileModalCloseText}>Close</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={hostCompanyProfileModalVisible}
+        transparent={true}
+        animationType="fade"
+        onRequestClose={() => setHostCompanyProfileModalVisible(false)}
+      >
+        <View style={styles.profileModalOverlay}>
+          <View style={styles.profileModalContent}>
+            <Text style={styles.profileModalName}>{hostCompanyProfileModalName}</Text>
+            {hostCompanyProfileModalImage && (
+              <Image
+                source={{ uri: hostCompanyProfileModalImage }}
+                style={styles.profileModalImage}
+              />
+            )}
+            <TouchableOpacity
+              style={styles.profileModalCloseButton}
+              onPress={() => setHostCompanyProfileModalVisible(false)}
             >
               <Text style={styles.profileModalCloseText}>Close</Text>
             </TouchableOpacity>
@@ -12410,11 +12604,68 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     borderWidth: 2,
     borderColor: '#fff',
+    overflow: 'hidden',
+  },
+  avatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 20,
   },
   avatarText: {
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  companyAvatarButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#3166AE',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#fff',
+    marginRight: 10,
+    overflow: 'hidden',
+  },
+  companyAvatarImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 18,
+  },
+  companyAvatarText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  avatarUploadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(15, 23, 42, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarPlusButton: {
+    position: 'absolute',
+    bottom: -2,
+    right: -2,
+    width: 18,
+    height: 18,
+    borderRadius: 9,
+    backgroundColor: '#1f3a5f',
+    borderWidth: 1,
+    borderColor: '#fff',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarPlusText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 12,
   },
   avatarDropdown: {
     position: 'absolute',

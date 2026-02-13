@@ -18,6 +18,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { manipulateAsync, SaveFormat } from 'expo-image-manipulator';
 import * as FileSystem from 'expo-file-system/legacy';
+import * as Location from 'expo-location';
 import axios from 'axios';
 import API_BASE_URL from '../config/api';
 import { useTheme } from '../context/ThemeContext';
@@ -242,6 +243,10 @@ export default function RegisterStaff({ navigation, route }) {
   // Mentor removed: field and related state cleaned up
   const [location, setLocation] = useState(''); // Predefined location key
   const [customAddress, setCustomAddress] = useState(''); // Custom address input
+  const [allowMultipleLocations, setAllowMultipleLocations] = useState(false);
+  const [selectedLocations, setSelectedLocations] = useState([]); // Multiple location selection
+  const [currentLocationEntry, setCurrentLocationEntry] = useState(null); // { key, name, address, latitude, longitude }
+  const [fetchingCurrentLocation, setFetchingCurrentLocation] = useState(false);
   const [useCustomAddress, setUseCustomAddress] = useState(false); // Toggle between dropdown and custom
   const [showLocationDropdown, setShowLocationDropdown] = useState(false);
   const [locationSearchQuery, setLocationSearchQuery] = useState('');
@@ -442,6 +447,97 @@ export default function RegisterStaff({ navigation, route }) {
   const showProfessionalMessage = (title, message, type = 'info') => {
     setMessageModalData({ title, message, type });
     setShowMessageModal(true);
+  };
+
+  const CURRENT_LOCATION_KEY = 'CURRENT_LOCATION';
+
+  const isLocationSelected = (key) => {
+    return selectedLocations.some((loc) => loc.key === key);
+  };
+
+  const toggleLocationSelection = (loc) => {
+    setSelectedLocations((prev) => {
+      const exists = prev.some((item) => item.key === loc.key);
+      if (exists) {
+        return prev.filter((item) => item.key !== loc.key);
+      }
+      return [...prev, loc];
+    });
+  };
+
+  const formatAddress = (reverseResult) => {
+    if (!reverseResult) return null;
+    const parts = [
+      reverseResult.street,
+      reverseResult.streetNumber,
+      reverseResult.subregion,
+      reverseResult.city,
+      reverseResult.region,
+      reverseResult.postalCode,
+      reverseResult.country,
+    ].filter(Boolean);
+    if (parts.length === 0) return null;
+    return parts.join(', ');
+  };
+
+  const handleUseCurrentLocation = async () => {
+    try {
+      setFetchingCurrentLocation(true);
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        showProfessionalMessage(
+          'Location Permission Required',
+          'Please allow location access to use your current location.',
+          'warning'
+        );
+        return;
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+      });
+
+      const reverse = await Location.reverseGeocodeAsync({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+      });
+
+      const address = formatAddress(reverse?.[0]) || `Lat ${position.coords.latitude.toFixed(6)}, Lon ${position.coords.longitude.toFixed(6)}`;
+
+      const entry = {
+        key: CURRENT_LOCATION_KEY,
+        name: 'Current Location',
+        address,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        source: 'current'
+      };
+
+      setCurrentLocationEntry(entry);
+
+      if (allowMultipleLocations) {
+        toggleLocationSelection(entry);
+      } else {
+        setUseCustomAddress(true);
+        setCustomAddress(address);
+        setLocation('');
+      }
+
+      showProfessionalMessage(
+        'Location Captured',
+        'Current location captured successfully.',
+        'success'
+      );
+    } catch (err) {
+      console.error('Failed to fetch current location:', err);
+      showProfessionalMessage(
+        'Location Error',
+        'Unable to fetch current location. Please ensure GPS is enabled and try again.',
+        'error'
+      );
+    } finally {
+      setFetchingCurrentLocation(false);
+    }
   };
 
   // Robust South African ID Number validation (YYMMDDGSSSCAZ format)
@@ -734,23 +830,34 @@ export default function RegisterStaff({ navigation, route }) {
       return;
     }
     
-    // Validate location OR custom address
-    if (!useCustomAddress && !location) {
-      showProfessionalMessage(
-        'Location Required',
-        'Please select a location from the list or enter a custom address to continue.',
-        'warning'
-      );
-      return;
-    }
-    
-    if (useCustomAddress && !customAddress.trim()) {
-      showProfessionalMessage(
-        'Address Required',
-        'Please enter a complete address to continue with registration.',
-        'warning'
-      );
-      return;
+    // Validate location selection (single or multiple)
+    if (allowMultipleLocations) {
+      if (!selectedLocations || selectedLocations.length === 0) {
+        showProfessionalMessage(
+          'Location Required',
+          'Please select at least one location to continue.',
+          'warning'
+        );
+        return;
+      }
+    } else {
+      if (!useCustomAddress && !location) {
+        showProfessionalMessage(
+          'Location Required',
+          'Please select a location from the list or enter a custom address to continue.',
+          'warning'
+        );
+        return;
+      }
+      
+      if (useCustomAddress && !customAddress.trim()) {
+        showProfessionalMessage(
+          'Address Required',
+          'Please enter a complete address to continue with registration.',
+          'warning'
+        );
+        return;
+      }
     }
     
     // Request camera permission if not granted
@@ -990,8 +1097,30 @@ export default function RegisterStaff({ navigation, route }) {
         formData.append('department', department);
       }
       // Mentor removed: no mentor fields appended to formData
-      if (useCustomAddress) {
+      if (allowMultipleLocations) {
+        formData.append('allowAnyLocation', 'true');
+        const mergedLocations = [...(selectedLocations || [])];
+        if (currentLocationEntry && !mergedLocations.some((loc) => loc.key === currentLocationEntry.key)) {
+          mergedLocations.push(currentLocationEntry);
+        }
+        const sanitizedLocations = mergedLocations.map((loc) => ({
+          key: loc.key,
+          name: loc.name,
+          address: loc.address,
+          latitude: loc.latitude,
+          longitude: loc.longitude,
+          source: loc.source || (loc.key === CURRENT_LOCATION_KEY ? 'current' : 'predefined')
+        }));
+        formData.append('allowedLocations', JSON.stringify(sanitizedLocations));
+      } else if (useCustomAddress) {
         formData.append('customAddress', customAddress.trim());
+        if (currentLocationEntry) {
+          formData.append('currentLatitude', String(currentLocationEntry.latitude));
+          formData.append('currentLongitude', String(currentLocationEntry.longitude));
+          if (currentLocationEntry.address) {
+            formData.append('currentAddress', currentLocationEntry.address);
+          }
+        }
         // Don't send location if using custom address
       } else {
         formData.append('location', location);
@@ -1622,6 +1751,10 @@ export default function RegisterStaff({ navigation, route }) {
     );
   }
 
+  const locationSelectionInvalid = allowMultipleLocations
+    ? selectedLocations.length === 0
+    : ((!useCustomAddress && !location) || (useCustomAddress && !customAddress.trim()));
+
   return (
     <SafeAreaView style={[styles.container, dynamicStyles.container]}>
       {/* Header */}
@@ -1961,45 +2094,140 @@ export default function RegisterStaff({ navigation, route }) {
               <Text style={{ color: '#ED3438', fontSize: 14, fontWeight: '600', marginLeft: 2 }}>*</Text>
             </View>
             
-            {/* Toggle between dropdown and custom address */}
+            {/* Single vs Multiple locations */}
             <View style={styles.locationToggle}>
               <TouchableOpacity
                 style={[
                   styles.toggleButton,
-                  !useCustomAddress && styles.toggleButtonActive,
+                  !allowMultipleLocations && styles.toggleButtonActive,
                 ]}
                 onPress={() => {
-                  setUseCustomAddress(false);
-                  setCustomAddress('');
+                  setAllowMultipleLocations(false);
+                  setSelectedLocations([]);
+                  if (currentLocationEntry) {
+                    setUseCustomAddress(true);
+                    setCustomAddress(currentLocationEntry.address || '');
+                    setLocation('');
+                  }
                 }}
               >
                 <Text style={[
                   styles.toggleButtonText,
-                  !useCustomAddress && styles.toggleButtonTextActive,
+                  !allowMultipleLocations && styles.toggleButtonTextActive,
                 ]}>
-                  Select from List
+                  Single Location
                 </Text>
               </TouchableOpacity>
               <TouchableOpacity
                 style={[
                   styles.toggleButton,
-                  useCustomAddress && styles.toggleButtonActive,
+                  allowMultipleLocations && styles.toggleButtonActive,
                 ]}
                 onPress={() => {
-                  setUseCustomAddress(true);
+                  setAllowMultipleLocations(true);
+                  setUseCustomAddress(false);
+                  setCustomAddress('');
                   setLocation('');
+                  setSelectedLocations(currentLocationEntry ? [currentLocationEntry] : []);
                 }}
               >
                 <Text style={[
                   styles.toggleButtonText,
-                  useCustomAddress && styles.toggleButtonTextActive,
+                  allowMultipleLocations && styles.toggleButtonTextActive,
                 ]}>
-                  Custom Address
+                  Multiple Locations
                 </Text>
               </TouchableOpacity>
             </View>
+
+            {!allowMultipleLocations && (
+              <View style={styles.locationToggle}>
+                <TouchableOpacity
+                  style={[
+                    styles.toggleButton,
+                    !useCustomAddress && styles.toggleButtonActive,
+                  ]}
+                  onPress={() => {
+                    setUseCustomAddress(false);
+                    setCustomAddress('');
+                  }}
+                >
+                  <Text style={[
+                    styles.toggleButtonText,
+                    !useCustomAddress && styles.toggleButtonTextActive,
+                  ]}>
+                    Select from List
+                  </Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.toggleButton,
+                    useCustomAddress && styles.toggleButtonActive,
+                  ]}
+                  onPress={() => {
+                    setUseCustomAddress(true);
+                    setLocation('');
+                  }}
+                >
+                  <Text style={[
+                    styles.toggleButtonText,
+                    useCustomAddress && styles.toggleButtonTextActive,
+                  ]}>
+                    Custom Address
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            <TouchableOpacity
+              style={[styles.currentLocationButton, fetchingCurrentLocation && styles.currentLocationButtonDisabled]}
+              onPress={handleUseCurrentLocation}
+              disabled={fetchingCurrentLocation}
+            >
+              <Text style={styles.currentLocationButtonText}>
+                {fetchingCurrentLocation ? 'Fetching current location...' : 'Use Current Location'}
+              </Text>
+            </TouchableOpacity>
+            {currentLocationEntry && (
+              <Text style={[styles.currentLocationHint, dynamicStyles.hint]}>
+                Current: {currentLocationEntry.address}
+              </Text>
+            )}
             
-            {!useCustomAddress ? (
+            {allowMultipleLocations ? (
+              <>
+                <TouchableOpacity
+                  style={[
+                    styles.dropdown,
+                    dynamicStyles.dropdown,
+                    selectedLocations.length > 0 && [styles.dropdownSelected, dynamicStyles.dropdownSelected],
+                  ]}
+                  onPress={() => setShowLocationDropdown(true)}
+                >
+                  <Text
+                    style={[
+                      styles.dropdownText,
+                      dynamicStyles.dropdownText,
+                      selectedLocations.length === 0 && [styles.dropdownPlaceholder, dynamicStyles.dropdownPlaceholder],
+                    ]}
+                  >
+                    {selectedLocations.length > 0
+                      ? `${selectedLocations.length} location(s) selected`
+                      : 'Select locations'}
+                  </Text>
+                  <Text style={[styles.dropdownArrow, dynamicStyles.dropdownArrow]}>▼</Text>
+                </TouchableOpacity>
+                {selectedLocations.length > 0 && (
+                  <View style={styles.selectedLocationsList}>
+                    {selectedLocations.map((loc) => (
+                      <View key={loc.key} style={styles.selectedLocationPill}>
+                        <Text style={styles.selectedLocationText}>{loc.name || loc.address || 'Location'}</Text>
+                      </View>
+                    ))}
+                  </View>
+                )}
+              </>
+            ) : !useCustomAddress ? (
               <>
                 <TouchableOpacity
                   style={[
@@ -2093,47 +2321,72 @@ export default function RegisterStaff({ navigation, route }) {
                         </Text>
                       </View>
                     ) : (
-                      filteredLocations.map((loc) => (
-                      <TouchableOpacity
-                        key={loc.key}
-                        style={[
-                          styles.dropdownItem,
-                          dynamicStyles.dropdownItem,
-                          location === loc.key && [styles.dropdownItemSelected, dynamicStyles.dropdownItemSelected],
-                        ]}
-                        onPress={() => {
-                          setLocation(loc.key);
-                          setShowLocationDropdown(false);
-                          setLocationSearchQuery('');
-                        }}
-                      >
-                        <View style={styles.dropdownItemContent}>
-                          <Text
+                      filteredLocations.map((loc) => {
+                        const isSelected = allowMultipleLocations ? isLocationSelected(loc.key) : location === loc.key;
+                        return (
+                          <TouchableOpacity
+                            key={loc.key}
                             style={[
-                              styles.dropdownItemText,
-                              dynamicStyles.dropdownItemText,
-                              location === loc.key && [styles.dropdownItemTextSelected, dynamicStyles.dropdownItemTextSelected],
+                              styles.dropdownItem,
+                              dynamicStyles.dropdownItem,
+                              isSelected && [styles.dropdownItemSelected, dynamicStyles.dropdownItemSelected],
                             ]}
+                            onPress={() => {
+                              if (allowMultipleLocations) {
+                                toggleLocationSelection({
+                                  key: loc.key,
+                                  name: loc.name,
+                                  address: loc.address,
+                                  latitude: loc.latitude,
+                                  longitude: loc.longitude,
+                                  source: 'predefined'
+                                });
+                              } else {
+                                setLocation(loc.key);
+                                setShowLocationDropdown(false);
+                                setLocationSearchQuery('');
+                              }
+                            }}
                           >
-                            {loc.name}
-                          </Text>
-                          <Text
-                            style={[
-                              styles.dropdownItemAddress,
-                              dynamicStyles.dropdownItemAddress,
-                              location === loc.key && [styles.dropdownItemAddressSelected, dynamicStyles.dropdownItemAddressSelected],
-                            ]}
-                          >
-                            {loc.address}
-                          </Text>
-                        </View>
-                        {location === loc.key && (
-                          <Text style={[styles.checkmark, dynamicStyles.checkmark]}>✓</Text>
-                        )}
-                      </TouchableOpacity>
-                    ))
+                            <View style={styles.dropdownItemContent}>
+                              <Text
+                                style={[
+                                  styles.dropdownItemText,
+                                  dynamicStyles.dropdownItemText,
+                                  isSelected && [styles.dropdownItemTextSelected, dynamicStyles.dropdownItemTextSelected],
+                                ]}
+                              >
+                                {loc.name}
+                              </Text>
+                              <Text
+                                style={[
+                                  styles.dropdownItemAddress,
+                                  dynamicStyles.dropdownItemAddress,
+                                  isSelected && [styles.dropdownItemAddressSelected, dynamicStyles.dropdownItemAddressSelected],
+                                ]}
+                              >
+                                {loc.address}
+                              </Text>
+                            </View>
+                            {isSelected && (
+                              <Text style={[styles.checkmark, dynamicStyles.checkmark]}>✓</Text>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })
                     )}
                   </ScrollView>
+                  {allowMultipleLocations && (
+                    <TouchableOpacity
+                      style={styles.multiSelectDone}
+                      onPress={() => {
+                        setShowLocationDropdown(false);
+                        setLocationSearchQuery('');
+                      }}
+                    >
+                      <Text style={styles.multiSelectDoneText}>Done</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               </View>
             </Modal>
@@ -2348,10 +2601,10 @@ export default function RegisterStaff({ navigation, route }) {
               style={[
                 styles.continueButton,
                 dynamicStyles.continueButton,
-                (!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || (!location && !customAddress.trim()) || ((role === 'Staff' || role === 'Intern') && !password.trim()) || ((role === 'Staff' || role === 'Intern') && password.trim().length < 6)) && [styles.continueButtonDisabled, dynamicStyles.continueButtonDisabled],
+                (!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || locationSelectionInvalid || ((role === 'Staff' || role === 'Intern') && !password.trim()) || ((role === 'Staff' || role === 'Intern') && password.trim().length < 6)) && [styles.continueButtonDisabled, dynamicStyles.continueButtonDisabled],
               ]}
               onPress={handleFormSubmit}
-              disabled={!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || (!location && !customAddress.trim()) || !idImageUri || ((role === 'Staff' || role === 'Intern') && (!password.trim() || password.trim().length < 6))}
+              disabled={!name.trim() || !surname.trim() || !idNumber.trim() || !phoneNumber.trim() || !role || !hostCompany || !department || locationSelectionInvalid || !idImageUri || ((role === 'Staff' || role === 'Intern') && (!password.trim() || password.trim().length < 6))}
               activeOpacity={0.8}
             >
               <Text style={styles.continueButtonText}>Continue to Camera</Text>
@@ -3066,6 +3319,46 @@ const styles = StyleSheet.create({
     marginBottom: 8,
     marginTop: -4,
   },
+  currentLocationButton: {
+    borderWidth: 1,
+    borderColor: '#3166AE',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    alignItems: 'center',
+    marginBottom: 8,
+    backgroundColor: '#f1f5ff',
+  },
+  currentLocationButtonDisabled: {
+    opacity: 0.6,
+  },
+  currentLocationButtonText: {
+    color: '#1e3a8a',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  currentLocationHint: {
+    fontSize: 12,
+    marginBottom: 10,
+    color: '#6b7280',
+  },
+  selectedLocationsList: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  selectedLocationPill: {
+    backgroundColor: '#e0ecff',
+    borderRadius: 999,
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+  },
+  selectedLocationText: {
+    color: '#1f4b99',
+    fontSize: 12,
+    fontWeight: '600',
+  },
   locationToggle: {
     flexDirection: 'row',
     gap: 8,
@@ -3132,6 +3425,18 @@ const styles = StyleSheet.create({
     padding: 20,
     borderBottomWidth: 1,
     borderBottomColor: '#e2e8f0',
+  },
+  multiSelectDone: {
+    margin: 16,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#3166AE',
+    alignItems: 'center',
+  },
+  multiSelectDoneText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
   },
   dropdownTitle: {
     fontSize: 20,

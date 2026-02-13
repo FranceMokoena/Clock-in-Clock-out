@@ -14,7 +14,6 @@ import {
 } from 'react-native';
 import { useTheme } from '../../context/ThemeContext';
 import { useNotifications } from '../../context/NotificationContext';
-import { fetchNotifications } from '../../services/notificationService';
 import axios from 'axios';
 import API_BASE_URL from '../../config/api';
 
@@ -22,7 +21,7 @@ const { width } = Dimensions.get('window');
 
 const Recents = ({ navigation, route, onBack }) => {
   const { theme } = useTheme();
-  const { notifications, markAllAsRead } = useNotifications();
+  const { notifications, markAllAsRead, reload, removeNotification, clearNotifications } = useNotifications();
   const userInfo = route?.params?.userInfo || {};
   
   const [filteredNotifications, setFilteredNotifications] = useState([]);
@@ -35,7 +34,23 @@ const Recents = ({ navigation, route, onBack }) => {
   const [selectedDepartment, setSelectedDepartment] = useState(null);
 
   // use centralized API_BASE_URL so emulator/device resolves correctly
-  const isIntern = userInfo.role === 'Intern' || userInfo.type === 'Intern';
+  const userTypeValue = String(userInfo.role || userInfo.type || '').toLowerCase();
+  const isIntern = userTypeValue === 'intern' || userTypeValue === 'staff';
+  const recipientId = userInfo.id || userInfo._id || null;
+
+  const resolveRecipientType = () => {
+    if (userTypeValue === 'intern') return 'Intern';
+    if (userTypeValue === 'staff') return 'Staff';
+    if (userTypeValue === 'hostcompany' || userTypeValue === 'host company' || userTypeValue === 'host_company') {
+      return 'HostCompany';
+    }
+    if (userTypeValue === 'admin' || userTypeValue === 'administrator' || userTypeValue === 'hr') {
+      return 'Admin';
+    }
+    return (userInfo.role || userInfo.type || 'All');
+  };
+
+  const recipientType = resolveRecipientType();
 
   // Mark all notifications as read when Recents screen opens
   useEffect(() => {
@@ -126,6 +141,7 @@ const Recents = ({ navigation, route, onBack }) => {
   const onRefresh = async () => {
     setRefreshing(true);
     try {
+      await reload();
       if (!isIntern) {
         await loadHostCompanies();
       }
@@ -255,8 +271,10 @@ const Recents = ({ navigation, route, onBack }) => {
                 style: 'destructive',
                 onPress: async () => {
                   try {
-                    await axios.delete(`${API_BASE_URL}/notifications/${item._id}`);
-                    onRefresh();
+                    await axios.delete(`${API_BASE_URL}/notifications/${item._id}`, {
+                      data: { recipientId, recipientType }
+                    });
+                    removeNotification(item._id);
                   } catch (error) {
                     console.error('Error deleting notification:', error);
                     Alert.alert('Error', 'Failed to delete notification');
@@ -315,12 +333,13 @@ const Recents = ({ navigation, route, onBack }) => {
                         // Delete all notifications for current user
                         await axios.delete(`${API_BASE_URL}/notifications/delete-all`, {
                           data: {
-                            recipientId: userInfo.id || userInfo._id,
-                            recipientType: userInfo.role || userInfo.type
+                            recipientId,
+                            recipientType
                           }
                         });
+                        clearNotifications();
+                        await reload();
                         Alert.alert('Success', 'All notifications cleared');
-                        onRefresh();
                       } catch (error) {
                         console.error('Error clearing notifications:', error);
                         Alert.alert('Error', 'Failed to clear notifications');

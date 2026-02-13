@@ -93,6 +93,21 @@ function Dashboard() {
       } catch (err) {
         console.warn('Staff stats error:', err);
       }
+
+      // Enrich with host company count (admin only)
+      if (isAdmin) {
+        try {
+          const companiesRes = await hostCompanyAPI.getAll();
+          if (companiesRes.success && Array.isArray(companiesRes.companies)) {
+            baseStats = {
+              ...baseStats,
+              totalCompanies: companiesRes.companies.length
+            };
+          }
+        } catch (err) {
+          console.warn('Host company stats error:', err);
+        }
+      }
       setStats(baseStats);
 
       // Pending leave

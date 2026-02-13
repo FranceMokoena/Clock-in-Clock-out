@@ -71,6 +71,16 @@ const getEntryMinutes = (entry) => {
   return minutes;
 };
 
+const resolveProfilePicture = (value) => {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  if (/^(data:|https?:|file:|blob:)/i.test(trimmed)) return trimmed;
+  const looksBase64 = /^[A-Za-z0-9+/=]+$/.test(trimmed) && trimmed.length > 100;
+  if (looksBase64) return `data:image/jpeg;base64,${trimmed}`;
+  return trimmed;
+};
+
 
 function StaffDetailsScreen() {
   const { staffId } = useParams();
@@ -101,6 +111,7 @@ function StaffDetailsScreen() {
   const [payslipError, setPayslipError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showProfilePreview, setShowProfilePreview] = useState(false);
   const [sectionOpen, setSectionOpen] = useState({
     personal: true,
     scheduled: true,
@@ -229,7 +240,7 @@ function StaffDetailsScreen() {
     try {
       const [stipendRes, hoursRes] = await Promise.all([
         staffAPI.getStipend(memberId),
-        staffAPI.getWorkingHours(memberId),
+        staffAPI.getWorkingHours(memberId, { month: selectedMonth, year: selectedYear }),
       ]);
       if (stipendRes?.success) {
         setStipendData(stipendRes);
@@ -454,6 +465,9 @@ function StaffDetailsScreen() {
     const detailedActualHours = Number.isFinite(detailedMinutes) ? (detailedMinutes / 60) : null;
     const fallbackHours = timesheetHoursTotal > 0 ? timesheetHoursTotal : attendanceSummaryHours;
     const actualHoursWorked = detailedActualHours !== null ? detailedActualHours : fallbackHours;
+    const formattedBackendHours = detailedAttendanceStats?.totalHoursFormatted
+      ? String(detailedAttendanceStats.totalHoursFormatted)
+      : null;
     const expectedMonthlyHours = workingHoursData?.expectedMonthlyHours !== undefined && workingHoursData?.expectedMonthlyHours !== null
       ? parseSafeNumber(workingHoursData.expectedMonthlyHours)
       : parseSafeNumber(workingHoursInput.monthlyHours);
@@ -461,7 +475,13 @@ function StaffDetailsScreen() {
       ? stipendData.stipendAmount / expectedMonthlyHours
       : null;
     const earnings = hourlyRate !== null ? (actualHoursWorked * hourlyRate) : null;
-    return { actualHoursWorked, expectedMonthlyHours, hourlyRate, earnings };
+    return {
+      actualHoursWorked,
+      actualHoursWorkedFormatted: formattedBackendHours || `${actualHoursWorked.toFixed(2)} hrs`,
+      expectedMonthlyHours,
+      hourlyRate,
+      earnings
+    };
   }, [staffTimesheet, detailedAttendanceStats, workingHoursData, workingHoursInput, stipendData]);
 
   const sectionButton = (key) => (
@@ -470,7 +490,7 @@ function StaffDetailsScreen() {
     </button>
   );
 
-  const { actualHoursWorked, expectedMonthlyHours, hourlyRate, earnings } = computeAttendanceMetrics;
+  const { actualHoursWorked, actualHoursWorkedFormatted, expectedMonthlyHours, hourlyRate, earnings } = computeAttendanceMetrics;
 
   const handleExportPayslip = () => {
     if (!staffDetails) return;
@@ -563,6 +583,16 @@ function StaffDetailsScreen() {
   const initials = (
     `${staffDetails.name?.charAt(0) || ''}${staffDetails.surname?.charAt(0) || ''}`.trim() || 'FC'
   ).toUpperCase();
+  const profileSrc = resolveProfilePicture(staffDetails.profilePicture);
+  const openProfilePreview = () => {
+    if (profileSrc) {
+      setShowProfilePreview(true);
+    }
+  };
+
+  const closeProfilePreview = () => {
+    setShowProfilePreview(false);
+  };
   return (
     <div className="staff-details-page">
       <header className="staff-details-header staff-card">
@@ -570,9 +600,21 @@ function StaffDetailsScreen() {
           <div className="header-left">
               <button className="view-details-btn" onClick={handleBackToList}>Back to list</button>
             <div className="modal-avatar-group header-avatar">
-              <div className="modal-avatar">
-                {staffDetails.profilePicture ? (
-                  <img src={staffDetails.profilePicture} alt={`${fullName || 'Staff member'} avatar`} />
+              <div
+                className={`modal-avatar ${profileSrc ? 'clickable-avatar' : ''}`}
+                onClick={openProfilePreview}
+                onKeyDown={(event) => {
+                  if (!profileSrc) return;
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    openProfilePreview();
+                  }
+                }}
+                role={profileSrc ? 'button' : undefined}
+                tabIndex={profileSrc ? 0 : undefined}
+              >
+                {profileSrc ? (
+                  <img src={profileSrc} alt={`${fullName || 'Staff member'} avatar`} />
                 ) : (
                   <span>{initials}</span>
                 )}
@@ -611,6 +653,15 @@ function StaffDetailsScreen() {
           </div>
         </div>
       </header>
+
+      {showProfilePreview && profileSrc && (
+        <div className="profile-lightbox" onClick={closeProfilePreview}>
+          <div className="profile-lightbox-content" onClick={(event) => event.stopPropagation()}>
+            <img src={profileSrc} alt={`${fullName || 'Staff member'} full profile`} />
+            <button className="profile-lightbox-close" onClick={closeProfilePreview}>Close</button>
+          </div>
+        </div>
+      )}
 
       <div className="staff-details-columns">
         <div className="staff-details-column primary">
@@ -1085,7 +1136,7 @@ function StaffDetailsScreen() {
               <div className="payroll-block payroll-preview">
                 <div className="detail-row">
                   <span className="detail-label">Actual Hours Worked</span>
-                  <span className="detail-value">{actualHoursWorked.toFixed(2)} hrs</span>
+                  <span className="detail-value">{actualHoursWorkedFormatted}</span>
                 </div>
                 <div className="detail-row">
                   <span className="detail-label">Expected Monthly Hours</span>

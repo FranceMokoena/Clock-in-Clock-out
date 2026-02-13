@@ -4836,6 +4836,13 @@ async function validatePreview(imageBuffer) {
   }
 }
 
+function getModelStatus() {
+  return {
+    loaded: Boolean(modelsLoaded),
+    error: modelsLoadError ? modelsLoadError.message : null,
+  };
+}
+
 module.exports = {
   loadModels,
   generateEmbedding,
@@ -4848,6 +4855,7 @@ module.exports = {
   // 🏦 BANK-GRADE Phase 3: Multi-signal fusion
   generateDeviceFingerprint,
   createTrustedDeviceEntry,
+  getModelStatus,
   calculateTemporalSignal,
   calculateDeviceSignal,
   calculateLocationSignal,

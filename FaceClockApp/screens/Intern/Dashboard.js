@@ -256,11 +256,24 @@ export default function InternDashboard({ navigation, route }) {
   };
 
   const getExpectedDays = () => {
+    if (stats?.expectedDays !== undefined && stats?.expectedDays !== null) {
+      return stats.expectedDays;
+    }
     if (selectedPeriod === 'today') return 1;
     if (selectedPeriod === 'weekly') return 5;
-    // monthly: days in current month
+    // monthly: count weekdays in current month
     const now = new Date();
-    return new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const cursor = new Date(now.getFullYear(), now.getMonth(), 1);
+    const end = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+    let weekdayCount = 0;
+    while (cursor <= end) {
+      const day = cursor.getDay();
+      if (day >= 1 && day <= 5) {
+        weekdayCount += 1;
+      }
+      cursor.setDate(cursor.getDate() + 1);
+    }
+    return weekdayCount;
   };
 
   const menuItems = [

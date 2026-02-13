@@ -29,6 +29,13 @@ export const NotificationProvider = ({ children, recipientId, recipientType }) =
 
   // Initialize Socket.IO and real-time listeners
   useEffect(() => {
+    if (!recipientId || !recipientType) {
+      setNotifications([]);
+      setUnreadCount(0);
+      setLoading(false);
+      return;
+    }
+
     // Load initial notifications
     loadNotifications();
 
@@ -36,7 +43,17 @@ export const NotificationProvider = ({ children, recipientId, recipientType }) =
     initializeSocket(recipientId, recipientType);
 
     // Subscribe to real-time notifications
-    subscribeToRealTimeNotifications((newNotification) => {
+    subscribeToRealTimeNotifications((payload) => {
+      if (payload && payload.__notificationCount) {
+        if (typeof payload.count === 'number') {
+          setUnreadCount(payload.count);
+        }
+        return;
+      }
+
+      const newNotification = payload;
+      if (!newNotification) return;
+
       // Add new notification to the top of the list
       setNotifications(prev => [
         {
