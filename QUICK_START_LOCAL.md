@@ -47,5 +47,5 @@ npm start
 
 - Backend runs on port **5000**
 - Frontend auto-detects local vs production
-- Production setup is **unchanged** - still uses `https://clock-in.duckdns.org/api`
+- Production setup is **unchanged** - still uses `https://clock-in-app.duckdns.org/api`
 

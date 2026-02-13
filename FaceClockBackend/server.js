@@ -293,7 +293,8 @@ async function startServer() {
   const PORT = process.env.PORT || 5000;
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`🌐 API Base URL: https://clock-in.duckdns.org/api`);
+    const resolvedApiBaseUrl = API_BASE_URL || `http://localhost:${PORT}/api`;
+    console.log(`🌐 API Base URL: ${resolvedApiBaseUrl}`);
     console.log(`📡 WebSocket ready for real-time notifications`);
   });
 }

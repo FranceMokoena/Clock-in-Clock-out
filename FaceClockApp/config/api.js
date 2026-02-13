@@ -14,7 +14,7 @@ const getApiUrl = () => {
   if (isDevelopment) {
     // Check if environment variable is set to production URL - override it in dev
     const envUrl = process.env.EXPO_PUBLIC_API_URL;
-    if (envUrl && envUrl.includes('clock-in.duckdns.org')) {
+    if (envUrl && envUrl.includes('clock-in-app.duckdns.org')) {
       console.log('⚠️ Overriding production URL in development mode');
       console.log('📌 Original EXPO_PUBLIC_API_URL:', envUrl);
     }
@@ -29,8 +29,10 @@ const getApiUrl = () => {
     // For Android emulator, use: http://10.0.2.2:5000/api
     // For iOS simulator: http://localhost:5000/api
     // For physical device (Expo Go): Use your computer's IP from the QR code
-    // For multi-device testing: Set EXPO_PUBLIC_BACKEND_IP env variable (e.g., 192.168.88.41)
-    const backendIp = process.env.EXPO_PUBLIC_BACKEND_IP || '192.168.88.41';
+    // For multi-device testing: Set EXPO_PUBLIC_BACKEND_IP env variable (e.g., 192.168.x.x)
+    const backendIp =
+      process.env.EXPO_PUBLIC_BACKEND_IP ||
+      (Platform.OS === 'android' ? '10.0.2.2' : 'localhost');
     const localUrl = `http://${backendIp}:5000/api`;
     console.log('📌 Development mode - FORCING local backend:', localUrl);
     console.log('💡 To change backend IP, set EXPO_PUBLIC_BACKEND_IP environment variable');
@@ -42,7 +44,7 @@ const getApiUrl = () => {
     return process.env.EXPO_PUBLIC_API_URL;
   }
 
-  return 'https://clock-in.duckdns.org/api';
+  return 'https://clock-in-app.duckdns.org/api';
 };
 
 const API_BASE_URL = getApiUrl();

@@ -204,7 +204,7 @@ Or simply use the default `npm start` which will use production if no `.env.loca
 When ready to deploy:
 1. Remove `.env.local` file
 2. Use `npm run start:production` or default `npm start`
-3. App will automatically use production API: `https://clock-in.duckdns.org/api`
+3. App will automatically use production API: `https://clock-in-app.duckdns.org/api`
 
 ## Notes
 

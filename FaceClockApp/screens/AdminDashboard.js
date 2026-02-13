@@ -670,7 +670,7 @@ export default function AdminDashboard({ navigation, route }) {
       console.error('   Error Message:', error.message);
       console.error('   Please ensure:');
       console.error('   1. Backend server is running on port 5000');
-      console.error('   2. IP address (192.168.88.41) matches your computer');
+      console.error('   2. IP address matches your computer (EXPO_PUBLIC_BACKEND_IP)');
       console.error('   3. Check firewall settings');
       throw error;
     }
@@ -768,7 +768,7 @@ export default function AdminDashboard({ navigation, route }) {
       console.error('   Error Message:', error.message);
       console.error('   Please ensure:');
       console.error('   1. Backend server is running on port 5000');
-      console.error('   2. IP address (192.168.88.41) matches your computer');
+      console.error('   2. IP address matches your computer (EXPO_PUBLIC_BACKEND_IP)');
       console.error('   3. Check firewall settings');
       Alert.alert('Error', 'Failed to load timesheet data. Check that backend server is running.');
       setStaffTimesheet([]);

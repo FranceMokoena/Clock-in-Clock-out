@@ -21,6 +21,7 @@ class MobileNotificationHandler {
     this.isConnected = false;
     this.userId = null;
     this.userType = null;
+    this.apiBaseUrl = null;
     this.listeners = [];
     this.notificationBuffer = [];
   }
@@ -31,6 +32,7 @@ class MobileNotificationHandler {
   async initialize(userId, userType, apiBaseUrl) {
     this.userId = userId;
     this.userType = userType;
+    this.apiBaseUrl = apiBaseUrl;
 
     try {
       // Configure local notifications
@@ -299,7 +301,13 @@ class MobileNotificationHandler {
    */
   async markAsRead(notificationId) {
     try {
-      const response = await fetch('http://localhost:5000/api/notifications/' + notificationId + '/read', {
+      const baseUrl = (this.apiBaseUrl || '').replace(/\/$/, '');
+      if (!baseUrl) {
+        console.error('❌ Notification handler API base URL is not set');
+        return;
+      }
+
+      const response = await fetch(`${baseUrl}/notifications/${notificationId}/read`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
