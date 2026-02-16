@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import '../styles.css';
 import { UserIcon, LockIcon, LoginIcon, XIcon } from "./Icons";
 import { useAuth } from '../context/AuthContext';
+import loginLogo from '../assets/IS_Internship Success (Benefit)_LOGO.png';
 
 export default function Login({ onLogin }) {
   const navigate = useNavigate();
@@ -49,7 +50,7 @@ export default function Login({ onLogin }) {
       <div className="login-left">
         <div className="logo-container">
           <img
-            src="/IS_Internship Success (Benefit)_LOGO.png"
+            src={loginLogo}
             alt="Face-clock logo"
             className="left-logo"
           />
