@@ -76,7 +76,10 @@
         "provider": "generic",
         "url": "https://clock-in-app.duckdns.org/desktop-updates"
       }
-    ]
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    }
   },
   "browserslist": {
     "production": [
