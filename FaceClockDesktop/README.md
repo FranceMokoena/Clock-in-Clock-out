@@ -93,8 +93,12 @@ DESKTOP_UPDATE_URL=https://clock-in-app.duckdns.org/desktop-updates
 
 ## Branding
 
-- The desktop UI and installer now rely on `public/NEW-APP-ICON.png`, which is the same 249×256 logo shipped with the mobile build.
-- Update that PNG if you need a refreshed shared brand asset; both mobile and desktop usages reference `NEW-APP-ICON.png`.
+ - The desktop UI and installer now rely on `public/NEW-RESIZED-ICON.png`, which is derived from the new resized asset you dropped into `assets/NEW-RESIZED-ICON.png`.
+ - Update that PNG (or re-run `scripts/sync-desktop-icons.py` if you replace the source `.ico`) to keep the desktop splash and installer icon aligned with the mobile brand.
+
+## Icon Sync Script
+
+- Run `python scripts/sync-desktop-icons.py` after updating `assets/NEW-RESIZED-ICON.png` or before building to regenerate `build/app-icon.ico`, `build/icon.png`, and the public assets that `electron-builder` uses for the installer and taskbar so your custom icon stays in sync with the mobile launcher.
 
 ## Usage
 
