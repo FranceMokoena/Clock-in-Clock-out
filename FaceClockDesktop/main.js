@@ -88,7 +88,7 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.js'),
       webSecurity: true,
     },
-    icon: path.join(__dirname, 'assets', 'app-icon.ico'),
+    icon: path.join(__dirname, 'assets', 'NEW_RESIZED_ICON(!) (1).ico'),
     title: 'Face-clock Desktop',
     titleBarStyle: 'default',
     show: true, // Show immediately
