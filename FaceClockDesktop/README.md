@@ -93,12 +93,12 @@ DESKTOP_UPDATE_URL=https://clock-in-app.duckdns.org/desktop-updates
 
 ## Branding
 
-- The desktop login screen still uses `public/IS_Internship Success (Benefit)_LOGO.png`, while the taskbar/installer icon is now built from `assets/NEW_RESIZED_ICON(!) (1).ico`.
+- The desktop login screen still displays `src/assets/IS_Internship Success (Benefit)_LOGO.png` (which is bundled into `public/` by CRA), while the taskbar/installer icon is built from `assets/NEW_RESIZED_ICON(!) (1).ico`.
 - Replace either asset as needed, then rerun `scripts/sync-desktop-icons.py` so both the UI graphic and the shipped icon stay aligned with your branding.
 
 ## Icon Sync Script
 
-- Run `python scripts/sync-desktop-icons.py` before `npm run build` / `npm run build:win`. It reads `assets/NEW_RESIZED_ICON(!) (1).ico` and regenerates the PNG/favicons plus `build/app-icon.ico`, `build/icon.png`, and `build/icon.icns` that electron-builder uses so the desktop shell icon stays aligned with your sourced `NEW_RESIZED_ICON(!) (1)`.
+- `npm run build:win` now runs `npm run build` and `python scripts/sync-desktop-icons.py` for you before invoking `electron-builder`, so the icon build artifacts are refreshed automatically. `sync-desktop-icons.py` now writes icon slices from 4096×4096 down to 16×16 so Windows can pull the highest resolution by default for taskbar/start menu icons. If you replace `assets/NEW_RESIZED_ICON(!) (1).ico` directly, rerun `python scripts/sync-desktop-icons.py` (or rerun `npm run build:win`) to regenerate the PNG/favicons plus `build/app-icon.ico`, `build/icon.png`, and `build/icon.icns` that electron-builder embeds.
 
 ## Usage
 

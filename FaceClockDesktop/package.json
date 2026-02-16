@@ -12,7 +12,7 @@
     "dev:start": "npm run dev:react & npm run dev:electron",
     "build": "react-scripts build",
     "build:electron": "electron-builder",
-    "build:win": "electron-builder --win",
+    "build:win": "npm run build && python scripts/sync-desktop-icons.py && electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
     "dist": "npm run build && electron-builder"

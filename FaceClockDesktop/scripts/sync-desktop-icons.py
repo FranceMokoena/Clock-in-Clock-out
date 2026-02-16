@@ -29,7 +29,14 @@ def pad_square(image, size):
 for folder in (assets, public, build):
     pad_square(img, 1024).save(folder / f'{target_name}.png')
 
-icon_sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
+icon_sizes = [
+    (4096, 4096),
+    (3072, 3072),
+    (256, 256),
+    (2048, 2048)
+    
+   
+]
 ico_img = pad_square(img, 512)
 ico_img.save(build / 'app-icon.ico', sizes=icon_sizes)
 shutil.copy(build / 'app-icon.ico', assets / 'app-icon.ico')

@@ -89,7 +89,7 @@ export default function Login({ onLogin }) {
       <div className="login-right">
         <div className="login-container">
           <div className="login-header">
-            <h1 className="login-title">Internship Success</h1>
+            <h1 className="login-title">Internship Success Face-Clock</h1>
             <p className="login-subtitle">Administrative & Host Company Access</p>
           </div>
 
