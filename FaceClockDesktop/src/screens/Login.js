@@ -77,9 +77,9 @@ export default function Login({ onLogin }) {
     <div className="login-wrapper">
       <div className="login-left">
         <div className="logo-container">
-          <img 
-            src="/correct-logo.png" 
-            alt="Internship Success Logo" 
+          <img
+            src="/NEW-APP-ICON.png"
+            alt="Face-clock logo"
             className="left-logo"
           />
         </div>
@@ -117,7 +117,7 @@ export default function Login({ onLogin }) {
       <div className="login-right">
         <div className="login-container">
           <div className="login-header">
-            <h1 className="login-title">INTERNSHIP SUCCESS</h1>
+            <h1 className="login-title">Face-clock</h1>
             <p className="login-subtitle">Administrative & Host Company Access</p>
           </div>
 
@@ -189,7 +189,7 @@ export default function Login({ onLogin }) {
           </form>
 
           <div className="login-footer">
-            <p className="footer-text">© 2026 Internship Success. All rights reserved.</p>
+            <p className="footer-text">© 2026 Face-clock. All rights reserved.</p>
           </div>
         </div>
       </div>

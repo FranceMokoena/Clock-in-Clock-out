@@ -1,13 +1,13 @@
 {
   "expo": {
-    "name": "Internship Success Clock-in/Clock-out System",
+    "name": "Face-clock",
     "slug": "internship-success-clock",
     "version": "1.0.2",
     "orientation": "default",
-    "icon": "./assets/APP-ICON.png",
+    "icon": "./assets/NEW-APP-ICON.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/APP-ICON.png",
+      "image": "./assets/NEW-APP-ICON.png",
       "resizeMode": "contain",
       "backgroundColor": "#020617"
     },
@@ -24,7 +24,7 @@
       "package": "com.internshipsuccess.clock",
       "versionCode": 3,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/APP-ICON.png",
+        "foregroundImage": "./assets/NEW-APP-ICON.png",
         "backgroundColor": "#ffffff"
       },
       "permissions": [

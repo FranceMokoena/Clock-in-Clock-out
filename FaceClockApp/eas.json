@@ -19,7 +19,6 @@
         "EXPO_PUBLIC_API_URL": "https://clock-in-app.duckdns.org/api"
       }
     },
-
     "preview": {
       "distribution": "internal",
       "channel": "preview",
@@ -34,11 +33,10 @@
         "EXPO_PUBLIC_API_URL": "https://clock-in-app.duckdns.org/api"
       }
     },
-
     "production": {
       "channel": "production",
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "apk"
       },
       "ios": {
         "simulator": false
@@ -50,7 +48,6 @@
       }
     }
   },
-
   "submit": {
     "production": {}
   }

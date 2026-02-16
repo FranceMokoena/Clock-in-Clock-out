@@ -1,8 +1,13 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
+const { autoUpdater } = require('electron-updater');
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 const overrideDevMode = process.env.FORCE_DESKTOP_PROD === 'true';
 const useDevServer = !overrideDevMode && isDev;
+const updateFeedUrl =
+  process.env.DESKTOP_UPDATE_URL ||
+  'https://clock-in-app.duckdns.org/desktop-updates';
+let autoUpdaterConfigured = false;
 
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
@@ -21,6 +26,56 @@ if (!gotTheLock) {
 
 let mainWindow;
 
+function configureAutoUpdates() {
+  if (autoUpdaterConfigured || useDevServer) {
+    return;
+  }
+
+  console.info('Auto-update: using feed URL', updateFeedUrl);
+  autoUpdaterConfigured = true;
+  autoUpdater.autoDownload = true;
+  autoUpdater.setFeedURL({ provider: 'generic', url: updateFeedUrl });
+
+  autoUpdater.on('checking-for-update', () => {
+    console.info('Auto-update: checking for updates...');
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.info('Auto-update: update available', info.version);
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.info('Auto-update: no updates available');
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    const percent = Math.round(progress.percent || 0);
+    console.info(`Auto-update: downloading (${percent}%)`);
+  });
+
+  autoUpdater.on('error', (error) => {
+    console.error('Auto-update error:', error);
+  });
+
+  autoUpdater.on('update-downloaded', async () => {
+    const { response } = await dialog.showMessageBox({
+      type: 'info',
+      buttons: ['Restart now', 'Later'],
+      defaultId: 0,
+      cancelId: 1,
+      title: 'Face-clock update ready',
+      message: 'A new Face-clock Desktop version has been downloaded.',
+      detail: 'Restart now to install the latest improvements.',
+    });
+
+    if (response === 0) {
+      autoUpdater.quitAndInstall();
+    }
+  });
+
+  autoUpdater.checkForUpdates();
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
@@ -31,9 +86,10 @@ function createWindow() {
       nodeIntegration: false,
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js'),
-      webSecurity: true
+      webSecurity: true,
     },
     icon: path.join(__dirname, 'assets', 'app-icon.ico'),
+    title: 'Face-clock Desktop',
     titleBarStyle: 'default',
     show: true, // Show immediately
     autoHideMenuBar: true, // Hide menu bar for cleaner look
@@ -99,6 +155,7 @@ function createWindow() {
 // App event handlers
 app.whenReady().then(() => {
   createWindow();
+  configureAutoUpdates();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -121,4 +178,3 @@ ipcMain.handle('get-app-version', () => {
 ipcMain.handle('get-platform', () => {
   return process.platform;
 });
-
