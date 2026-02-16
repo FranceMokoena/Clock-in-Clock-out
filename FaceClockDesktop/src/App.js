@@ -1,5 +1,5 @@
 import React from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './screens/Login';
 import Dashboard from './screens/Dashboard';
 import StaffDetailsScreen from './screens/StaffDetails';

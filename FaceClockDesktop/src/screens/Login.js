@@ -2,10 +2,11 @@ import React, { useState } from "react";
 import { useNavigate } from 'react-router-dom';
 import '../styles.css';
 import { UserIcon, LockIcon, LoginIcon, XIcon } from "./Icons";
-import { authAPI } from "../services/api";
+import { useAuth } from '../context/AuthContext';
 
 export default function Login({ onLogin }) {
   const navigate = useNavigate();
+  const { login } = useAuth();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -18,44 +19,14 @@ export default function Login({ onLogin }) {
     setError("");
 
     try {
-      const response = await authAPI.login(username, password);
-      console.debug('Login response:', response);
-
-      // Determine success by common response shapes
-      const successFlag = Boolean(
-        response?.success === true ||
-        response?.status === 'success' ||
-        response?.token || response?.authToken || response?.accessToken
-      );
-
-      if (successFlag) {
-        // store token if available
-        if (response.token || response.authToken || response.accessToken) {
-          const token = response.token || response.authToken || response.accessToken;
-          localStorage.setItem('authToken', token);
-        }
-        // Store user using the key that AuthContext expects: 'userInfo'
-        if (response.user) {
-          localStorage.setItem('userInfo', JSON.stringify(response.user));
-        }
+      const response = await login(username, password);
+      if (response.success) {
         if (typeof onLogin === 'function') {
           onLogin();
-        } else {
-          try {
-            navigate('/dashboard');
-            // Fallback in case client-side navigation isn't wired in this context
-            setTimeout(() => {
-              if (window.location.pathname !== '/dashboard') {
-                window.location.href = '/dashboard';
-              }
-            }, 300);
-          } catch (navErr) {
-            // Fallback to hard redirect
-            window.location.href = '/dashboard';
-          }
         }
+        navigate('/dashboard');
       } else {
-        setError(response.message || "Login failed. Please try again.");
+        setError(response.error || "Login failed. Please try again.");
       }
     } catch (err) {
       setError(err.message || "Invalid username or password!");
@@ -78,7 +49,7 @@ export default function Login({ onLogin }) {
       <div className="login-left">
         <div className="logo-container">
           <img
-            src="/NEW-APP-ICON.png"
+            src="/IS_Internship Success (Benefit)_LOGO.png"
             alt="Face-clock logo"
             className="left-logo"
           />
@@ -117,7 +88,7 @@ export default function Login({ onLogin }) {
       <div className="login-right">
         <div className="login-container">
           <div className="login-header">
-            <h1 className="login-title">Face-clock</h1>
+            <h1 className="login-title">Internship Success</h1>
             <p className="login-subtitle">Administrative & Host Company Access</p>
           </div>
 
