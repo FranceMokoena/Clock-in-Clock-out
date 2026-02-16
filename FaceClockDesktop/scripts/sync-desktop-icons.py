@@ -7,14 +7,15 @@ assets = base / 'assets'
 public = base / 'public'
 build = base / 'build'
 
-source = assets / 'NEW-RESIZED-ICON.png'
-if not source.exists():
-    raise SystemExit('Missing NEW-RESIZED-ICON.png in assets folder')
+target_name = 'NEW_RESIZED_ICON(!) (1)'
+source_icon = assets / f'{target_name}.ico'
+if not source_icon.exists():
+    raise SystemExit(f'Missing {source_icon.name} in assets folder')
 
 for folder in (assets, public, build):
     folder.mkdir(parents=True, exist_ok=True)
 
-img = Image.open(source).convert('RGBA')
+img = Image.open(source_icon).convert('RGBA')
 
 def pad_square(image, size):
     ratio = size / max(image.width, image.height)
@@ -26,13 +27,12 @@ def pad_square(image, size):
     return canvas
 
 for folder in (assets, public, build):
-    pad_square(img, 1024).save(folder / 'NEW-RESIZED-ICON.png')
+    pad_square(img, 1024).save(folder / f'{target_name}.png')
 
 icon_sizes = [(256, 256), (128, 128), (64, 64), (48, 48), (32, 32), (16, 16)]
 ico_img = pad_square(img, 512)
 ico_img.save(build / 'app-icon.ico', sizes=icon_sizes)
 shutil.copy(build / 'app-icon.ico', assets / 'app-icon.ico')
-
 pad_square(img, 1024).save(build / 'icon.png')
 pad_square(img, 1024).save(build / 'icon.icns')
-print('Desktop icons synced using NEW-RESIZED-ICON.png')
+print('Desktop icons synced using', target_name)

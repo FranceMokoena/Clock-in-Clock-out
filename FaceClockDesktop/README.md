@@ -93,12 +93,12 @@ DESKTOP_UPDATE_URL=https://clock-in-app.duckdns.org/desktop-updates
 
 ## Branding
 
- - The desktop UI and installer now rely on `public/NEW-RESIZED-ICON.png`, which is derived from the new resized asset you dropped into `assets/NEW-RESIZED-ICON.png`.
- - Update that PNG (or re-run `scripts/sync-desktop-icons.py` if you replace the source `.ico`) to keep the desktop splash and installer icon aligned with the mobile brand.
+- The desktop login screen still uses `public/IS_Internship Success (Benefit)_LOGO.png`, while the taskbar/installer icon is now built from `assets/NEW_RESIZED_ICON(!) (1).ico`.
+- Replace either asset as needed, then rerun `scripts/sync-desktop-icons.py` so both the UI graphic and the shipped icon stay aligned with your branding.
 
 ## Icon Sync Script
 
-- Run `python scripts/sync-desktop-icons.py` after updating `assets/NEW-RESIZED-ICON.png` or before building to regenerate `build/app-icon.ico`, `build/icon.png`, and the public assets that `electron-builder` uses for the installer and taskbar so your custom icon stays in sync with the mobile launcher.
+- Run `python scripts/sync-desktop-icons.py` before `npm run build` / `npm run build:win`. It reads `assets/NEW_RESIZED_ICON(!) (1).ico` and regenerates the PNG/favicons plus `build/app-icon.ico`, `build/icon.png`, and `build/icon.icns` that electron-builder uses so the desktop shell icon stays aligned with your sourced `NEW_RESIZED_ICON(!) (1)`.
 
 ## Usage
 
